@@ -1,0 +1,2459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
+<title>SAJ Task Register</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+  :root{
+    --navy:#123354;
+    --navy-light:#1c4a7a;
+    --amber:#b45309;
+    --amber-bg:#fef3e2;
+    --green:#15803d;
+    --green-bg:#e7f7ec;
+    --red:#b91c1c;
+    --red-bg:#fdecec;
+    --bg:#f2f5f8;
+    --card:#ffffff;
+    --border:#dfe4e9;
+    --text:#182430;
+    --text-muted:#647082;
+    --radius:12px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;background:var(--bg);color:var(--text);}
+  header{position:sticky;top:0;z-index:20;background:var(--navy);color:#fff;padding:14px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;row-gap:10px;box-shadow:0 2px 6px rgba(0,0,0,.15);}
+  header h1{font-size:17px;margin:0;font-weight:600;}
+  header .sub{font-size:11px;color:#bcd0e4;margin-top:2px;}
+  #authBox{display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap;justify-content:flex-end;flex:1 1 auto;min-width:0;}
+  #authBox .user-email{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
+  @media(max-width:480px){
+    header{padding:12px 14px;}
+    #authBox{width:100%;justify-content:flex-start;}
+    #authBox .user-email{max-width:100%;flex:1 1 100%;order:-1;white-space:normal;}
+    #authBox .btn{padding:7px 10px;font-size:12px;}
+  }
+  .btn{border:none;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer;}
+  .btn-primary{background:var(--amber);color:#fff;}
+  .btn-outline{background:transparent;color:#fff;border:1px solid rgba(255,255,255,.5);}
+  .btn-navy{background:var(--navy);color:#fff;}
+  .btn-green{background:var(--green);color:#fff;}
+  .btn-red{background:var(--red);color:#fff;}
+  .btn-light{background:#eef1f4;color:var(--text);}
+  .btn:disabled{opacity:.5;cursor:not-allowed;}
+  main{max-width:900px;margin:0 auto;padding:14px 12px 90px;}
+  .toolbar{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:14px;}
+  .toolbar select, .toolbar input[type=text]{flex:1;min-width:120px;padding:9px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:#fff;}
+  .chip{padding:7px 12px;border-radius:20px;border:1px solid var(--border);background:#fff;font-size:12px;font-weight:600;cursor:pointer;color:var(--text-muted);}
+  .chip.active{background:var(--navy);color:#fff;border-color:var(--navy);}
+  .chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;}
+  .tabs{display:flex;gap:8px;margin-bottom:14px;}
+  .tab-btn{flex:1;padding:11px;border-radius:9px;border:1px solid var(--border);background:#fff;font-weight:700;font-size:13px;color:var(--text-muted);cursor:pointer;}
+  .tab-btn.active{background:var(--navy);color:#fff;border-color:var(--navy);}
+  .badge-incomplete{background:var(--amber-bg);color:var(--amber);}
+  .badge-complete{background:var(--green-bg);color:var(--green);}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:var(--radius);padding:12px;margin-bottom:10px;display:flex;gap:12px;cursor:pointer;transition:box-shadow .15s;}
+  .card:active{box-shadow:0 0 0 2px var(--navy-light) inset;}
+  .thumb{width:64px;height:64px;border-radius:8px;object-fit:cover;background:#e6eaee;flex-shrink:0;}
+  .thumb-placeholder{width:64px;height:64px;border-radius:8px;background:#e6eaee;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:#9aa5b1;font-size:22px;}
+  .card-body{flex:1;min-width:0;}
+  .card-title{font-size:14px;font-weight:600;margin:0 0 2px;}
+  .card-desc{font-size:12.5px;color:var(--text-muted);margin:0 0 6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .badge{display:inline-block;font-size:11px;font-weight:700;padding:3px 9px;border-radius:20px;}
+  .badge-open{background:var(--amber-bg);color:var(--amber);}
+  .badge-closed{background:var(--green-bg);color:var(--green);}
+  .meta{font-size:11px;color:var(--text-muted);margin-top:4px;}
+  #emptyState{text-align:center;color:var(--text-muted);padding:50px 20px;font-size:14px;}
+  #fab{position:fixed;right:18px;bottom:18px;width:56px;height:56px;border-radius:50%;background:var(--amber);color:#fff;font-size:28px;border:none;box-shadow:0 4px 12px rgba(0,0,0,.25);cursor:pointer;z-index:15;display:none;align-items:center;justify-content:center;}
+  .modal-overlay{position:fixed;inset:0;background:rgba(10,20,30,.55);display:none;align-items:flex-end;justify-content:center;z-index:150;}
+  .modal-overlay.show{display:flex;}
+  .modal{background:#fff;width:100%;max-width:520px;max-height:92vh;overflow-y:auto;border-radius:16px 16px 0 0;padding:18px;}
+  @media(min-width:600px){ .modal-overlay{align-items:center;} .modal{border-radius:16px;} }
+  .modal h2{font-size:16px;margin:0 0 14px;}
+  .field{margin-bottom:12px;}
+  .checkbox-field label{display:flex;align-items:center;gap:8px;font-weight:normal;cursor:pointer;}
+  .checkbox-field input[type="checkbox"]{width:18px;height:18px;flex:none;}
+  .signature-pad-wrap{border:1px solid var(--border);border-radius:8px;background:#fff;touch-action:none;max-width:100%;}
+  .signature-pad-wrap canvas{display:block;width:100%;height:180px;touch-action:none;}
+  .signature-preview{border:1px solid var(--border);border-radius:8px;background:#fff;min-height:70px;display:flex;align-items:center;justify-content:center;padding:8px;}
+  .signature-preview img{max-width:100%;max-height:80px;}
+  .signature-placeholder{color:var(--text-muted);font-size:13px;}
+  .field label{display:block;font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:5px;}
+  .field input, .field select, .field textarea{width:100%;padding:10px;border:1px solid var(--border);border-radius:8px;font-size:14px;font-family:inherit;}
+  .field textarea{min-height:70px;resize:vertical;}
+  .modal-actions{display:flex;gap:8px;margin-top:16px;}
+  .modal-actions .btn{flex:1;}
+  .close-x{position:absolute;top:14px;right:16px;background:none;border:none;font-size:22px;color:var(--text-muted);cursor:pointer;}
+  .modal{position:relative;}
+  video{width:100%;border-radius:10px;background:#000;max-height:340px;object-fit:cover;}
+  canvas{display:none;}
+  .photo-preview{width:100%;border-radius:10px;display:block;}
+  .cam-actions{display:flex;gap:8px;margin-top:8px;}
+  .cam-actions .btn{flex:1;}
+  .hint{font-size:11px;color:var(--text-muted);margin-top:4px;}
+  .zoom-row{display:flex;align-items:center;gap:8px;margin-top:8px;}
+  .zoom-row span{font-size:14px;flex-shrink:0;}
+  .zoom-row input[type=range]{flex:1;}
+  .card-check{width:19px;height:19px;flex-shrink:0;align-self:center;accent-color:var(--navy);}
+  .photo-thumbs{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;}
+  .photo-thumbs .pt-item{position:relative;width:72px;height:72px;}
+  .photo-thumbs .pt-item img{width:100%;height:100%;object-fit:cover;border-radius:8px;display:block;}
+  .photo-thumbs .pt-remove{position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:13px;line-height:1;cursor:pointer;}
+  .gallery-item{margin-bottom:10px;}
+  .gallery-caption{font-size:11px;color:var(--text-muted);margin-top:3px;}
+  .detail-photo{width:100%;border-radius:10px;margin-bottom:10px;}
+  .detail-row{font-size:13px;margin-bottom:6px;}
+  .detail-row b{color:var(--text-muted);font-weight:600;}
+  .section-label{font-size:11px;font-weight:700;text-transform:uppercase;color:var(--text-muted);margin:16px 0 6px;letter-spacing:.03em;}
+  .error-text{color:var(--red);font-size:12px;margin-top:6px;}
+  #syncDot{width:8px;height:8px;border-radius:50%;background:#4ade80;display:inline-block;margin-right:5px;}
+  #syncDot.off{background:#f87171;}
+  .loading-screen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:100;font-size:13px;color:var(--text-muted);}
+</style>
+</head>
+<body>
+
+<div id="loadingScreen" class="loading-screen">
+  <div style="font-weight:700;color:var(--navy);font-size:18px;">SAJ Task Register</div>
+  <div>Connecting…</div>
+</div>
+
+<div id="passwordGate" class="loading-screen" style="display:none;">
+  <div style="font-weight:700;color:var(--navy);font-size:18px;">SAJ Task Register</div>
+  <div style="font-size:13px;color:var(--text-muted);text-align:center;max-width:260px;">This app is password protected. Enter the password to continue.</div>
+  <input type="password" id="gatePasswordInput" placeholder="Password"
+    style="padding:11px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;width:220px;text-align:center;background:#fff;" />
+  <button class="btn btn-primary" id="gateSubmitBtn" style="width:220px;">Enter</button>
+  <div class="error-text" id="gateError"></div>
+  <button class="btn btn-outline" id="gateAdminLoginBtn" style="color:var(--navy);border:1px solid var(--border);width:220px;margin-top:6px;">Admin sign in instead</button>
+</div>
+
+<header>
+  <div>
+    <h1>SAJ Task Register</h1>
+    <div class="sub"><span id="syncDot"></span><span id="syncText">Live</span></div>
+  </div>
+  <div id="authBox"></div>
+</header>
+
+<main>
+  <div class="tabs" id="mainTabs">
+    <button class="tab-btn active" data-tab="snags">Snag Reports</button>
+    <button class="tab-btn" data-tab="work">Work Reports</button>
+  </div>
+
+  <div id="snagsView">
+    <div class="chips" id="statusChips">
+      <button class="chip active" data-status="all">All</button>
+      <button class="chip" data-status="open">Open</button>
+      <button class="chip" data-status="closed">Closed</button>
+    </div>
+
+    <div class="toolbar">
+      <select id="siteFilter"><option value="">All sites</option></select>
+      <input type="text" id="searchBox" placeholder="Search location or description…" />
+      <button class="btn btn-light" id="selectModeBtn">Select</button>
+      <button class="btn btn-light" id="exportBtn">Export PDF</button>
+    </div>
+
+    <div class="toolbar" id="snagSelectAllRow" style="display:none;">
+      <button class="btn btn-light" id="selectAllSnagsBtn">Select all</button>
+      <button class="btn btn-light" id="clearSnagsBtn">Clear selection</button>
+      <button class="btn btn-red" id="deleteSelectedSnagsBtn" style="display:none;">Delete selected</button>
+    </div>
+
+    <div id="list"></div>
+    <div id="emptyState" style="display:none;">No snags match your filters.</div>
+  </div>
+
+  <div id="workView" style="display:none;">
+    <div class="chips" id="workStatusChips">
+      <button class="chip active" data-status="all">All</button>
+      <button class="chip" data-status="complete">Complete</button>
+      <button class="chip" data-status="incomplete">Incomplete</button>
+    </div>
+
+    <div class="toolbar">
+      <select id="workSiteFilter"><option value="">All sites</option></select>
+      <input type="text" id="workSearchBox" placeholder="Search location or problem/task…" />
+      <button class="btn btn-light" id="workSelectModeBtn">Select</button>
+      <button class="btn btn-light" id="workExportBtn">Export PDF</button>
+    </div>
+
+    <div class="toolbar" id="workSelectAllRow" style="display:none;">
+      <button class="btn btn-light" id="selectAllWorkBtn">Select all</button>
+      <button class="btn btn-light" id="clearWorkBtn">Clear selection</button>
+      <button class="btn btn-red" id="deleteSelectedWorkBtn" style="display:none;">Delete selected</button>
+    </div>
+
+    <div id="workList"></div>
+    <div id="workEmptyState" style="display:none;">No work reports match your filters.</div>
+  </div>
+</main>
+
+<button id="fab" title="Add new">+</button>
+
+<!-- ADMIN LOGIN MODAL -->
+<div class="modal-overlay" id="loginModal">
+  <div class="modal">
+    <button class="close-x" data-close="loginModal">&times;</button>
+    <h2>Admin sign in</h2>
+    <div class="field"><label>Email</label><input type="email" id="loginEmail" autocomplete="username" /></div>
+    <div class="field"><label>Password</label><input type="password" id="loginPassword" autocomplete="current-password" /></div>
+    <div class="error-text" id="loginError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-navy" id="loginSubmit" style="width:100%;">Sign in</button>
+    </div>
+  </div>
+</div>
+
+<!-- NEW SNAG MODAL (admin only) -->
+<div class="modal-overlay" id="newSnagModal">
+  <div class="modal">
+    <button class="close-x" data-close="newSnagModal">&times;</button>
+    <h2>Open a new snag</h2>
+    <div class="field"><label>Your name</label><input type="text" id="newStaffName" placeholder="Enter your name" /></div>
+    <div class="field"><label>Site</label><input type="text" id="newSite" placeholder="e.g. M9" /></div>
+    <div class="field"><label>Location</label><input type="text" id="newLocation" placeholder="e.g. Level 3 corridor" /></div>
+    <div class="field"><label>Description</label><textarea id="newDescription" placeholder="Describe the snag…"></textarea></div>
+
+    <div class="section-label">Photos (up to 3)</div>
+    <div id="newCamArea"></div>
+
+    <div class="error-text" id="newSnagError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="saveSnagBtn" disabled>Save snag</button>
+    </div>
+  </div>
+</div>
+
+<!-- SNAG DETAIL MODAL -->
+<div class="modal-overlay" id="detailModal">
+  <div class="modal">
+    <button class="close-x" data-close="detailModal">&times;</button>
+    <div id="detailContent"></div>
+  </div>
+</div>
+
+<!-- CLOSE SNAG MODAL (any staff) -->
+<div class="modal-overlay" id="closeSnagModal">
+  <div class="modal">
+    <button class="close-x" data-close="closeSnagModal">&times;</button>
+    <h2>Close this snag</h2>
+    <div class="field"><label>Your name</label><input type="text" id="closeStaffName" placeholder="Enter your name" /></div>
+    <div class="field"><label>Notes</label><textarea id="closeNotes" placeholder="Describe how it was resolved…"></textarea></div>
+    <div class="section-label">Photos (required, up to 3)</div>
+    <div id="closeCamArea"></div>
+    <div class="error-text" id="closeSnagError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-green" id="confirmCloseBtn">Mark as closed</button>
+    </div>
+  </div>
+</div>
+
+<!-- EXPORT MODAL -->
+<div class="modal-overlay" id="exportModal">
+  <div class="modal">
+    <button class="close-x" data-close="exportModal">&times;</button>
+    <h2>Export PDF report</h2>
+    <div class="field">
+      <label>Site</label>
+      <select id="pdfSite"><option value="">All sites</option></select>
+    </div>
+    <div class="field"><label>Location contains</label><input type="text" id="pdfLocation" placeholder="Optional" /></div>
+    <div class="field"><label>Status</label>
+      <select id="pdfStatus"><option value="">All</option><option value="open">Open</option><option value="closed">Closed</option></select>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <div class="field" style="flex:1;"><label>From date</label><input type="date" id="pdfFrom" /></div>
+      <div class="field" style="flex:1;"><label>To date</label><input type="date" id="pdfTo" /></div>
+    </div>
+    <div class="hint" id="pdfCount"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="pdfGenerateBtn" style="width:100%;">Download PDF</button>
+    </div>
+  </div>
+</div>
+
+<!-- WORK REPORT EXPORT MODAL -->
+<div class="modal-overlay" id="workExportModal">
+  <div class="modal">
+    <button class="close-x" data-close="workExportModal">&times;</button>
+    <h2>Export work reports PDF</h2>
+    <div class="field">
+      <label>Site</label>
+      <select id="workPdfSite"><option value="">All sites</option></select>
+    </div>
+    <div class="field"><label>Location / problem contains</label><input type="text" id="workPdfLocation" placeholder="Optional" /></div>
+    <div class="field"><label>Status</label>
+      <select id="workPdfStatus"><option value="">All</option><option value="complete">Complete</option><option value="incomplete">Incomplete</option></select>
+    </div>
+    <div style="display:flex;gap:10px;">
+      <div class="field" style="flex:1;"><label>From date</label><input type="date" id="workPdfFrom" /></div>
+      <div class="field" style="flex:1;"><label>To date</label><input type="date" id="workPdfTo" /></div>
+    </div>
+    <div class="hint" id="workPdfCount"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="workPdfGenerateBtn" style="width:100%;">Download PDF</button>
+    </div>
+  </div>
+</div>
+
+<!-- NEW WORK REPORT MODAL (anyone signed in, no admin needed) -->
+<div class="modal-overlay" id="newWorkModal">
+  <div class="modal">
+    <button class="close-x" data-close="newWorkModal">&times;</button>
+    <h2 id="workModalTitle">New work report</h2>
+    <div id="workEditSummary" style="display:none;"></div>
+    <div id="workNewFieldsSection">
+      <div class="field"><label>Site</label><input type="text" id="workSite" placeholder="e.g. M9" /></div>
+      <div class="field"><label>Location</label><input type="text" id="workLocation" placeholder="e.g. Level 3 corridor" /></div>
+      <div class="field"><label>Reporting staff</label><input type="text" id="workReportedBy" placeholder="Enter your name" /></div>
+      <div class="field"><label>Problem / task</label><textarea id="workProblem" placeholder="Describe the problem or task…"></textarea></div>
+
+      <div class="section-label">Before photos (minimum 2 required)</div>
+      <div id="workBeforeCamArea"></div>
+    </div>
+
+    <div class="field"><label>Rectification</label><textarea id="workRectification" placeholder="What was done to fix / complete it…"></textarea></div>
+    <div class="field"><label>Material used</label><textarea id="workMaterial" placeholder="Materials used…"></textarea></div>
+
+    <div class="section-label">After photos (minimum 2 for a complete report)</div>
+    <div id="workAfterCamArea"></div>
+
+    <div class="field"><label>Problem/task closed by</label><input type="text" id="workClosedBy" placeholder="Name of person who completed it" /></div>
+
+    <div class="field checkbox-field"><label><input type="checkbox" id="workClientChecked" /> Client checked / approved this work</label></div>
+    <div class="field"><label>Client name</label><input type="text" id="workClientName" placeholder="Name of client representative" /></div>
+    <div class="section-label">Client signature</div>
+    <div class="signature-preview" id="workSignaturePreview"><div class="signature-placeholder">No signature captured yet</div></div>
+    <div class="modal-actions" style="margin-top:6px;"><button type="button" class="btn btn-light" id="workSignatureOpenBtn" style="width:100%;">Add signature</button></div>
+
+    <div class="hint" id="workCompletenessHint"></div>
+    <div class="error-text" id="newWorkError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="saveWorkBtn" disabled>Save work report</button>
+    </div>
+  </div>
+</div>
+<!-- workEditSummary / workNewFieldsSection are toggled from JS to switch this modal between "create" and "complete" modes -->
+
+<!-- EDIT SNAG MODAL (admin only) -->
+<div class="modal-overlay" id="editSnagModal">
+  <div class="modal">
+    <button class="close-x" data-close="editSnagModal">&times;</button>
+    <h2>Edit snag (admin)</h2>
+    <div class="field"><label>Site</label><input type="text" id="editSnagSite" /></div>
+    <div class="field"><label>Location</label><input type="text" id="editSnagLocation" /></div>
+    <div class="field"><label>Description</label><textarea id="editSnagDescription"></textarea></div>
+    <div class="field"><label>Opened by</label><input type="text" id="editSnagOpenedBy" /></div>
+    <div class="section-label">Opening photos</div>
+    <div id="editSnagOpenCamArea"></div>
+    <div class="field"><label>Status</label>
+      <select id="editSnagStatus"><option value="open">Open</option><option value="closed">Closed</option></select>
+    </div>
+    <div id="editSnagClosedFields">
+      <div class="field"><label>Closed by</label><input type="text" id="editSnagClosedBy" /></div>
+      <div class="field"><label>Closing notes</label><textarea id="editSnagCloseNotes"></textarea></div>
+      <div class="section-label">Closing photos</div>
+      <div id="editSnagCloseCamArea"></div>
+    </div>
+    <div class="hint">Editing here overrides the normal workflow. Use this to fix mistakes or force a status change.</div>
+    <div class="error-text" id="editSnagError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="saveEditSnagBtn" style="width:100%;">Save changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- APP SETTINGS MODAL (admin only) -->
+<div class="modal-overlay" id="appSettingsModal">
+  <div class="modal">
+    <button class="close-x" data-close="appSettingsModal">&times;</button>
+    <h2>App settings (admin)</h2>
+    <div class="field">
+      <label>App password</label>
+      <input type="text" id="appSettingsPassword" placeholder="Leave blank for no password" />
+    </div>
+    <div class="hint">Anyone opening the app must enter this password before they can view or use it. Leave blank to disable the password requirement. Signed-in admins always bypass this by signing in directly.</div>
+    <div class="error-text" id="appSettingsError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="saveAppSettingsBtn" style="width:100%;">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- OTP MODAL (non-admin staff opening a new snag) -->
+<div class="modal-overlay" id="otpModal">
+  <div class="modal">
+    <button class="close-x" data-close="otpModal">&times;</button>
+    <h2>Verify to open a snag</h2>
+    <div class="hint">Opening a new snag needs a one-time code from your admin. Ask them for the code after you request it below — it does not apply to work reports.</div>
+    <div id="otpRequestStep">
+      <div class="field"><label>Your name</label><input type="text" id="otpStaffName" placeholder="Enter your name" /></div>
+      <div class="error-text" id="otpRequestError"></div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="otpRequestBtn" style="width:100%;">Request code</button>
+      </div>
+    </div>
+    <div id="otpVerifyStep" style="display:none;">
+      <div class="hint">Code requested. Ask your admin for the 6-digit code, then enter it below. Once verified, you can open snags for the next 24 hours without asking again.</div>
+      <div class="field"><label>Enter code</label><input type="text" id="otpCodeInput" inputmode="numeric" maxlength="6" placeholder="6-digit code" /></div>
+      <div class="error-text" id="otpError"></div>
+      <div class="modal-actions">
+        <button class="btn btn-primary" id="otpVerifyBtn" style="width:100%;">Verify</button>
+      </div>
+      <button class="btn btn-light" id="otpRequestAgainBtn" style="width:100%;margin-top:8px;">Request a new code</button>
+    </div>
+  </div>
+</div>
+
+<!-- OTP ADMIN PANEL (admin only) -->
+<div class="modal-overlay" id="otpAdminModal">
+  <div class="modal">
+    <button class="close-x" data-close="otpAdminModal">&times;</button>
+    <h2>Snag OTP requests (admin)</h2>
+    <div class="hint">Read the code out to whoever requested it. Once they verify it, they can open snags for 24 hours.</div>
+    <div id="otpAdminList"></div>
+  </div>
+</div>
+
+<!-- EDIT WORK REPORT MODAL (admin only) -->
+<div class="modal-overlay" id="editWorkModal">
+  <div class="modal">
+    <button class="close-x" data-close="editWorkModal">&times;</button>
+    <h2>Edit work report (admin)</h2>
+    <div class="field"><label>Site</label><input type="text" id="editWorkSite" /></div>
+    <div class="field"><label>Location</label><input type="text" id="editWorkLocation" /></div>
+    <div class="field"><label>Reporting staff</label><input type="text" id="editWorkReportedBy" /></div>
+    <div class="field"><label>Problem / task</label><textarea id="editWorkProblem"></textarea></div>
+    <div class="section-label">Before photos</div>
+    <div id="editWorkBeforeCamArea"></div>
+    <div class="field"><label>Rectification</label><textarea id="editWorkRectification"></textarea></div>
+    <div class="field"><label>Material used</label><textarea id="editWorkMaterial"></textarea></div>
+    <div class="section-label">After photos</div>
+    <div id="editWorkAfterCamArea"></div>
+    <div class="field"><label>Closed by</label><input type="text" id="editWorkClosedBy" /></div>
+    <div class="field checkbox-field"><label><input type="checkbox" id="editWorkClientChecked" /> Client checked / approved this work</label></div>
+    <div class="field"><label>Client name</label><input type="text" id="editWorkClientName" placeholder="Name of client representative" /></div>
+    <div class="section-label">Client signature</div>
+    <div class="signature-preview" id="editWorkSignaturePreview"><div class="signature-placeholder">No signature captured yet</div></div>
+    <div class="modal-actions" style="margin-top:6px;"><button type="button" class="btn btn-light" id="editWorkSignatureOpenBtn" style="width:100%;">Add signature</button></div>
+    <div class="field"><label>Status</label>
+      <select id="editWorkStatus"><option value="incomplete">Incomplete</option><option value="complete">Complete</option></select>
+    </div>
+    <div class="hint">Editing here overrides the normal workflow. Use this to fix mistakes or force a status change.</div>
+    <div class="error-text" id="editWorkError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="saveEditWorkBtn" style="width:100%;">Save changes</button>
+    </div>
+  </div>
+</div>
+
+<!-- SIGNATURE CAPTURE MODAL — opened from the "Add/Retake signature" button on
+     either the work-report or admin-edit-work modal. Always opens with a
+     blank pad; "Retake" clears it, "Save signature" commits it back to
+     whichever modal opened it (tracked via signatureModalTarget). -->
+<div class="modal-overlay" id="signatureModal">
+  <div class="modal">
+    <button class="close-x" data-close="signatureModal">&times;</button>
+    <h2>Client signature</h2>
+    <div class="signature-pad-wrap"><canvas id="signatureModalCanvas"></canvas></div>
+    <div class="hint">Ask the client to sign above with a finger or stylus.</div>
+    <div class="modal-actions" style="margin-top:6px;">
+      <button type="button" class="btn btn-light" id="signatureModalRetakeBtn" style="width:100%;">Retake</button>
+    </div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="signatureModalSaveBtn" style="width:100%;">Save signature</button>
+    </div>
+  </div>
+</div>
+
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
+import {
+  getAuth, signInAnonymously, signInWithEmailAndPassword, onAuthStateChanged, signOut
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+import {
+  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDoc, getDocs, setDoc, onSnapshot, query, orderBy, serverTimestamp
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
+
+// ---------- CONFIG ----------
+const firebaseConfig = {
+  apiKey: "AIzaSyAY_ftw4U2HLPhVwlEdubtS8xIhf8vHiKw",
+  authDomain: "sajsnagreport.firebaseapp.com",
+  projectId: "sajsnagreport",
+  storageBucket: "sajsnagreport.firebasestorage.app",
+  messagingSenderId: "1096666378407",
+  appId: "1:1096666378407:web:50e53f3e6d3e0d32b5ab82",
+  measurementId: "G-EVPZES81LY"
+};
+// Admins who are allowed to OPEN a new snag. Add more emails here if needed
+// (make sure to also add them as Users in the Firebase Console, and keep this
+// list in sync with the Firestore security rules).
+const ADMIN_EMAILS = ["asajelectromech@gmail.com"];
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+// ---------- STATE ----------
+let currentUser = null;
+let isAdmin = false;
+let allSnags = [];
+let listenerStarted = false;
+let filters = { status: "all", site: "", search: "" };
+
+let allWorkReports = [];
+let workListenerStarted = false;
+let workFilters = { status: "all", site: "", search: "" };
+let activeTab = "snags";
+
+let activeStream = null;
+let currentSnagForClose = null;
+
+let selectMode = false;
+let selectedSnagIds = new Set();
+let workSelectMode = false;
+let selectedWorkIds = new Set();
+let editingWorkId = null;
+
+let appPassword = "";
+let appUnlocked = false;
+
+// ---------- HELPERS ----------
+function $(id){ return document.getElementById(id); }
+function showModal(id){ $(id).classList.add("show"); }
+function hideModal(id){
+  $(id).classList.remove("show");
+  stopCamera();
+}
+document.querySelectorAll("[data-close]").forEach(btn=>{
+  btn.addEventListener("click", ()=> hideModal(btn.getAttribute("data-close")));
+});
+
+function fmtDate(ts){
+  if(!ts) return "just now";
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return d.toLocaleString("en-GB", { day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" });
+}
+
+function fmtDateOnly(ts){
+  const d = ts && ts.toDate ? ts.toDate() : (ts ? new Date(ts) : new Date());
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth()+1).padStart(2,"0");
+  const dd = String(d.getDate()).padStart(2,"0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function sanitizeForFilename(str){
+  return String(str||"").trim().replace(/[^a-zA-Z0-9]+/g, "_").replace(/^_+|_+$/g, "") || "Site";
+}
+
+// Builds a filename like SAJ_Snag_Report_<Site>_<YYYY-MM-DD>.pdf using the
+// site filter if one was picked, otherwise the common site across the
+// exported items (or "MultiSite" if they span more than one), and the
+// filtered date range if a single day was picked, otherwise today's date.
+function buildPdfFilename(prefix, items, siteFilterValue, fromValue, toValue, dateField){
+  let sitePart;
+  if(siteFilterValue){
+    sitePart = siteFilterValue;
+  } else {
+    const uniqueSites = [...new Set(items.map(s=> s.site).filter(Boolean))];
+    sitePart = uniqueSites.length === 1 ? uniqueSites[0] : "MultiSite";
+  }
+
+  let datePart;
+  if(fromValue && toValue && fromValue === toValue){
+    datePart = fromValue;
+  } else if(items.length === 1){
+    datePart = fmtDateOnly(items[0][dateField]);
+  } else {
+    datePart = fmtDateOnly(new Date());
+  }
+
+  return `${prefix}_${sanitizeForFilename(sitePart)}_${datePart}.pdf`;
+}
+
+function escapeHtml(str){
+  return (str||"").replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[m]));
+}
+
+// ---------- AUTH ----------
+onAuthStateChanged(auth, async (user)=>{
+  if(!user){
+    signInAnonymously(auth).catch(err=> console.error("Anon sign-in failed", err));
+    return;
+  }
+  currentUser = user;
+  isAdmin = !!user.email && ADMIN_EMAILS.includes(user.email);
+
+  // Admins who sign in directly (email + password) always bypass the app
+  // password gate — their own credentials are the stronger check.
+  if(isAdmin) appUnlocked = true;
+
+  if(!appUnlocked){
+    try{
+      const snap = await getDoc(doc(db, "settings", "appAccess"));
+      appPassword = (snap.exists() && snap.data().password) ? String(snap.data().password) : "";
+    }catch(e){
+      console.error("Could not load app password setting", e);
+      appPassword = "";
+    }
+    if(appPassword){
+      $("loadingScreen").style.display = "none";
+      $("gatePasswordInput").value = "";
+      $("gateError").textContent = "";
+      $("passwordGate").style.display = "flex";
+      return; // wait for the gate to be unlocked before showing the app
+    }
+    appUnlocked = true; // no password configured yet — open access
+  }
+
+  unlockApp();
+});
+
+function unlockApp(){
+  $("passwordGate").style.display = "none";
+  $("loadingScreen").style.display = "none";
+  renderAuthBox();
+  updateFabVisibility();
+  updateSnagExportLabel();
+  updateWorkExportLabel();
+  startSnagListener();
+  startWorkListener();
+}
+
+$("gateSubmitBtn").addEventListener("click", ()=>{
+  const val = $("gatePasswordInput").value;
+  if(val === appPassword){
+    appUnlocked = true;
+    unlockApp();
+  } else {
+    $("gateError").textContent = "Incorrect password.";
+  }
+});
+$("gatePasswordInput").addEventListener("keydown", (e)=>{
+  if(e.key === "Enter") $("gateSubmitBtn").click();
+});
+$("gateAdminLoginBtn").addEventListener("click", ()=>{
+  $("loginError").textContent = "";
+  showModal("loginModal");
+});
+
+function updateFabVisibility(){
+  if(!currentUser) { $("fab").style.display = "none"; return; }
+  // Work reports can be opened by any signed-in staff member. Snags can also
+  // be opened by non-admin staff, but require an OTP from the admin first
+  // (handled in the fab click handler) — the fab itself is always visible.
+  $("fab").style.display = "flex";
+}
+
+// ---------- TABS ----------
+document.querySelectorAll("#mainTabs .tab-btn").forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    activeTab = btn.getAttribute("data-tab");
+    document.querySelectorAll("#mainTabs .tab-btn").forEach(b=> b.classList.remove("active"));
+    btn.classList.add("active");
+    $("snagsView").style.display = activeTab === "snags" ? "block" : "none";
+    $("workView").style.display = activeTab === "work" ? "block" : "none";
+    updateFabVisibility();
+  });
+});
+
+function renderAuthBox(){
+  const box = $("authBox");
+  if(isAdmin){
+    box.innerHTML = `<span class="user-email">${escapeHtml(currentUser.email)}</span><button class="btn btn-outline" id="otpRequestsBtn">Snag OTPs</button><button class="btn btn-outline" id="appSettingsBtn">App settings</button><button class="btn btn-outline" id="logoutBtn">Sign out</button>`;
+    $("logoutBtn").addEventListener("click", ()=> signOut(auth));
+    $("otpRequestsBtn").addEventListener("click", openOtpAdminModal);
+    $("appSettingsBtn").addEventListener("click", ()=>{
+      $("appSettingsPassword").value = appPassword || "";
+      $("appSettingsError").textContent = "";
+      showModal("appSettingsModal");
+    });
+  } else {
+    box.innerHTML = `<button class="btn btn-outline" id="adminLoginBtn">Admin sign in</button>`;
+    $("adminLoginBtn").addEventListener("click", ()=>{
+      $("loginError").textContent = "";
+      showModal("loginModal");
+    });
+  }
+}
+
+$("saveAppSettingsBtn").addEventListener("click", async ()=>{
+  const val = $("appSettingsPassword").value.trim();
+  $("appSettingsError").textContent = "";
+  $("saveAppSettingsBtn").disabled = true;
+  try{
+    await setDoc(doc(db, "settings", "appAccess"), { password: val }, { merge: true });
+    appPassword = val;
+    hideModal("appSettingsModal");
+  }catch(err){
+    console.error(err);
+    $("appSettingsError").textContent = "Could not save. Check your connection and try again.";
+  }
+  $("saveAppSettingsBtn").disabled = false;
+});
+
+// ---------- OTP ADMIN PANEL (list pending/recent snag OTP requests) ----------
+async function openOtpAdminModal(){
+  showModal("otpAdminModal");
+  $("otpAdminList").innerHTML = `<div class="hint">Loading…</div>`;
+  try{
+    const snap = await getDocs(query(collection(db, "otpRequests"), orderBy("createdAt", "desc")));
+    if(snap.empty){
+      $("otpAdminList").innerHTML = `<div class="hint">No OTP requests yet.</div>`;
+      return;
+    }
+    const now = new Date();
+    $("otpAdminList").innerHTML = snap.docs.map(d=>{
+      const r = d.data();
+      const expiresDate = r.verifiedExpiresAt && r.verifiedExpiresAt.toDate ? r.verifiedExpiresAt.toDate() : null;
+      const activeNow = r.status === "verified" && expiresDate && expiresDate > now;
+      const badge = activeNow
+        ? `<span class="badge badge-complete">Verified — active</span>`
+        : (r.status === "verified"
+            ? `<span class="badge badge-incomplete">Verified — expired</span>`
+            : `<span class="badge badge-open">Pending</span>`);
+      return `
+        <div class="card" style="cursor:default;">
+          <div class="card-body">
+            <p class="card-title">${escapeHtml(r.requestedBy || "Unknown")} ${badge}</p>
+            <p class="card-desc" style="font-size:22px;font-weight:700;letter-spacing:3px;color:var(--navy);white-space:normal;">${escapeHtml(r.code || "")}</p>
+            <div class="meta">Requested ${fmtDate(r.createdAt)}${expiresDate ? ` &middot; Access ${activeNow ? "expires" : "expired"} ${expiresDate.toLocaleString("en-GB", { day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit" })}` : ""}</div>
+          </div>
+        </div>`;
+    }).join("");
+  }catch(err){
+    console.error(err);
+    $("otpAdminList").innerHTML = `<div class="error-text">Could not load OTP requests. Check your connection and try again.</div>`;
+  }
+}
+
+$("loginSubmit").addEventListener("click", async ()=>{
+  const email = $("loginEmail").value.trim();
+  const pw = $("loginPassword").value;
+  $("loginError").textContent = "";
+  if(!email || !pw){ $("loginError").textContent = "Enter email and password."; return; }
+  try{
+    await signInWithEmailAndPassword(auth, email, pw);
+    hideModal("loginModal");
+    $("loginEmail").value = ""; $("loginPassword").value = "";
+  }catch(err){
+    $("loginError").textContent = "Sign in failed. Check email/password.";
+  }
+});
+
+// ---------- FIRESTORE LIVE LIST ----------
+function startSnagListener(){
+  if(listenerStarted) return;
+  listenerStarted = true;
+  const q = query(collection(db, "snags"), orderBy("openedAt", "desc"));
+  onSnapshot(q, (snap)=>{
+    allSnags = snap.docs.map(d=> ({ id: d.id, ...d.data() }));
+    $("syncDot").classList.remove("off");
+    $("syncText").textContent = "Live";
+    populateSiteFilters();
+    renderList();
+  }, (err)=>{
+    console.error(err);
+    $("syncDot").classList.add("off");
+    $("syncText").textContent = "Offline / permission error";
+  });
+}
+
+function populateSiteFilters(){
+  const sites = Array.from(new Set(allSnags.map(s=> s.site).filter(Boolean))).sort();
+  for(const sel of [$("siteFilter"), $("pdfSite")]){
+    const currentVal = sel.value;
+    const firstOption = sel.querySelector("option");
+    sel.innerHTML = "";
+    sel.appendChild(firstOption);
+    sites.forEach(site=>{
+      const opt = document.createElement("option");
+      opt.value = site; opt.textContent = site;
+      sel.appendChild(opt);
+    });
+    sel.value = currentVal;
+  }
+}
+
+// ---------- FILTER + RENDER LIST ----------
+document.querySelectorAll("#statusChips .chip").forEach(chip=>{
+  chip.addEventListener("click", ()=>{
+    document.querySelectorAll("#statusChips .chip").forEach(c=> c.classList.remove("active"));
+    chip.classList.add("active");
+    filters.status = chip.getAttribute("data-status");
+    renderList();
+  });
+});
+$("siteFilter").addEventListener("change", e=>{ filters.site = e.target.value; renderList(); });
+$("searchBox").addEventListener("input", e=>{ filters.search = e.target.value.toLowerCase(); renderList(); });
+
+$("selectModeBtn").addEventListener("click", ()=>{
+  selectMode = !selectMode;
+  if(!selectMode) selectedSnagIds.clear();
+  $("selectModeBtn").textContent = selectMode ? "Cancel" : "Select";
+  $("selectModeBtn").classList.toggle("btn-navy", selectMode);
+  $("snagSelectAllRow").style.display = selectMode ? "flex" : "none";
+  renderList();
+  updateSnagExportLabel();
+});
+function updateSnagExportLabel(){
+  $("exportBtn").textContent = (selectMode && selectedSnagIds.size > 0) ? `Export Selected (${selectedSnagIds.size})` : "Export PDF";
+  $("deleteSelectedSnagsBtn").style.display = (isAdmin && selectMode && selectedSnagIds.size > 0) ? "block" : "none";
+}
+$("selectAllSnagsBtn").addEventListener("click", ()=>{
+  getFiltered().forEach(s=> selectedSnagIds.add(s.id));
+  renderList();
+  updateSnagExportLabel();
+});
+$("clearSnagsBtn").addEventListener("click", ()=>{
+  selectedSnagIds.clear();
+  renderList();
+  updateSnagExportLabel();
+});
+$("deleteSelectedSnagsBtn").addEventListener("click", async ()=>{
+  if(!isAdmin || selectedSnagIds.size === 0) return;
+  if(!confirm(`Delete ${selectedSnagIds.size} selected snag(s)? This cannot be undone.`)) return;
+  $("deleteSelectedSnagsBtn").disabled = true;
+  try{
+    await Promise.all(Array.from(selectedSnagIds).map(id=> deleteDoc(doc(db, "snags", id))));
+    selectedSnagIds.clear();
+    renderList();
+    updateSnagExportLabel();
+  }catch(err){
+    console.error(err);
+    alert("Could not delete some records. Check your connection and try again.");
+  }
+  $("deleteSelectedSnagsBtn").disabled = false;
+});
+
+function getFiltered(){
+  return allSnags.filter(s=>{
+    if(filters.status !== "all" && s.status !== filters.status) return false;
+    if(filters.site && s.site !== filters.site) return false;
+    if(filters.search){
+      const hay = ((s.location||"") + " " + (s.description||"")).toLowerCase();
+      if(!hay.includes(filters.search)) return false;
+    }
+    return true;
+  });
+}
+
+function renderList(){
+  const items = getFiltered();
+  const list = $("list");
+  if(items.length === 0){
+    list.innerHTML = "";
+    $("emptyState").style.display = "block";
+    return;
+  }
+  $("emptyState").style.display = "none";
+  list.innerHTML = items.map(s=>{
+    const firstPhoto = s.openPhotos && s.openPhotos[0] ? s.openPhotos[0].url : null;
+    const thumb = firstPhoto
+      ? `<img class="thumb" src="${firstPhoto}" alt="" />`
+      : `<div class="thumb-placeholder">📷</div>`;
+    const badge = s.status === "open"
+      ? `<span class="badge badge-open">Open</span>`
+      : `<span class="badge badge-closed">Closed</span>`;
+    const checkbox = selectMode
+      ? `<input type="checkbox" class="card-check" ${selectedSnagIds.has(s.id) ? "checked" : ""} />`
+      : "";
+    return `
+      <div class="card" data-id="${s.id}">
+        ${checkbox}
+        ${thumb}
+        <div class="card-body">
+          <p class="card-title">${escapeHtml(s.site)} &middot; ${escapeHtml(s.location)}</p>
+          <p class="card-desc">${escapeHtml(s.description)}</p>
+          ${badge}
+          <div class="meta">Opened by ${escapeHtml(s.openedBy||"")} &middot; ${fmtDate(s.openedAt)}</div>
+        </div>
+      </div>`;
+  }).join("");
+  list.querySelectorAll(".card").forEach(card=>{
+    card.addEventListener("click", ()=>{
+      const id = card.getAttribute("data-id");
+      if(selectMode){
+        if(selectedSnagIds.has(id)) selectedSnagIds.delete(id); else selectedSnagIds.add(id);
+        renderList();
+        updateSnagExportLabel();
+        return;
+      }
+      openDetail(id);
+    });
+  });
+}
+
+// ---------- WORK REPORTS ----------
+function startWorkListener(){
+  if(workListenerStarted) return;
+  workListenerStarted = true;
+  const q = query(collection(db, "workreports"), orderBy("createdAt", "desc"));
+  onSnapshot(q, (snap)=>{
+    allWorkReports = snap.docs.map(d=> ({ id: d.id, ...d.data() }));
+    populateWorkSiteFilter();
+    renderWorkList();
+  }, (err)=>{
+    console.error(err);
+  });
+}
+
+function populateWorkSiteFilter(){
+  const sites = Array.from(new Set(allWorkReports.map(s=> s.site).filter(Boolean))).sort();
+  for(const sel of [$("workSiteFilter"), $("workPdfSite")]){
+    const currentVal = sel.value;
+    const firstOption = sel.querySelector("option");
+    sel.innerHTML = "";
+    sel.appendChild(firstOption);
+    sites.forEach(site=>{
+      const opt = document.createElement("option");
+      opt.value = site; opt.textContent = site;
+      sel.appendChild(opt);
+    });
+    sel.value = currentVal;
+  }
+}
+
+document.querySelectorAll("#workStatusChips .chip").forEach(chip=>{
+  chip.addEventListener("click", ()=>{
+    document.querySelectorAll("#workStatusChips .chip").forEach(c=> c.classList.remove("active"));
+    chip.classList.add("active");
+    workFilters.status = chip.getAttribute("data-status");
+    renderWorkList();
+  });
+});
+$("workSiteFilter").addEventListener("change", e=>{ workFilters.site = e.target.value; renderWorkList(); });
+$("workSearchBox").addEventListener("input", e=>{ workFilters.search = e.target.value.toLowerCase(); renderWorkList(); });
+
+$("workSelectModeBtn").addEventListener("click", ()=>{
+  workSelectMode = !workSelectMode;
+  if(!workSelectMode) selectedWorkIds.clear();
+  $("workSelectModeBtn").textContent = workSelectMode ? "Cancel" : "Select";
+  $("workSelectModeBtn").classList.toggle("btn-navy", workSelectMode);
+  $("workSelectAllRow").style.display = workSelectMode ? "flex" : "none";
+  renderWorkList();
+  updateWorkExportLabel();
+});
+function updateWorkExportLabel(){
+  $("workExportBtn").textContent = (workSelectMode && selectedWorkIds.size > 0) ? `Export Selected (${selectedWorkIds.size})` : "Export PDF";
+  $("deleteSelectedWorkBtn").style.display = (isAdmin && workSelectMode && selectedWorkIds.size > 0) ? "block" : "none";
+}
+$("selectAllWorkBtn").addEventListener("click", ()=>{
+  getWorkFiltered().forEach(s=> selectedWorkIds.add(s.id));
+  renderWorkList();
+  updateWorkExportLabel();
+});
+$("clearWorkBtn").addEventListener("click", ()=>{
+  selectedWorkIds.clear();
+  renderWorkList();
+  updateWorkExportLabel();
+});
+$("deleteSelectedWorkBtn").addEventListener("click", async ()=>{
+  if(!isAdmin || selectedWorkIds.size === 0) return;
+  if(!confirm(`Delete ${selectedWorkIds.size} selected work report(s)? This cannot be undone.`)) return;
+  $("deleteSelectedWorkBtn").disabled = true;
+  try{
+    await Promise.all(Array.from(selectedWorkIds).map(id=> deleteDoc(doc(db, "workreports", id))));
+    selectedWorkIds.clear();
+    renderWorkList();
+    updateWorkExportLabel();
+  }catch(err){
+    console.error(err);
+    alert("Could not delete some records. Check your connection and try again.");
+  }
+  $("deleteSelectedWorkBtn").disabled = false;
+});
+
+function getWorkFiltered(){
+  return allWorkReports.filter(s=>{
+    if(workFilters.status !== "all" && s.status !== workFilters.status) return false;
+    if(workFilters.site && s.site !== workFilters.site) return false;
+    if(workFilters.search){
+      const hay = ((s.location||"") + " " + (s.problemTask||"")).toLowerCase();
+      if(!hay.includes(workFilters.search)) return false;
+    }
+    return true;
+  });
+}
+
+function renderWorkList(){
+  const items = getWorkFiltered();
+  const list = $("workList");
+  if(items.length === 0){
+    list.innerHTML = "";
+    $("workEmptyState").style.display = "block";
+    return;
+  }
+  $("workEmptyState").style.display = "none";
+  list.innerHTML = items.map(s=>{
+    const firstPhoto = s.beforePhotos && s.beforePhotos[0] ? s.beforePhotos[0].url : null;
+    const thumb = firstPhoto
+      ? `<img class="thumb" src="${firstPhoto}" alt="" />`
+      : `<div class="thumb-placeholder">📷</div>`;
+    const badge = s.status === "complete"
+      ? `<span class="badge badge-complete">Complete</span>`
+      : `<span class="badge badge-incomplete">Incomplete</span>`;
+    const checkbox = workSelectMode
+      ? `<input type="checkbox" class="card-check" ${selectedWorkIds.has(s.id) ? "checked" : ""} />`
+      : "";
+    return `
+      <div class="card" data-id="${s.id}">
+        ${checkbox}
+        ${thumb}
+        <div class="card-body">
+          <p class="card-title">${escapeHtml(s.site)} &middot; ${escapeHtml(s.location)}</p>
+          <p class="card-desc">${escapeHtml(s.problemTask)}</p>
+          ${badge}
+          <div class="meta">Reported by ${escapeHtml(s.reportedBy||"")} &middot; ${fmtDate(s.createdAt)}</div>
+        </div>
+      </div>`;
+  }).join("");
+  list.querySelectorAll(".card").forEach(card=>{
+    card.addEventListener("click", ()=>{
+      const id = card.getAttribute("data-id");
+      if(workSelectMode){
+        if(selectedWorkIds.has(id)) selectedWorkIds.delete(id); else selectedWorkIds.add(id);
+        renderWorkList();
+        updateWorkExportLabel();
+        return;
+      }
+      openWorkDetail(id);
+    });
+  });
+}
+
+function openWorkDetail(id){
+  const s = allWorkReports.find(x=> x.id === id);
+  if(!s) return;
+  const badge = s.status === "complete"
+    ? `<span class="badge badge-complete">Complete</span>`
+    : `<span class="badge badge-incomplete">Incomplete</span>`;
+  let html = `
+    <h2>${escapeHtml(s.site)} &middot; ${escapeHtml(s.location)} ${badge}</h2>
+    <div class="detail-row"><b>Problem / task:</b> ${escapeHtml(s.problemTask||"")}</div>
+    <div class="detail-row"><b>Reported by:</b> ${escapeHtml(s.reportedBy||"")}</div>
+    <div class="detail-row"><b>Reported at:</b> ${fmtDate(s.createdAt)}</div>
+    <div class="section-label">Before photos</div>
+    ${photoGalleryHtml(s.beforePhotos)}
+    <div class="detail-row"><b>Rectification:</b> ${s.rectification ? escapeHtml(s.rectification) : "—"}</div>
+    <div class="detail-row"><b>Material used:</b> ${s.materialUsed ? escapeHtml(s.materialUsed) : "—"}</div>
+    <div class="section-label">After photos</div>
+    ${(s.afterPhotos && s.afterPhotos.length) ? photoGalleryHtml(s.afterPhotos) : `<div class="detail-row" style="color:var(--text-muted);">No after photos added</div>`}
+    <div class="detail-row"><b>Closed by:</b> ${s.closedBy ? escapeHtml(s.closedBy) : "—"}</div>
+    <div class="detail-row"><b>Client checked:</b> ${s.clientChecked ? "Yes" : "No"}</div>
+    ${s.clientName ? `<div class="detail-row"><b>Client name:</b> ${escapeHtml(s.clientName)}</div>` : ""}
+    ${s.clientSignature ? `<div class="section-label">Client signature</div><img class="detail-photo" src="${s.clientSignature}" style="background:#fff;border:1px solid var(--border);" />` : ""}
+  `;
+  if(s.status === "incomplete"){
+    html += `<div class="modal-actions"><button class="btn btn-primary" id="completeWorkBtn" style="width:100%;">Complete this report</button></div>`;
+    if(isAdmin){
+      html += `<div class="modal-actions"><button class="btn btn-navy" id="forceCompleteWorkBtn" style="width:100%;">Force complete (admin)</button></div>`;
+    }
+  }
+  if(isAdmin){
+    html += `<div class="modal-actions"><button class="btn btn-light" id="editWorkBtn" style="width:100%;">Edit (admin)</button></div>`;
+    html += `<div class="modal-actions"><button class="btn btn-red" id="deleteWorkBtn" style="width:100%;">Delete this record</button></div>`;
+  }
+  $("detailContent").innerHTML = html;
+  if(s.status === "incomplete"){
+    $("completeWorkBtn").addEventListener("click", ()=>{
+      hideModal("detailModal");
+      openCompleteWorkModal(s);
+    });
+  }
+  if(s.status === "incomplete" && isAdmin){
+    $("forceCompleteWorkBtn").addEventListener("click", async ()=>{
+      const name = prompt("Closed by (name for the record):", s.closedBy || currentUser.email || "Admin");
+      if(name === null) return;
+      const btn = $("forceCompleteWorkBtn");
+      btn.disabled = true;
+      btn.textContent = "Completing…";
+      try{
+        await updateDoc(doc(db, "workreports", s.id), {
+          status: "complete",
+          closedBy: name.trim() || "Admin",
+          updatedAt: serverTimestamp()
+        });
+        hideModal("detailModal");
+      }catch(err){
+        console.error(err);
+        alert("Could not force-complete. Check your connection and try again.");
+        btn.disabled = false;
+        btn.textContent = "Force complete (admin)";
+      }
+    });
+  }
+  if(isAdmin){
+    $("editWorkBtn").addEventListener("click", ()=>{
+      hideModal("detailModal");
+      openEditWorkModal(s);
+    });
+    const delBtn = document.getElementById("deleteWorkBtn");
+    if(delBtn){
+      delBtn.addEventListener("click", async ()=>{
+        if(!confirm(`Delete this work report (${s.site} — ${s.location})? This cannot be undone.`)) return;
+        delBtn.disabled = true;
+        delBtn.textContent = "Deleting…";
+        try{
+          await deleteDoc(doc(db, "workreports", s.id));
+          hideModal("detailModal");
+        }catch(err){
+          console.error(err);
+          alert("Could not delete. Check your connection and try again.");
+          delBtn.disabled = false;
+          delBtn.textContent = "Delete this record";
+        }
+      });
+    }
+  }
+  showModal("detailModal");
+}
+
+// ---------- EDIT WORK REPORT (admin only) ----------
+let editingWorkAdminId = null;
+function openEditWorkModal(s){
+  editingWorkAdminId = s.id;
+  $("editWorkSite").value = s.site || "";
+  $("editWorkLocation").value = s.location || "";
+  $("editWorkReportedBy").value = s.reportedBy || "";
+  $("editWorkProblem").value = s.problemTask || "";
+  $("editWorkRectification").value = s.rectification || "";
+  $("editWorkMaterial").value = s.materialUsed || "";
+  $("editWorkClosedBy").value = s.closedBy || "";
+  $("editWorkClientChecked").checked = !!s.clientChecked;
+  $("editWorkClientName").value = s.clientName || "";
+  $("editWorkStatus").value = s.status || "incomplete";
+  $("editWorkError").textContent = "";
+  editWorkBeforePhotos.length = 0;
+  (s.beforePhotos||[]).forEach(p=> editWorkBeforePhotos.push(p));
+  editWorkBeforeCamHandle.reset();
+  renderThumbs("editWorkBeforeCamArea", editWorkBeforePhotos, ()=>{}, 3);
+  editWorkAfterPhotos.length = 0;
+  (s.afterPhotos||[]).forEach(p=> editWorkAfterPhotos.push(p));
+  editWorkAfterCamHandle.reset();
+  renderThumbs("editWorkAfterCamArea", editWorkAfterPhotos, ()=>{}, 3);
+  showModal("editWorkModal");
+  editWorkClientSignatureUrl = s.clientSignature || null;
+  renderSignaturePreview("editWork");
+}
+$("saveEditWorkBtn").addEventListener("click", async ()=>{
+  if(!isAdmin || !editingWorkAdminId) return;
+  const site = $("editWorkSite").value.trim();
+  const location = $("editWorkLocation").value.trim();
+  const reportedBy = $("editWorkReportedBy").value.trim();
+  const problemTask = $("editWorkProblem").value.trim();
+  $("editWorkError").textContent = "";
+  if(!site || !location || !reportedBy || !problemTask){
+    $("editWorkError").textContent = "Site, location, reporting staff and problem/task are required.";
+    return;
+  }
+  const payload = {
+    site, location, reportedBy, problemTask,
+    rectification: $("editWorkRectification").value.trim() || null,
+    materialUsed: $("editWorkMaterial").value.trim() || null,
+    closedBy: $("editWorkClosedBy").value.trim() || null,
+    clientChecked: $("editWorkClientChecked").checked,
+    clientName: $("editWorkClientName").value.trim() || null,
+    clientSignature: editWorkClientSignatureUrl,
+    status: $("editWorkStatus").value,
+    beforePhotos: editWorkBeforePhotos.slice(),
+    afterPhotos: editWorkAfterPhotos.slice(),
+    updatedAt: serverTimestamp()
+  };
+  $("saveEditWorkBtn").disabled = true;
+  try{
+    await updateDoc(doc(db, "workreports", editingWorkAdminId), payload);
+    editingWorkAdminId = null;
+    hideModal("editWorkModal");
+  }catch(err){
+    console.error(err);
+    $("editWorkError").textContent = "Could not save. Check your connection and try again.";
+  }
+  $("saveEditWorkBtn").disabled = false;
+});
+
+// New work report form wiring
+let workBeforePhotos = [];
+let workAfterPhotos = [];
+
+function updateSaveWorkBtn(){
+  const requiredOk = editingWorkId
+    ? true
+    : ($("workSite").value.trim() && $("workLocation").value.trim()
+        && $("workReportedBy").value.trim() && $("workProblem").value.trim()
+        && workBeforePhotos.length >= 2);
+  $("saveWorkBtn").disabled = !requiredOk;
+
+  const willBeComplete = workAfterPhotos.length >= 2
+    && $("workRectification").value.trim()
+    && $("workMaterial").value.trim()
+    && $("workClosedBy").value.trim()
+    && $("workClientChecked").checked
+    && $("workClientName").value.trim()
+    && !!workClientSignatureUrl;
+
+  // Button label always reflects what will actually happen on save, so the
+  // person doesn't need to guess whether they've filled in everything.
+  $("saveWorkBtn").textContent = willBeComplete ? "Save as Completed" : "Save as Incomplete";
+
+  $("workCompletenessHint").textContent = requiredOk
+    ? (willBeComplete
+        ? "This report will be saved as: Complete"
+        : "This report will be saved as: Incomplete (missing after photos, rectification, material used, closed-by name, client checked, client name, or client signature)")
+    : "Site, location, reporting staff, problem/task and at least 2 before photos are required to save.";
+}
+["workSite","workLocation","workReportedBy","workProblem","workRectification","workMaterial","workClosedBy","workClientName"].forEach(id=>{
+  $(id).addEventListener("input", updateSaveWorkBtn);
+});
+$("workClientChecked").addEventListener("change", updateSaveWorkBtn);
+
+// Opens the modal in "complete an incomplete work report" mode. The original
+// site/location/reporting-staff/problem/before-photos are locked (shown as a
+// summary instead of editable fields) — only the completion fields can change,
+// matching what the Firestore security rules allow to be updated.
+function openCompleteWorkModal(s){
+  editingWorkId = s.id;
+  $("workModalTitle").textContent = "Complete work report";
+  $("workNewFieldsSection").style.display = "none";
+  const summary = $("workEditSummary");
+  summary.style.display = "block";
+  summary.innerHTML = `
+    <div class="detail-row"><b>Site:</b> ${escapeHtml(s.site)}</div>
+    <div class="detail-row"><b>Location:</b> ${escapeHtml(s.location)}</div>
+    <div class="detail-row"><b>Reported by:</b> ${escapeHtml(s.reportedBy||"")}</div>
+    <div class="detail-row"><b>Problem / task:</b> ${escapeHtml(s.problemTask||"")}</div>
+  `;
+  $("workRectification").value = s.rectification || "";
+  $("workMaterial").value = s.materialUsed || "";
+  $("workClosedBy").value = s.closedBy || "";
+  $("workClientChecked").checked = !!s.clientChecked;
+  $("workClientName").value = s.clientName || "";
+  $("newWorkError").textContent = "";
+
+  workAfterPhotos.length = 0;
+  (s.afterPhotos||[]).forEach(p=> workAfterPhotos.push(p));
+  workAfterCamHandle.reset();
+  workClientSignatureUrl = s.clientSignature || null;
+  renderSignaturePreview("work");
+  updateSaveWorkBtn();
+  showModal("newWorkModal");
+}
+
+$("saveWorkBtn").addEventListener("click", async ()=>{
+  $("newWorkError").textContent = "";
+  const rectification = $("workRectification").value.trim();
+  const materialUsed = $("workMaterial").value.trim();
+  const closedBy = $("workClosedBy").value.trim();
+  const clientChecked = $("workClientChecked").checked;
+  const clientName = $("workClientName").value.trim();
+  const clientSignature = workClientSignatureUrl;
+  const isComplete = workAfterPhotos.length >= 2 && !!rectification && !!materialUsed && !!closedBy
+    && clientChecked && !!clientName && !!clientSignature;
+
+  $("saveWorkBtn").disabled = true;
+  try{
+    if(editingWorkId){
+      await updateDoc(doc(db, "workreports", editingWorkId), {
+        afterPhotos: workAfterPhotos.slice(),
+        rectification: rectification || null,
+        materialUsed: materialUsed || null,
+        closedBy: closedBy || null,
+        clientChecked,
+        clientName: clientName || null,
+        clientSignature: clientSignature || null,
+        status: isComplete ? "complete" : "incomplete",
+        updatedAt: serverTimestamp()
+      });
+      editingWorkId = null;
+    } else {
+      const site = $("workSite").value.trim();
+      const location = $("workLocation").value.trim();
+      const reportedBy = $("workReportedBy").value.trim();
+      const problemTask = $("workProblem").value.trim();
+      if(!site || !location || !reportedBy || !problemTask){
+        $("newWorkError").textContent = "Site, location, reporting staff and problem/task are all required.";
+        $("saveWorkBtn").disabled = false;
+        return;
+      }
+      if(workBeforePhotos.length < 2){
+        $("newWorkError").textContent = "At least 2 before photos are required.";
+        $("saveWorkBtn").disabled = false;
+        return;
+      }
+      await addDoc(collection(db, "workreports"), {
+        site, location,
+        reportedBy,
+        reportedByEmail: currentUser.email || null,
+        problemTask,
+        beforePhotos: workBeforePhotos.slice(),
+        rectification: rectification || null,
+        materialUsed: materialUsed || null,
+        afterPhotos: workAfterPhotos.slice(),
+        closedBy: closedBy || null,
+        clientChecked,
+        clientName: clientName || null,
+        clientSignature: clientSignature || null,
+        status: isComplete ? "complete" : "incomplete",
+        createdAt: serverTimestamp()
+      });
+    }
+    hideModal("newWorkModal");
+  }catch(err){
+    console.error(err);
+    $("newWorkError").textContent = "Could not save. Check your connection and try again.";
+  }
+  $("saveWorkBtn").disabled = false;
+});
+
+// ---------- MULTI-PHOTO CAPTURE (shared by new-snag, close-snag, and work reports) ----------
+function multiPhotoMarkup(areaId){
+  return `
+    <div class="photo-thumbs" id="${areaId}_thumbs"></div>
+    <video id="${areaId}_video" autoplay playsinline muted style="display:none;"></video>
+    <img id="${areaId}_preview" class="photo-preview" style="display:none;" />
+    <input type="file" id="${areaId}_file" accept="image/*" style="display:none;" />
+    <div class="field" id="${areaId}_areaField" style="display:none;">
+      <label>Area / location (auto-detected)</label>
+      <input type="text" id="${areaId}_areaInput" placeholder="Detecting…" readonly />
+    </div>
+    <div class="zoom-row" id="${areaId}_zoomRow" style="display:none;">
+      <span>&#128269;</span>
+      <input type="range" id="${areaId}_zoom" min="1" max="1" step="0.1" value="1" />
+    </div>
+    <div class="cam-actions" id="${areaId}_actions">
+      <button class="btn btn-light" id="${areaId}_start">Take photo</button>
+      <button class="btn btn-light" id="${areaId}_gallery">Choose from gallery</button>
+      <button class="btn btn-primary" id="${areaId}_shot" style="display:none;" disabled>Capture</button>
+    </div>
+    <div class="cam-actions" id="${areaId}_confirmActions" style="display:none;">
+      <button class="btn btn-primary" id="${areaId}_add">Add this photo</button>
+      <button class="btn btn-light" id="${areaId}_retake">Discard</button>
+    </div>
+    <div class="hint" id="${areaId}_status">Add up to 3 photos. Date, time and area are stamped onto each photo.</div>
+  `;
+}
+$("newCamArea").innerHTML = multiPhotoMarkup("newCamArea");
+$("closeCamArea").innerHTML = multiPhotoMarkup("closeCamArea");
+$("workBeforeCamArea").innerHTML = multiPhotoMarkup("workBeforeCamArea");
+$("workAfterCamArea").innerHTML = multiPhotoMarkup("workAfterCamArea");
+$("editSnagOpenCamArea").innerHTML = multiPhotoMarkup("editSnagOpenCamArea");
+$("editSnagCloseCamArea").innerHTML = multiPhotoMarkup("editSnagCloseCamArea");
+$("editWorkBeforeCamArea").innerHTML = multiPhotoMarkup("editWorkBeforeCamArea");
+$("editWorkAfterCamArea").innerHTML = multiPhotoMarkup("editWorkAfterCamArea");
+
+const workBeforeCamHandle = wireMultiPhoto("workBeforeCamArea",
+  (area)=> [ `${$("workSite").value} - ${$("workLocation").value || "Location"} (before)`, timestampLine(), area ],
+  workBeforePhotos, ()=>{ updateSaveWorkBtn(); }, 3
+);
+const workAfterCamHandle = wireMultiPhoto("workAfterCamArea",
+  (area)=> [ `${$("workSite").value} - ${$("workLocation").value || "Location"} (after)`, timestampLine(), area ],
+  workAfterPhotos, ()=>{ updateSaveWorkBtn(); }, 3
+);
+
+// ---------- EDIT (admin) photo arrays — let an admin add/remove photos
+// on an existing snag or work report, same capture flow as everywhere else ----------
+let editSnagOpenPhotos = [];
+let editSnagClosePhotos = [];
+const editSnagOpenCamHandle = wireMultiPhoto("editSnagOpenCamArea",
+  (area)=> [ `${$("editSnagSite").value} - ${$("editSnagLocation").value || "Location"}`, timestampLine(), area ],
+  editSnagOpenPhotos, ()=>{}, 3
+);
+const editSnagCloseCamHandle = wireMultiPhoto("editSnagCloseCamArea",
+  (area)=> [ `${$("editSnagSite").value} - ${$("editSnagLocation").value || "Location"} (closing)`, timestampLine(), area ],
+  editSnagClosePhotos, ()=>{}, 3
+);
+
+let editWorkBeforePhotos = [];
+let editWorkAfterPhotos = [];
+const editWorkBeforeCamHandle = wireMultiPhoto("editWorkBeforeCamArea",
+  (area)=> [ `${$("editWorkSite").value} - ${$("editWorkLocation").value || "Location"} (before)`, timestampLine(), area ],
+  editWorkBeforePhotos, ()=>{}, 3
+);
+const editWorkAfterCamHandle = wireMultiPhoto("editWorkAfterCamArea",
+  (area)=> [ `${$("editWorkSite").value} - ${$("editWorkLocation").value || "Location"} (after)`, timestampLine(), area ],
+  editWorkAfterPhotos, ()=>{}, 3
+);
+
+function stopCamera(){
+  if(activeStream){
+    activeStream.getTracks().forEach(t=> t.stop());
+    activeStream = null;
+  }
+}
+
+function renderThumbs(areaId, photosArray, onChange, maxPhotos){
+  const wrap = $(areaId+"_thumbs");
+  wrap.innerHTML = photosArray.map((p,i)=>`
+    <div class="pt-item">
+      <img src="${p.url}" alt="" />
+      <button type="button" class="pt-remove" data-idx="${i}">&times;</button>
+    </div>`).join("");
+  wrap.querySelectorAll(".pt-remove").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const idx = parseInt(btn.getAttribute("data-idx"), 10);
+      photosArray.splice(idx, 1);
+      renderThumbs(areaId, photosArray, onChange, maxPhotos);
+      onChange();
+    });
+  });
+  const atMax = photosArray.length >= maxPhotos;
+  const startBtn = $(areaId+"_start"), galleryBtn = $(areaId+"_gallery");
+  if(startBtn) startBtn.style.display = atMax ? "none" : "block";
+  if(galleryBtn) galleryBtn.style.display = atMax ? "none" : "block";
+  const statusEl = $(areaId+"_status");
+  if(statusEl){
+    statusEl.textContent = atMax
+      ? "Maximum of 3 photos reached."
+      : `${photosArray.length}/${maxPhotos} photos added. Date, time and area are stamped onto each photo.`;
+  }
+}
+
+function wireMultiPhoto(areaId, getOverlayLines, photosArray, onChange, maxPhotos=3){
+  const video = $(areaId+"_video");
+  const preview = $(areaId+"_preview");
+  const fileInput = $(areaId+"_file");
+  const startBtn = $(areaId+"_start");
+  const galleryBtn = $(areaId+"_gallery");
+  const shotBtn = $(areaId+"_shot");
+  const addBtn = $(areaId+"_add");
+  const retakeBtn = $(areaId+"_retake");
+  const actions = $(areaId+"_actions");
+  const confirmActions = $(areaId+"_confirmActions");
+  const areaField = $(areaId+"_areaField");
+  const areaInput = $(areaId+"_areaInput");
+  const zoomRow = $(areaId+"_zoomRow");
+  const zoomSlider = $(areaId+"_zoom");
+
+  let pendingCanvas = null;
+  let pinchStartDist = null;
+  let pinchStartZoom = null;
+
+  function showCaptureButtons(){
+    stopCamera();
+    preview.style.display = "none";
+    video.style.display = "none";
+    shotBtn.style.display = "none";
+    shotBtn.disabled = false;
+    shotBtn.textContent = "Capture";
+    areaField.style.display = "none";
+    zoomRow.style.display = "none";
+    confirmActions.style.display = "none";
+    actions.style.display = "flex";
+    fileInput.value = "";
+    pendingCanvas = null;
+    renderThumbs(areaId, photosArray, onChange, maxPhotos);
+  }
+
+  function touchDist(touches){
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx*dx + dy*dy);
+  }
+
+  async function applyZoom(value){
+    if(!activeStream) return;
+    const track = activeStream.getVideoTracks()[0];
+    if(!track) return;
+    try{ await track.applyConstraints({ advanced: [{ zoom: value }] }); }catch(e){ /* zoom not supported mid-stream on this device */ }
+  }
+
+  zoomSlider.addEventListener("input", ()=> applyZoom(parseFloat(zoomSlider.value)));
+
+  video.addEventListener("touchstart", (e)=>{
+    if(e.touches.length === 2){
+      pinchStartDist = touchDist(e.touches);
+      pinchStartZoom = parseFloat(zoomSlider.value) || parseFloat(zoomSlider.min) || 1;
+    }
+  }, { passive:true });
+  video.addEventListener("touchmove", (e)=>{
+    if(e.touches.length === 2 && pinchStartDist){
+      e.preventDefault();
+      const scale = touchDist(e.touches) / pinchStartDist;
+      const min = parseFloat(zoomSlider.min), max = parseFloat(zoomSlider.max);
+      const newZoom = Math.min(max, Math.max(min, pinchStartZoom * scale));
+      zoomSlider.value = newZoom;
+      applyZoom(newZoom);
+    }
+  }, { passive:false });
+  video.addEventListener("touchend", ()=>{ pinchStartDist = null; });
+
+  // Checks whether a canvas is (almost) entirely black — this happens on some
+  // devices when a frame is grabbed from the camera before the sensor/auto-
+  // exposure has actually warmed up, most commonly on the very first photo.
+  function isFrameNearBlack(ctx, w, h){
+    try{
+      const data = ctx.getImageData(0, 0, w, h).data;
+      let sum = 0, samples = 0;
+      for(let i = 0; i < data.length; i += 40){ // sample ~1 in every 10 pixels
+        sum += data[i] + data[i+1] + data[i+2];
+        samples++;
+      }
+      return samples > 0 && (sum / samples) < 12;
+    }catch(e){ return false; }
+  }
+
+  async function reviewCapture(sourceEl, naturalW, naturalH, isLiveVideo){
+    actions.style.display = "none";
+
+    const canvas = document.createElement("canvas");
+    const maxDim = 900;
+    const scale = Math.min(1, maxDim / Math.max(naturalW, naturalH));
+    canvas.width = naturalW * scale;
+    canvas.height = naturalH * scale;
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(sourceEl, 0, 0, canvas.width, canvas.height);
+
+    // If we grabbed the frame straight off a live camera stream and it came
+    // out black, keep the stream running a little longer and retry a few
+    // times before giving up — this is what fixes the "first photo is black"
+    // problem without affecting gallery-picked images (which are never black).
+    if(isLiveVideo){
+      let attempts = 0;
+      while(isFrameNearBlack(ctx, canvas.width, canvas.height) && attempts < 5 && activeStream){
+        await new Promise(r=> setTimeout(r, 250));
+        ctx.drawImage(sourceEl, 0, 0, canvas.width, canvas.height);
+        attempts++;
+      }
+    }
+
+    stopCamera();
+    video.style.display = "none";
+    pendingCanvas = canvas;
+
+    preview.src = canvas.toDataURL("image/jpeg", 0.8);
+    preview.style.display = "block";
+    areaField.style.display = "block";
+    areaInput.value = "";
+    areaInput.placeholder = "Detecting…";
+    confirmActions.style.display = "flex";
+
+    // Area/location is auto-detected only — it is intentionally not editable,
+    // so whatever the device/GPS determines is what gets stamped on the photo.
+    const geo = await getLocationOnce();
+    const area = await getAreaName(geo);
+    areaInput.value = area === "Location unavailable" ? "Location unavailable" : area;
+    areaInput.placeholder = "";
+  }
+
+  startBtn.addEventListener("click", async ()=>{
+    try{
+      stopCamera();
+      activeStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio:false });
+      video.srcObject = activeStream;
+      video.style.display = "block";
+      startBtn.style.display = "none";
+      galleryBtn.style.display = "none";
+      // Show the Capture button but keep it disabled until the video is actually
+      // rendering a real frame — capturing immediately after getUserMedia()
+      // resolves can grab a black frame before the sensor/video has warmed up.
+      shotBtn.style.display = "block";
+      shotBtn.disabled = true;
+      shotBtn.textContent = "Starting camera…";
+
+      const track = activeStream.getVideoTracks()[0];
+      const caps = (track && track.getCapabilities) ? track.getCapabilities() : {};
+      if(caps && caps.zoom && caps.zoom.max > caps.zoom.min){
+        zoomSlider.min = caps.zoom.min;
+        zoomSlider.max = caps.zoom.max;
+        zoomSlider.step = caps.zoom.step || 0.1;
+        const settings = track.getSettings ? track.getSettings() : {};
+        zoomSlider.value = settings.zoom || caps.zoom.min;
+        zoomRow.style.display = "flex";
+      } else {
+        zoomRow.style.display = "none";
+      }
+
+      await new Promise(resolve=>{
+        if(video.readyState >= 2 && video.videoWidth > 0) return resolve();
+        const onReady = ()=>{
+          if(video.videoWidth > 0){
+            video.removeEventListener("loadeddata", onReady);
+            resolve();
+          }
+        };
+        video.addEventListener("loadeddata", onReady);
+      });
+      // Give the sensor extra frames plus a short fixed delay to settle —
+      // some devices report loadeddata before auto-exposure/auto-focus has
+      // actually produced a lit frame, which is what causes the very first
+      // photo taken to come out black. reviewCapture() also retries if a
+      // black frame slips through despite this warm-up.
+      await new Promise(r=> requestAnimationFrame(()=> requestAnimationFrame(r)));
+      await new Promise(r=> setTimeout(r, 400));
+
+      shotBtn.disabled = false;
+      shotBtn.textContent = "Capture";
+    }catch(err){
+      alert("Could not access camera. Please allow camera permission, and make sure you're on HTTPS.");
+      showCaptureButtons();
+    }
+  });
+
+  shotBtn.addEventListener("click", async ()=>{
+    if(shotBtn.disabled) return;
+    shotBtn.style.display = "none";
+    await reviewCapture(video, video.videoWidth, video.videoHeight, true);
+  });
+
+  galleryBtn.addEventListener("click", ()=> fileInput.click());
+
+  fileInput.addEventListener("change", ()=>{
+    const file = fileInput.files && fileInput.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onload = async ()=>{ await reviewCapture(img, img.naturalWidth, img.naturalHeight, false); };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
+  addBtn.addEventListener("click", ()=>{
+    if(!pendingCanvas || photosArray.length >= maxPhotos) return;
+    const areaVal = areaInput.value.trim() || "Location unavailable";
+    const ctx = pendingCanvas.getContext("2d");
+    const lines = getOverlayLines(areaVal);
+    drawOverlay(ctx, pendingCanvas.width, pendingCanvas.height, lines);
+    const dataUrl = compressCanvas(pendingCanvas);
+    photosArray.push({ url: dataUrl, area: areaVal });
+    onChange();
+    showCaptureButtons();
+  });
+
+  retakeBtn.addEventListener("click", ()=> showCaptureButtons());
+
+  showCaptureButtons();
+  return { reset: showCaptureButtons };
+}
+
+function drawOverlay(ctx, w, h, lines){
+  const lineH = Math.round(h*0.032) + 4;
+  const barH = lines.length * lineH + 14;
+  ctx.fillStyle = "rgba(0,0,0,0.6)";
+  ctx.fillRect(0, h - barH, w, barH);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = `${Math.round(h*0.03)}px Arial`;
+  ctx.textBaseline = "top";
+  lines.forEach((line,i)=>{
+    ctx.fillText(line, 10, h - barH + 8 + i*lineH);
+  });
+}
+
+function compressCanvas(canvas, maxLen=170000){
+  let quality = 0.75;
+  let dataUrl = canvas.toDataURL("image/jpeg", quality);
+  while(dataUrl.length > maxLen && quality > 0.25){
+    quality -= 0.1;
+    dataUrl = canvas.toDataURL("image/jpeg", quality);
+  }
+  return dataUrl;
+}
+
+function getLocationOnce(){
+  return new Promise((resolve)=>{
+    if(!navigator.geolocation){ resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      pos=> resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      ()=> resolve(null),
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+    );
+  });
+}
+
+function timestampLine(){
+  return new Date().toLocaleString("en-GB", { day:"2-digit", month:"short", year:"numeric", hour:"2-digit", minute:"2-digit" });
+}
+
+// Reverse-geocode GPS coordinates into a readable area name using the free
+// OpenStreetMap Nominatim service. The result is always editable by the
+// person capturing the photo, since automatic detection can be off,
+// especially indoors or on active construction sites.
+async function getAreaName(geo){
+  if(!geo) return "Location unavailable";
+  try{
+    const res = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?format=json&lat=${geo.lat}&lon=${geo.lng}&zoom=17&addressdetails=1`
+    );
+    const data = await res.json();
+    const a = (data && data.address) || {};
+    return a.suburb || a.neighbourhood || a.quarter || a.road || a.city_district
+      || a.town || a.village || a.city || (data && data.display_name) || "Location unavailable";
+  }catch(e){
+    return "Location unavailable";
+  }
+}
+
+// ---------- SIGNATURE PAD (client sign-off on work reports) ----------
+// Stroke-based canvas signature capture: each pen-down/up is tracked as its
+// own stroke, so a single accidental touch can be undone without wiping the
+// whole signature. resize() must be called after the containing modal
+// becomes visible (getBoundingClientRect is 0 while hidden), so callers
+// re-size it each time right before showModal().
+function setupSignaturePad(canvasId, clearBtnId, undoBtnId, onChange){
+  const canvas = $(canvasId);
+  const ctx = canvas.getContext("2d");
+  const notify = onChange || function(){};
+  let ratio = window.devicePixelRatio || 1;
+  let strokes = [];          // array of arrays of {x,y} — one array per stroke
+  let currentStroke = null;
+  let drawing = false;
+  let baseImage = null;      // a previously-saved signature, loaded as a flat image
+
+  function drawDot(p){
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, ctx.lineWidth / 2, 0, Math.PI * 2);
+    ctx.fillStyle = ctx.strokeStyle;
+    ctx.fill();
+  }
+
+  function redraw(){
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    if(baseImage){ ctx.drawImage(baseImage, 0, 0, canvas.width / ratio, canvas.height / ratio); }
+    strokes.forEach(stroke=>{
+      if(stroke.length === 1){ drawDot(stroke[0]); return; }
+      ctx.beginPath();
+      ctx.moveTo(stroke[0].x, stroke[0].y);
+      for(let i=1;i<stroke.length;i++) ctx.lineTo(stroke[i].x, stroke[i].y);
+      ctx.stroke();
+    });
+  }
+
+  function resize(){
+    const rect = canvas.getBoundingClientRect();
+    if(rect.width === 0 || rect.height === 0) return;
+    ratio = window.devicePixelRatio || 1;
+    canvas.width = Math.round(rect.width * ratio);
+    canvas.height = Math.round(rect.height * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.strokeStyle = "#111";
+    redraw();
+  }
+
+  function pos(e){
+    const rect = canvas.getBoundingClientRect();
+    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+  }
+  function start(e){
+    e.preventDefault();
+    canvas.setPointerCapture && canvas.setPointerCapture(e.pointerId);
+    drawing = true;
+    currentStroke = [pos(e)];
+    strokes.push(currentStroke);
+    drawDot(currentStroke[0]); // visible immediately in case it turns out to be just a tap/dot
+  }
+  function move(e){
+    if(!drawing) return;
+    e.preventDefault();
+    const p = pos(e);
+    currentStroke.push(p);
+    const n = currentStroke.length;
+    if(n >= 2){
+      ctx.beginPath();
+      ctx.moveTo(currentStroke[n-2].x, currentStroke[n-2].y);
+      ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+    }
+  }
+  function stop(e){
+    if(!drawing) return;
+    drawing = false;
+    currentStroke = null;
+    notify();
+  }
+
+  canvas.addEventListener("pointerdown", start);
+  canvas.addEventListener("pointermove", move);
+  canvas.addEventListener("pointerup", stop);
+  canvas.addEventListener("pointercancel", stop);
+  canvas.addEventListener("pointerleave", stop);
+
+  function clear(){ strokes = []; baseImage = null; redraw(); notify(); }
+  function undo(){
+    if(strokes.length){ strokes.pop(); }
+    else if(baseImage){ baseImage = null; }
+    redraw();
+    notify();
+  }
+  if(clearBtnId){ $(clearBtnId).addEventListener("click", clear); }
+  if(undoBtnId){ $(undoBtnId).addEventListener("click", undo); }
+
+  function isEmpty(){ return !baseImage && strokes.length === 0; }
+  function getDataUrl(){ return isEmpty() ? null : canvas.toDataURL("image/png"); }
+  function loadFromDataUrl(url){
+    strokes = [];
+    baseImage = null;
+    if(!url){ redraw(); return; }
+    const img = new Image();
+    img.onload = ()=>{ baseImage = img; redraw(); notify(); };
+    img.src = url;
+  }
+
+  return { resize, clear, undo, getDataUrl, loadFromDataUrl, isEmpty };
+}
+
+const signatureModalPad = setupSignaturePad("signatureModalCanvas", "signatureModalRetakeBtn", null);
+let workClientSignatureUrl = null;
+let editWorkClientSignatureUrl = null;
+let signatureModalTarget = null; // "work" | "editWork"
+
+function renderSignaturePreview(prefix){
+  const url = prefix === "work" ? workClientSignatureUrl : editWorkClientSignatureUrl;
+  $(prefix + "SignaturePreview").innerHTML = url
+    ? `<img src="${url}" alt="Client signature" />`
+    : `<div class="signature-placeholder">No signature captured yet</div>`;
+  $(prefix + "SignatureOpenBtn").textContent = url ? "Retake signature" : "Add signature";
+}
+
+function openSignatureModal(target){
+  signatureModalTarget = target;
+  signatureModalPad.clear();
+  showModal("signatureModal");
+  signatureModalPad.resize();
+}
+$("workSignatureOpenBtn").addEventListener("click", ()=> openSignatureModal("work"));
+$("editWorkSignatureOpenBtn").addEventListener("click", ()=> openSignatureModal("editWork"));
+
+$("signatureModalSaveBtn").addEventListener("click", ()=>{
+  const url = signatureModalPad.getDataUrl();
+  if(!url){ alert("Please sign before saving."); return; }
+  if(signatureModalTarget === "work"){
+    workClientSignatureUrl = url;
+    renderSignaturePreview("work");
+    updateSaveWorkBtn();
+  } else if(signatureModalTarget === "editWork"){
+    editWorkClientSignatureUrl = url;
+    renderSignaturePreview("editWork");
+  }
+  hideModal("signatureModal");
+});
+
+// ---------- NEW SNAG (admin: direct — non-admin: requires OTP) ----------
+let newSnagPhotos = [];
+const newCamHandle = wireMultiPhoto("newCamArea",
+  (area)=> [ `${$("newSite").value} - ${$("newLocation").value || "Location"}`, timestampLine(), area ],
+  newSnagPhotos, updateSaveSnagBtn, 3
+);
+
+function openNewSnagFlow(prefillName){
+  $("newStaffName").value = prefillName || "";
+  $("newSite").value = "";
+  $("newLocation").value = "";
+  $("newDescription").value = "";
+  $("newSnagError").textContent = "";
+  newSnagPhotos.length = 0;
+  newCamHandle.reset();
+  updateSaveSnagBtn();
+  showModal("newSnagModal");
+}
+
+$("fab").addEventListener("click", async ()=>{
+  if(activeTab === "work"){
+    editingWorkId = null;
+    $("workModalTitle").textContent = "New work report";
+    $("workNewFieldsSection").style.display = "block";
+    $("workEditSummary").style.display = "none";
+    ["workSite","workLocation","workReportedBy","workProblem","workRectification","workMaterial","workClosedBy","workClientName"].forEach(id=> $(id).value = "");
+    $("workClientChecked").checked = false;
+    $("newWorkError").textContent = "";
+    workBeforePhotos.length = 0;
+    workAfterPhotos.length = 0;
+    workBeforeCamHandle.reset();
+    workAfterCamHandle.reset();
+    workClientSignatureUrl = null;
+    renderSignaturePreview("work");
+    updateSaveWorkBtn();
+    showModal("newWorkModal");
+    return;
+  }
+
+  // Snags tab
+  if(isAdmin){
+    openNewSnagFlow("");
+    return;
+  }
+
+  // Non-admin: an OTP verified within the last 24 hours skips straight to
+  // the snag form; otherwise they need to request/enter a fresh code.
+  try{
+    const snap = await getDoc(doc(db, "otpRequests", currentUser.uid));
+    if(snap.exists()){
+      const r = snap.data();
+      const expiresDate = r.verifiedExpiresAt && r.verifiedExpiresAt.toDate ? r.verifiedExpiresAt.toDate() : null;
+      if(r.status === "verified" && expiresDate && expiresDate > new Date()){
+        openNewSnagFlow(r.requestedBy || "");
+        return;
+      }
+    }
+  }catch(err){
+    console.error(err);
+  }
+
+  $("otpStaffName").value = "";
+  $("otpRequestError").textContent = "";
+  $("otpRequestStep").style.display = "block";
+  $("otpVerifyStep").style.display = "none";
+  $("otpError").textContent = "";
+  showModal("otpModal");
+});
+
+// ---------- OTP FLOW (non-admin staff opening a new snag) ----------
+let otpPendingName = "";
+$("otpRequestBtn").addEventListener("click", async ()=>{
+  const name = $("otpStaffName").value.trim();
+  $("otpRequestError").textContent = "";
+  if(!name){ $("otpRequestError").textContent = "Please enter your name."; return; }
+  otpPendingName = name;
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  $("otpRequestBtn").disabled = true;
+  try{
+    await setDoc(doc(db, "otpRequests", currentUser.uid), {
+      code,
+      requestedBy: name,
+      status: "pending",
+      createdAt: serverTimestamp(),
+      verifiedExpiresAt: null
+    });
+    $("otpRequestStep").style.display = "none";
+    $("otpVerifyStep").style.display = "block";
+    $("otpCodeInput").value = "";
+    $("otpError").textContent = "";
+  }catch(err){
+    console.error(err);
+    $("otpRequestError").textContent = "Could not request a code. Check your connection and try again.";
+  }
+  $("otpRequestBtn").disabled = false;
+});
+
+$("otpRequestAgainBtn").addEventListener("click", ()=> $("otpRequestBtn").click());
+
+$("otpVerifyBtn").addEventListener("click", async ()=>{
+  const typed = $("otpCodeInput").value.trim();
+  $("otpError").textContent = "";
+  if(!typed){ $("otpError").textContent = "Enter the code your admin gave you."; return; }
+  $("otpVerifyBtn").disabled = true;
+  try{
+    const snap = await getDoc(doc(db, "otpRequests", currentUser.uid));
+    if(!snap.exists() || snap.data().code !== typed){
+      $("otpError").textContent = "Incorrect code. Please check with your admin.";
+      $("otpVerifyBtn").disabled = false;
+      return;
+    }
+    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // valid for 1 day
+    await updateDoc(doc(db, "otpRequests", currentUser.uid), {
+      status: "verified",
+      verifiedExpiresAt: expires
+    });
+    hideModal("otpModal");
+    openNewSnagFlow(otpPendingName);
+  }catch(err){
+    console.error(err);
+    $("otpError").textContent = "Could not verify. Check your connection and try again.";
+  }
+  $("otpVerifyBtn").disabled = false;
+});
+
+["newStaffName","newSite","newLocation","newDescription"].forEach(id=>{
+  $(id).addEventListener("input", updateSaveSnagBtn);
+});
+function updateSaveSnagBtn(){
+  const ok = $("newStaffName").value.trim() && $("newSite").value.trim()
+    && $("newLocation").value.trim() && $("newDescription").value.trim() && newSnagPhotos.length > 0;
+  $("saveSnagBtn").disabled = !ok;
+}
+
+$("saveSnagBtn").addEventListener("click", async ()=>{
+  const staffName = $("newStaffName").value.trim();
+  if(!staffName){ $("newSnagError").textContent = "Please enter your name."; return; }
+  if(newSnagPhotos.length === 0){ $("newSnagError").textContent = "At least one photo is required."; return; }
+  $("saveSnagBtn").disabled = true;
+  try{
+    await addDoc(collection(db, "snags"), {
+      site: $("newSite").value.trim(),
+      location: $("newLocation").value.trim(),
+      description: $("newDescription").value.trim(),
+      status: "open",
+      openPhotos: newSnagPhotos.slice(),
+      openedBy: staffName,
+      openedByEmail: currentUser.email || null,
+      openedAt: serverTimestamp()
+    });
+    hideModal("newSnagModal");
+  }catch(err){
+    console.error(err);
+    $("newSnagError").textContent = isAdmin
+      ? "Could not save. Check your connection and try again."
+      : "Could not save. Your OTP may have expired — tap + again to request a new one.";
+    $("saveSnagBtn").disabled = false;
+  }
+});
+
+// ---------- DETAIL MODAL ----------
+function photoGalleryHtml(photos){
+  if(!photos || photos.length === 0) return "";
+  return photos.map(p=> `
+    <div class="gallery-item">
+      <img class="detail-photo" src="${p.url}" />
+      ${p.area ? `<div class="gallery-caption">${escapeHtml(p.area)}</div>` : ""}
+    </div>
+  `).join("");
+}
+
+function openDetail(id){
+  const s = allSnags.find(x=> x.id === id);
+  if(!s) return;
+  const badge = s.status === "open"
+    ? `<span class="badge badge-open">Open</span>`
+    : `<span class="badge badge-closed">Closed</span>`;
+  let html = `
+    <h2>${escapeHtml(s.site)} &middot; ${escapeHtml(s.location)} ${badge}</h2>
+    ${photoGalleryHtml(s.openPhotos)}
+    <div class="detail-row"><b>Description:</b> ${escapeHtml(s.description)}</div>
+    <div class="detail-row"><b>Opened by:</b> ${escapeHtml(s.openedBy||"")}</div>
+    <div class="detail-row"><b>Opened at:</b> ${fmtDate(s.openedAt)}</div>
+  `;
+  if(s.status === "closed"){
+    html += `
+      <div class="section-label">Closing details</div>
+      ${photoGalleryHtml(s.closePhotos)}
+      <div class="detail-row"><b>Closed by:</b> ${escapeHtml(s.closedBy||"")}</div>
+      <div class="detail-row"><b>Closed at:</b> ${fmtDate(s.closedAt)}</div>
+      ${s.closeNotes ? `<div class="detail-row"><b>Notes:</b> ${escapeHtml(s.closeNotes)}</div>` : ""}
+    `;
+  } else {
+    html += `<div class="modal-actions"><button class="btn btn-green" id="openCloseFlowBtn" style="width:100%;">Close this snag</button></div>`;
+    if(isAdmin){
+      html += `<div class="modal-actions"><button class="btn btn-navy" id="forceCloseSnagBtn" style="width:100%;">Force close (admin)</button></div>`;
+    }
+  }
+  if(isAdmin){
+    html += `<div class="modal-actions"><button class="btn btn-light" id="editSnagBtn" style="width:100%;">Edit (admin)</button></div>`;
+    html += `<div class="modal-actions"><button class="btn btn-red" id="deleteSnagBtn" style="width:100%;">Delete this record</button></div>`;
+  }
+  $("detailContent").innerHTML = html;
+  if(s.status === "open"){
+    $("openCloseFlowBtn").addEventListener("click", ()=>{
+      hideModal("detailModal");
+      openCloseModal(s);
+    });
+  }
+  if(s.status === "open" && isAdmin){
+    $("forceCloseSnagBtn").addEventListener("click", async ()=>{
+      const name = prompt("Your name (for the closing record):", currentUser.email || "Admin");
+      if(name === null) return;
+      const notes = prompt("Closing notes (optional):", "Force-closed by admin") || "Force-closed by admin";
+      const btn = $("forceCloseSnagBtn");
+      btn.disabled = true;
+      btn.textContent = "Closing…";
+      try{
+        await updateDoc(doc(db, "snags", s.id), {
+          status: "closed",
+          closedBy: name.trim() || "Admin",
+          closedAt: serverTimestamp(),
+          closeNotes: notes
+        });
+        hideModal("detailModal");
+      }catch(err){
+        console.error(err);
+        alert("Could not force-close. Check your connection and try again.");
+        btn.disabled = false;
+        btn.textContent = "Force close (admin)";
+      }
+    });
+  }
+  if(isAdmin){
+    $("editSnagBtn").addEventListener("click", ()=>{
+      hideModal("detailModal");
+      openEditSnagModal(s);
+    });
+    const delBtn = document.getElementById("deleteSnagBtn");
+    if(delBtn){
+      delBtn.addEventListener("click", async ()=>{
+        if(!confirm(`Delete this snag record (${s.site} — ${s.location})? This cannot be undone.`)) return;
+        delBtn.disabled = true;
+        delBtn.textContent = "Deleting…";
+        try{
+          await deleteDoc(doc(db, "snags", s.id));
+          hideModal("detailModal");
+        }catch(err){
+          console.error(err);
+          alert("Could not delete. Check your connection and try again.");
+          delBtn.disabled = false;
+          delBtn.textContent = "Delete this record";
+        }
+      });
+    }
+  }
+  showModal("detailModal");
+}
+
+// ---------- EDIT SNAG (admin only) ----------
+let editingSnagId = null;
+function openEditSnagModal(s){
+  editingSnagId = s.id;
+  $("editSnagSite").value = s.site || "";
+  $("editSnagLocation").value = s.location || "";
+  $("editSnagDescription").value = s.description || "";
+  $("editSnagOpenedBy").value = s.openedBy || "";
+  $("editSnagStatus").value = s.status || "open";
+  $("editSnagClosedBy").value = s.closedBy || "";
+  $("editSnagCloseNotes").value = s.closeNotes || "";
+  $("editSnagError").textContent = "";
+  $("editSnagClosedFields").style.display = $("editSnagStatus").value === "closed" ? "block" : "none";
+  editSnagOpenPhotos.length = 0;
+  (s.openPhotos||[]).forEach(p=> editSnagOpenPhotos.push(p));
+  editSnagOpenCamHandle.reset();
+  renderThumbs("editSnagOpenCamArea", editSnagOpenPhotos, ()=>{}, 3);
+  editSnagClosePhotos.length = 0;
+  (s.closePhotos||[]).forEach(p=> editSnagClosePhotos.push(p));
+  editSnagCloseCamHandle.reset();
+  renderThumbs("editSnagCloseCamArea", editSnagClosePhotos, ()=>{}, 3);
+  showModal("editSnagModal");
+}
+$("editSnagStatus").addEventListener("change", ()=>{
+  $("editSnagClosedFields").style.display = $("editSnagStatus").value === "closed" ? "block" : "none";
+});
+$("saveEditSnagBtn").addEventListener("click", async ()=>{
+  if(!isAdmin || !editingSnagId) return;
+  const site = $("editSnagSite").value.trim();
+  const location = $("editSnagLocation").value.trim();
+  const description = $("editSnagDescription").value.trim();
+  const openedBy = $("editSnagOpenedBy").value.trim();
+  const status = $("editSnagStatus").value;
+  $("editSnagError").textContent = "";
+  if(!site || !location || !description){
+    $("editSnagError").textContent = "Site, location and description are required.";
+    return;
+  }
+  const payload = { site, location, description, openedBy, status, openPhotos: editSnagOpenPhotos.slice() };
+  if(status === "closed"){
+    payload.closedBy = $("editSnagClosedBy").value.trim() || "Admin";
+    payload.closeNotes = $("editSnagCloseNotes").value.trim();
+    payload.closePhotos = editSnagClosePhotos.slice();
+  }
+  $("saveEditSnagBtn").disabled = true;
+  try{
+    await updateDoc(doc(db, "snags", editingSnagId), payload);
+    editingSnagId = null;
+    hideModal("editSnagModal");
+  }catch(err){
+    console.error(err);
+    $("editSnagError").textContent = "Could not save. Check your connection and try again.";
+  }
+  $("saveEditSnagBtn").disabled = false;
+});
+
+// ---------- CLOSE SNAG (any signed-in staff) ----------
+let closeSnagPhotos = [];
+const closeCamHandle = wireMultiPhoto("closeCamArea",
+  (area)=> currentSnagForClose
+    ? [ `${currentSnagForClose.site} - ${currentSnagForClose.location} (closing)`, timestampLine(), area ]
+    : [ timestampLine(), area ],
+  closeSnagPhotos, ()=>{ $("closeSnagError").textContent = ""; }, 3
+);
+
+function openCloseModal(snag){
+  currentSnagForClose = snag;
+  $("closeStaffName").value = "";
+  $("closeNotes").value = "";
+  $("closeSnagError").textContent = "";
+  closeSnagPhotos.length = 0;
+  closeCamHandle.reset();
+  showModal("closeSnagModal");
+}
+
+$("confirmCloseBtn").addEventListener("click", async ()=>{
+  const name = $("closeStaffName").value.trim();
+  const notes = $("closeNotes").value.trim();
+  $("closeSnagError").textContent = "";
+  if(!name){ $("closeSnagError").textContent = "Please enter your name."; return; }
+  if(!notes){ $("closeSnagError").textContent = "Please add a note describing how it was resolved."; return; }
+  if(closeSnagPhotos.length === 0){ $("closeSnagError").textContent = "At least one closing photo is required (camera or gallery)."; return; }
+  if(!currentSnagForClose) return;
+  $("confirmCloseBtn").disabled = true;
+  try{
+    await updateDoc(doc(db, "snags", currentSnagForClose.id), {
+      status: "closed",
+      closedBy: name,
+      closedAt: serverTimestamp(),
+      closePhotos: closeSnagPhotos.slice(),
+      closeNotes: notes
+    });
+    hideModal("closeSnagModal");
+  }catch(err){
+    console.error(err);
+    $("closeSnagError").textContent = "Could not close snag. Check your connection and try again.";
+  }
+  $("confirmCloseBtn").disabled = false;
+});
+
+// ---------- PDF EXPORT: SNAG REPORTS ----------
+// Export button behaves two ways: if the user has selected specific snags
+// (via the Select toggle) it exports exactly those, skipping the filter
+// modal. Otherwise it opens the filter modal (site/location/status/date range).
+$("exportBtn").addEventListener("click", ()=>{
+  if(selectMode && selectedSnagIds.size > 0){
+    const items = allSnags.filter(s=> selectedSnagIds.has(s.id));
+    if(items.length === 0){ alert("No snags selected."); return; }
+    generateSnagPdf(items);
+    return;
+  }
+  $("pdfLocation").value = "";
+  $("pdfStatus").value = "";
+  $("pdfFrom").value = "";
+  $("pdfTo").value = "";
+  updatePdfCount();
+  showModal("exportModal");
+});
+["pdfSite","pdfLocation","pdfStatus","pdfFrom","pdfTo"].forEach(id=>{
+  $(id).addEventListener("input", updatePdfCount);
+  $(id).addEventListener("change", updatePdfCount);
+});
+
+function getPdfFiltered(){
+  const site = $("pdfSite").value;
+  const locSub = $("pdfLocation").value.trim().toLowerCase();
+  const status = $("pdfStatus").value;
+  const from = $("pdfFrom").value ? new Date($("pdfFrom").value) : null;
+  const to = $("pdfTo").value ? new Date($("pdfTo").value + "T23:59:59") : null;
+
+  return allSnags.filter(s=>{
+    if(site && s.site !== site) return false;
+    if(status && s.status !== status) return false;
+    if(locSub && !(s.location||"").toLowerCase().includes(locSub)) return false;
+    if(from || to){
+      const d = s.openedAt && s.openedAt.toDate ? s.openedAt.toDate() : null;
+      if(!d) return false;
+      if(from && d < from) return false;
+      if(to && d > to) return false;
+    }
+    return true;
+  });
+}
+function updatePdfCount(){
+  $("pdfCount").textContent = `${getPdfFiltered().length} snag(s) match this filter.`;
+}
+
+$("pdfGenerateBtn").addEventListener("click", ()=>{
+  const items = getPdfFiltered();
+  if(items.length === 0){ alert("No snags match this filter."); return; }
+  generateSnagPdf(items, $("pdfSite").value, $("pdfFrom").value, $("pdfTo").value);
+  hideModal("exportModal");
+});
+
+function generateSnagPdf(items, siteFilterValue, fromValue, toValue){
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ unit: "pt", format: "a4" });
+  const pageH = 842, marginL = 40, marginR = 555;
+  let y = 50;
+
+  pdf.setFontSize(16);
+  pdf.text("SAJ Snag Report", marginL, y); y += 18;
+  pdf.setFontSize(9);
+  pdf.setTextColor(120);
+  pdf.text(`Generated ${new Date().toLocaleString("en-GB")} — ${items.length} record(s)`, marginL, y);
+  pdf.setTextColor(0);
+  y += 22;
+
+  items.forEach((s, idx)=>{
+    const openCount = (s.openPhotos||[]).length;
+    const closeCount = (s.closePhotos||[]).length;
+    const photoRows = (openCount > 0 ? 1 : 0) + (closeCount > 0 ? 1 : 0);
+    const blockHeight = 80 + photoRows * 100;
+    if(y + blockHeight > pageH - 40){ pdf.addPage(); y = 50; }
+
+    pdf.setFontSize(12);
+    pdf.setFont(undefined, "bold");
+    pdf.text(`${idx+1}. ${s.site} — ${s.location}  [${s.status.toUpperCase()}]`, marginL, y);
+    pdf.setFont(undefined, "normal");
+    y += 15;
+
+    pdf.setFontSize(9);
+    const descLines = pdf.splitTextToSize(`Description: ${s.description||""}`, marginR - marginL);
+    pdf.text(descLines, marginL, y);
+    y += descLines.length * 11 + 2;
+
+    pdf.text(`Opened by ${s.openedBy||""} on ${fmtDate(s.openedAt)}`, marginL, y); y += 11;
+    if(s.status === "closed"){
+      pdf.text(`Closed by ${s.closedBy||""} on ${fmtDate(s.closedAt)}`, marginL, y); y += 11;
+      if(s.closeNotes){
+        const noteLines = pdf.splitTextToSize(`Notes: ${s.closeNotes}`, marginR - marginL);
+        pdf.text(noteLines, marginL, y);
+        y += noteLines.length * 11;
+      }
+    }
+
+    function addPhotoRow(photos, label){
+      if(!photos || photos.length === 0) return;
+      y += 4;
+      pdf.setFontSize(8);
+      pdf.setTextColor(120);
+      pdf.text(label, marginL, y);
+      pdf.setTextColor(0);
+      y += 4;
+      const w = 90, h = 68, gap = 8;
+      photos.slice(0, 3).forEach((p, i)=>{
+        try{ pdf.addImage(p.url, "JPEG", marginL + i*(w+gap), y, w, h); }catch(e){ /* skip if it fails */ }
+      });
+      y += h + 12;
+    }
+    addPhotoRow(s.openPhotos, "Opening photo(s)");
+    addPhotoRow(s.closePhotos, "Closing photo(s)");
+
+    y += 8;
+    pdf.setDrawColor(220);
+    pdf.line(marginL, y - 8, marginR, y - 8);
+  });
+
+  pdf.save(buildPdfFilename("SAJ_Snag_Report", items, siteFilterValue, fromValue, toValue, "openedAt"));
+}
+
+// ---------- PDF EXPORT: WORK REPORTS ----------
+$("workExportBtn").addEventListener("click", ()=>{
+  if(workSelectMode && selectedWorkIds.size > 0){
+    const items = allWorkReports.filter(s=> selectedWorkIds.has(s.id));
+    if(items.length === 0){ alert("No work reports selected."); return; }
+    generateWorkPdf(items);
+    return;
+  }
+  $("workPdfLocation").value = "";
+  $("workPdfStatus").value = "";
+  $("workPdfFrom").value = "";
+  $("workPdfTo").value = "";
+  updateWorkPdfCount();
+  showModal("workExportModal");
+});
+["workPdfSite","workPdfLocation","workPdfStatus","workPdfFrom","workPdfTo"].forEach(id=>{
+  $(id).addEventListener("input", updateWorkPdfCount);
+  $(id).addEventListener("change", updateWorkPdfCount);
+});
+
+function getWorkPdfFiltered(){
+  const site = $("workPdfSite").value;
+  const locSub = $("workPdfLocation").value.trim().toLowerCase();
+  const status = $("workPdfStatus").value;
+  const from = $("workPdfFrom").value ? new Date($("workPdfFrom").value) : null;
+  const to = $("workPdfTo").value ? new Date($("workPdfTo").value + "T23:59:59") : null;
+
+  return allWorkReports.filter(s=>{
+    if(site && s.site !== site) return false;
+    if(status && s.status !== status) return false;
+    if(locSub && !(((s.location||"") + " " + (s.problemTask||"")).toLowerCase().includes(locSub))) return false;
+    if(from || to){
+      const d = s.createdAt && s.createdAt.toDate ? s.createdAt.toDate() : null;
+      if(!d) return false;
+      if(from && d < from) return false;
+      if(to && d > to) return false;
+    }
+    return true;
+  });
+}
+function updateWorkPdfCount(){
+  $("workPdfCount").textContent = `${getWorkPdfFiltered().length} report(s) match this filter.`;
+}
+
+$("workPdfGenerateBtn").addEventListener("click", ()=>{
+  const items = getWorkPdfFiltered();
+  if(items.length === 0){ alert("No work reports match this filter."); return; }
+  generateWorkPdf(items, $("workPdfSite").value, $("workPdfFrom").value, $("workPdfTo").value);
+  hideModal("workExportModal");
+});
+
+function generateWorkPdf(items, siteFilterValue, fromValue, toValue){
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({ unit: "pt", format: "a4" });
+  const pageH = 842, marginL = 40, marginR = 555;
+  let y = 50;
+
+  pdf.setFontSize(16);
+  pdf.text("SAJ Work Report", marginL, y); y += 18;
+  pdf.setFontSize(9);
+  pdf.setTextColor(120);
+  pdf.text(`Generated ${new Date().toLocaleString("en-GB")} — ${items.length} record(s)`, marginL, y);
+  pdf.setTextColor(0);
+  y += 22;
+
+  items.forEach((s, idx)=>{
+    const beforeCount = (s.beforePhotos||[]).length;
+    const afterCount = (s.afterPhotos||[]).length;
+    const photoRows = (beforeCount > 0 ? 1 : 0) + (afterCount > 0 ? 1 : 0);
+    const sigRow = s.clientSignature ? 1 : 0;
+    const blockHeight = 110 + photoRows * 100 + sigRow * 70;
+    if(y + blockHeight > pageH - 40){ pdf.addPage(); y = 50; }
+
+    pdf.setFontSize(12);
+    pdf.setFont(undefined, "bold");
+    pdf.text(`${idx+1}. ${s.site} — ${s.location}  [${s.status.toUpperCase()}]`, marginL, y);
+    pdf.setFont(undefined, "normal");
+    y += 15;
+
+    pdf.setFontSize(9);
+    const probLines = pdf.splitTextToSize(`Problem / task: ${s.problemTask||""}`, marginR - marginL);
+    pdf.text(probLines, marginL, y);
+    y += probLines.length * 11 + 2;
+
+    pdf.text(`Reported by ${s.reportedBy||""} on ${fmtDate(s.createdAt)}`, marginL, y); y += 11;
+
+    if(s.rectification){
+      const rectLines = pdf.splitTextToSize(`Rectification: ${s.rectification}`, marginR - marginL);
+      pdf.text(rectLines, marginL, y);
+      y += rectLines.length * 11;
+    }
+    if(s.materialUsed){
+      const matLines = pdf.splitTextToSize(`Material used: ${s.materialUsed}`, marginR - marginL);
+      pdf.text(matLines, marginL, y);
+      y += matLines.length * 11;
+    }
+    if(s.closedBy){
+      pdf.text(`Closed by: ${s.closedBy}`, marginL, y); y += 11;
+    }
+    pdf.text(`Client checked: ${s.clientChecked ? "Yes" : "No"}${s.clientName ? "  (" + s.clientName + ")" : ""}`, marginL, y); y += 11;
+
+    function addPhotoRow(photos, label){
+      if(!photos || photos.length === 0) return;
+      y += 4;
+      pdf.setFontSize(8);
+      pdf.setTextColor(120);
+      pdf.text(label, marginL, y);
+      pdf.setTextColor(0);
+      y += 4;
+      const w = 90, h = 68, gap = 8;
+      photos.slice(0, 3).forEach((p, i)=>{
+        try{ pdf.addImage(p.url, "JPEG", marginL + i*(w+gap), y, w, h); }catch(e){ /* skip if it fails */ }
+      });
+      y += h + 12;
+    }
+    addPhotoRow(s.beforePhotos, "Before photo(s)");
+    addPhotoRow(s.afterPhotos, "After photo(s)");
+
+    if(s.clientSignature){
+      y += 4;
+      pdf.setFontSize(8);
+      pdf.setTextColor(120);
+      pdf.text("Client signature", marginL, y);
+      pdf.setTextColor(0);
+      y += 4;
+      try{ pdf.addImage(s.clientSignature, "PNG", marginL, y, 160, 55); }catch(e){ /* skip if it fails */ }
+      y += 55 + 12;
+    }
+
+    y += 8;
+    pdf.setDrawColor(220);
+    pdf.line(marginL, y - 8, marginR, y - 8);
+  });
+
+  pdf.save(buildPdfFilename("SAJ_Work_Report", items, siteFilterValue, fromValue, toValue, "createdAt"));
+}
+</script>
+</body>
+</html>
