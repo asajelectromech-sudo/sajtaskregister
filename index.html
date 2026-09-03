@@ -217,7 +217,6 @@
 <div class="modal-overlay" id="projectTasksModal">
   <div class="modal">
     <h2 id="projectTasksTitle">Project</h2>
-    <div id="projectProjectStatus"></div>
     <div id="projectTasksList"></div>
     <div class="modal-actions"><button class="btn btn-light" data-close="projectTasksModal">Close</button><button class="btn btn-primary" id="addProjectTaskBtn">+ Add Task</button></div>
   </div>
@@ -226,10 +225,7 @@
 <div class="modal-overlay" id="newProjectTaskModal">
   <div class="modal">
     <h2>Add Task</h2>
-    <div class="field"><label id="projectTaskLabel">Task</label><input id="projectTaskInput" type="text" placeholder="Task" /></div>
-    <div class="field"><label id="projectLocationLabel">Location / Building</label><input id="projectLocationInput" type="text" placeholder="Location / Building" /></div>
-    <div class="field"><label id="projectUnitLabel">Unit Number</label><input id="projectUnitInput" type="text" placeholder="Unit number" /></div>
-    <div class="field"><label id="projectStaffLabel">Staff Name (optional)</label><input id="projectStaffInput" type="text" placeholder="Optional" /></div>
+    <div id="projectTaskDynamicFields"></div>
     <div class="error-text" id="projectTaskError"></div>
     <div class="modal-actions"><button class="btn btn-light" data-close="newProjectTaskModal">Cancel</button><button class="btn btn-primary" id="saveProjectTaskBtn">Save</button></div>
   </div>
@@ -430,12 +426,12 @@
       <label>App password</label>
       <input type="text" id="appSettingsPassword" placeholder="Leave blank for no password" />
     </div>
-    <div class="section-label">Project Report task-column names</div>
-    <div class="field"><label>Task column</label><input type="text" id="projectTaskLabelSetting" placeholder="Task" /></div>
-    <div class="field"><label>Location / Building column</label><input type="text" id="projectLocationLabelSetting" placeholder="Location / Building" /></div>
-    <div class="field"><label>Unit Number column</label><input type="text" id="projectUnitLabelSetting" placeholder="Unit Number" /></div>
-    <div class="field"><label>Staff column</label><input type="text" id="projectStaffLabelSetting" placeholder="Staff Name" /></div>
-    <div class="hint">These names are shown on the Add Task form and in Project Reports. Staff assignment is optional.</div>
+    <div class="section-label">Project Report task columns</div>
+    <div id="projectColumnsSettings"></div>
+    <div class="modal-actions" style="margin-top:8px;">
+      <button class="btn btn-light" id="addProjectColumnBtn" style="width:100%;">+ Add Column</button>
+    </div>
+    <div class="hint">Add, rename, reorder, or delete Project Report columns. Required columns are checked when a task is saved.</div>
     <div class="error-text" id="appSettingsError"></div>
     <div class="modal-actions">
       <button class="btn btn-primary" id="saveAppSettingsBtn" style="width:100%;">Save</button>
@@ -576,12 +572,12 @@ let currentProjectId = null;
 let currentProjectName = "";
 let editingProjectId = null;
 let editingProjectTaskId = null;
-let projectFieldLabels = {
-  task: "Task",
-  location: "Location / Building",
-  unitNumber: "Unit Number",
-  staffName: "Staff Name"
-};
+let projectColumns = [
+  {key:"task", label:"Task", required:true},
+  {key:"location", label:"Location / Building", required:true},
+  {key:"unitNumber", label:"Unit Number", required:true},
+  {key:"staffName", label:"Staff Name", required:false}
+];
 let otpPendingPurpose = "snag";
 
 let activeStream = null;
@@ -749,10 +745,7 @@ function renderAuthBox(){
     $("otpRequestsBtn").addEventListener("click", openOtpAdminModal);
     $("appSettingsBtn").addEventListener("click", ()=>{
       $("appSettingsPassword").value = appPassword || "";
-      $("projectTaskLabelSetting").value = projectFieldLabels.task;
-      $("projectLocationLabelSetting").value = projectFieldLabels.location;
-      $("projectUnitLabelSetting").value = projectFieldLabels.unitNumber;
-      $("projectStaffLabelSetting").value = projectFieldLabels.staffName;
+      renderProjectColumnsSettings();
       $("appSettingsError").textContent = "";
       showModal("appSettingsModal");
     });
@@ -766,44 +759,116 @@ function renderAuthBox(){
   $("newProjectBtn").style.display = (activeTab === "projects" && isAdmin) ? "inline-block" : "none";
 }
 
+function normalizeProjectColumns(raw){
+  if(!Array.isArray(raw) || raw.length===0) return [
+    {key:"task", label:"Task", required:true},
+    {key:"location", label:"Location / Building", required:true},
+    {key:"unitNumber", label:"Unit Number", required:true},
+    {key:"staffName", label:"Staff Name", required:false}
+  ];
+  return raw.map((c,i)=>({
+    key: String(c.key || `col_${Date.now()}_${i}`),
+    label: String(c.label || `Column ${i+1}`),
+    required: !!c.required
+  }));
+}
+
 async function loadProjectFieldLabels(){
   try{
     const snap = await getDoc(doc(db, "settings", "projectTaskLabels"));
     if(snap.exists()){
       const d = snap.data();
-      projectFieldLabels = {
-        task: d.task || "Task",
-        location: d.location || "Location / Building",
-        unitNumber: d.unitNumber || "Unit Number",
-        staffName: d.staffName || "Staff Name"
-      };
+      if(Array.isArray(d.columns)){
+        projectColumns = normalizeProjectColumns(d.columns);
+      }else{
+        // Migrate the older four-name settings automatically.
+        projectColumns = normalizeProjectColumns([
+          {key:"task", label:d.task || "Task", required:true},
+          {key:"location", label:d.location || "Location / Building", required:true},
+          {key:"unitNumber", label:d.unitNumber || "Unit Number", required:true},
+          {key:"staffName", label:d.staffName || "Staff Name", required:false}
+        ]);
+      }
+    }else{
+      projectColumns = normalizeProjectColumns(projectColumns);
     }
   }catch(err){ console.error("Could not load project field labels:", err); }
-  applyProjectFieldLabels();
+  renderProjectColumnsSettings();
 }
 
+function renderProjectColumnsSettings(){
+  const box=$("projectColumnsSettings");
+  if(!box) return;
+  if(!projectColumns.length){
+    box.innerHTML='<div class="hint" style="padding:8px 0;">No columns. Add a column below.</div>';
+    return;
+  }
+  box.innerHTML=projectColumns.map((c,i)=>`
+    <div class="project-column-setting" data-column-key="${escapeHtml(c.key)}" style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;background:#fff;">
+      <div style="display:flex;gap:7px;align-items:end;">
+        <div class="field" style="flex:1;margin:0;">
+          <label>Column ${i+1} name</label>
+          <input type="text" class="project-column-name" value="${escapeHtml(c.label)}" />
+        </div>
+        <button class="btn btn-light project-col-up" data-key="${escapeHtml(c.key)}" ${i===0?'disabled':''} title="Move up">↑</button>
+        <button class="btn btn-light project-col-down" data-key="${escapeHtml(c.key)}" ${i===projectColumns.length-1?'disabled':''} title="Move down">↓</button>
+        <button class="btn btn-red project-col-delete" data-key="${escapeHtml(c.key)}" title="Delete column">Delete</button>
+      </div>
+      <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-muted);margin-top:8px;">
+        <input type="checkbox" class="project-column-required" ${c.required?'checked':''} /> Required
+      </label>
+    </div>`).join("");
+
+  box.querySelectorAll(".project-column-name").forEach((input,i)=>input.addEventListener("input",()=>{
+    projectColumns[i].label=input.value;
+  }));
+  box.querySelectorAll(".project-column-required").forEach((input,i)=>input.addEventListener("change",()=>{
+    projectColumns[i].required=input.checked;
+  }));
+  box.querySelectorAll(".project-col-up").forEach(btn=>btn.addEventListener("click",()=>moveProjectColumn(btn.dataset.key,-1)));
+  box.querySelectorAll(".project-col-down").forEach(btn=>btn.addEventListener("click",()=>moveProjectColumn(btn.dataset.key,1)));
+  box.querySelectorAll(".project-col-delete").forEach(btn=>btn.addEventListener("click",()=>deleteProjectColumn(btn.dataset.key)));
+}
+
+function moveProjectColumn(key,delta){
+  const i=projectColumns.findIndex(c=>c.key===key), j=i+delta;
+  if(i<0 || j<0 || j>=projectColumns.length) return;
+  [projectColumns[i],projectColumns[j]]=[projectColumns[j],projectColumns[i]];
+  renderProjectColumnsSettings();
+}
+
+function deleteProjectColumn(key){
+  const col=projectColumns.find(c=>c.key===key);
+  if(!col) return;
+  if(!confirm(`Delete the column "${col.label}"? Existing values in this column will remain in old task records but the column will no longer be shown.`)) return;
+  projectColumns=projectColumns.filter(c=>c.key!==key);
+  renderProjectColumnsSettings();
+}
+
+$("addProjectColumnBtn").addEventListener("click",()=>{
+  const key=`col_${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
+  projectColumns.push({key,label:"New Column",required:false});
+  renderProjectColumnsSettings();
+  const inputs=document.querySelectorAll("#projectColumnsSettings .project-column-name");
+  const last=inputs[inputs.length-1];
+  if(last){ last.focus(); last.select(); }
+});
+
 function applyProjectFieldLabels(){
-  $("projectTaskLabel").textContent = projectFieldLabels.task;
-  $("projectLocationLabel").textContent = projectFieldLabels.location;
-  $("projectUnitLabel").textContent = projectFieldLabels.unitNumber;
-  $("projectStaffLabel").textContent = projectFieldLabels.staffName + " (optional)";
+  renderProjectTaskFields();
 }
 
 $("saveAppSettingsBtn").addEventListener("click", async ()=>{
   const val = $("appSettingsPassword").value.trim();
-  const labels = {
-    task: $("projectTaskLabelSetting").value.trim() || "Task",
-    location: $("projectLocationLabelSetting").value.trim() || "Location / Building",
-    unitNumber: $("projectUnitLabelSetting").value.trim() || "Unit Number",
-    staffName: $("projectStaffLabelSetting").value.trim() || "Staff Name"
-  };
+  projectColumns=normalizeProjectColumns(projectColumns).filter(c=>String(c.label||"").trim());
+  projectColumns.forEach(c=>c.label=String(c.label).trim());
   $("appSettingsError").textContent = "";
   $("saveAppSettingsBtn").disabled = true;
   try{
     await setDoc(doc(db, "settings", "appAccess"), { password: val }, { merge: true });
-    await setDoc(doc(db, "settings", "projectTaskLabels"), labels, { merge: true });
+    await setDoc(doc(db, "settings", "projectTaskLabels"), { columns: projectColumns }, { merge: true });
     appPassword = val;
-    projectFieldLabels = labels;
+    renderProjectColumnsSettings();
     applyProjectFieldLabels();
     hideModal("appSettingsModal");
   }catch(err){
@@ -2002,12 +2067,11 @@ function downloadProjectPdf(projectId){
     pdf.text("No tasks added.", margin, y);
   }else{
     tasks.forEach((t,i)=>{
-      const rows=[
-        `${i+1}. ${projectFieldLabels.task}: ${t.task||""}`,
-        `${projectFieldLabels.location}: ${t.location||""}`,
-        `${projectFieldLabels.unitNumber}: ${t.unitNumber||""}`,
-        `${projectFieldLabels.staffName}: ${t.staffName||"Not assigned"}`
-      ];
+      const rows=[`${i+1}.`];
+      projectColumns.forEach(c=>{
+        const v=getProjectTaskValue(t,c);
+        rows.push(`${c.label}: ${v || (c.key === "staffName" ? "Not assigned" : "")}`);
+      });
       rows.forEach(row=>{
         const wrapped=pdf.splitTextToSize(row, 515);
         if(y > 760){ pdf.addPage(); y=50; }
@@ -2039,29 +2103,36 @@ function startProjectListeners(){
 }
 
 function visibleProjects(){
-  return isAdmin ? allProjects : allProjects.filter(p => p.status !== "approved");
+  // Projects themselves are not approved. Approval happens per task.
+  return allProjects;
 }
 
 function renderProjectList(){
   const list = $("projectList");
   if(!list) return;
   const empty = $("projectEmptyState");
-  const projects = visibleProjects();
+
+  const projects = allProjects.filter(p=>{
+    if(isAdmin) return true;
+    const tasks = allProjectTasks.filter(t=>t.projectId===p.id);
+    // A project remains visible to staff while it has at least one task that
+    // has not yet been approved. Once every task is approved, it disappears.
+    return tasks.length === 0 || tasks.some(t=>t.status !== "approved");
+  });
+
   if(projects.length === 0){
     list.innerHTML="";
-    empty.textContent = isAdmin ? "No projects created yet." : "No pending project reports.";
+    empty.textContent = "No projects with open tasks yet.";
     empty.style.display="block";
     return;
   }
   empty.style.display="none";
+
   list.innerHTML = projects.map(p=>{
-    const tasks = allProjectTasks.filter(t=>t.projectId===p.id);
-    const statusBadge = p.status === "approved"
-      ? '<span class="badge badge-closed">Approved</span>'
-      : '<span class="badge badge-open">Pending admin approval</span>';
+    const allTasksForProject = allProjectTasks.filter(t=>t.projectId===p.id);
+    const tasks = isAdmin ? allTasksForProject : allTasksForProject.filter(t=>t.status !== "approved");
     const adminActions = isAdmin ? `
       <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
-        ${p.status !== "approved" ? `<button class="btn btn-green approve-project" data-project-id="${p.id}">Approve</button>` : ""}
         <button class="btn btn-light edit-project" data-project-id="${p.id}">Edit</button>
         <button class="btn btn-red delete-project" data-project-id="${p.id}">Delete</button>
         <button class="btn btn-navy pdf-project" data-project-id="${p.id}">Download PDF</button>
@@ -2069,8 +2140,8 @@ function renderProjectList(){
     return `<div class="card" data-project-id="${p.id}">
       <div class="thumb-placeholder">📁</div>
       <div class="card-body">
-        <p class="card-title">${escapeHtml(p.name||"")} ${statusBadge}</p>
-        <p class="card-desc">${tasks.length} task(s) &middot; Created by ${escapeHtml(p.createdByName || p.createdBy || "User")}</p>
+        <p class="card-title">${escapeHtml(p.name||"")}</p>
+        <p class="card-desc">${tasks.length} task(s)${!isAdmin && allTasksForProject.some(t=>t.status === "approved") ? " · approved tasks hidden" : ""} &middot; Created by ${escapeHtml(p.createdByName || p.createdBy || "User")}</p>
         <div class="meta">Created ${fmtDate(p.createdAt)}</div>
         ${adminActions}
       </div>
@@ -2083,22 +2154,6 @@ function renderProjectList(){
       openProject(card.getAttribute("data-project-id"));
     });
   });
-  list.querySelectorAll(".approve-project").forEach(btn=>btn.addEventListener("click", async e=>{
-    e.stopPropagation();
-    const id=btn.getAttribute("data-project-id");
-    btn.disabled=true;
-    try{
-      await updateDoc(doc(db,"projects",id),{
-        status:"approved",
-        approvedBy:currentUser.email||null,
-        approvedAt:serverTimestamp()
-      });
-    }catch(err){
-      console.error(err);
-      alert("Could not approve project. Check your connection and try again.");
-      btn.disabled=false;
-    }
-  }));
   list.querySelectorAll(".edit-project").forEach(btn=>btn.addEventListener("click", e=>{
     e.stopPropagation();
     openEditProject(btn.getAttribute("data-project-id"));
@@ -2119,44 +2174,76 @@ function openProject(id){
   currentProjectId = id;
   currentProjectName = p.name || "Project";
   $("projectTasksTitle").textContent = currentProjectName;
-  $("projectProjectStatus").innerHTML = p.status === "approved"
-    ? '<span class="badge badge-closed">Approved by admin</span>'
-    : '<span class="badge badge-open">Pending admin approval</span>';
   renderCurrentProjectTasks();
-  $("addProjectTaskBtn").style.display = isAdmin ? "inline-block" : "none";
+  // Staff can add tasks from the user page. Admin can also add/assign tasks.
+  $("addProjectTaskBtn").style.display = "inline-block";
   showModal("projectTasksModal");
+}
+
+function getProjectTaskValue(task,col){
+  if(Object.prototype.hasOwnProperty.call(task,col.key)) return task[col.key] ?? "";
+  if(task.customFields && Object.prototype.hasOwnProperty.call(task.customFields,col.key)) return task.customFields[col.key] ?? "";
+  return "";
 }
 
 function renderCurrentProjectTasks(){
   const list = $("projectTasksList");
   if(!list || !currentProjectId) return;
-  const tasks = allProjectTasks.filter(t=>t.projectId===currentProjectId);
+  const allTasks = allProjectTasks.filter(t=>t.projectId===currentProjectId);
+  const tasks = isAdmin ? allTasks : allTasks.filter(t=>t.status !== "approved");
   if(tasks.length===0){
-    list.innerHTML='<div class="meta" style="padding:15px 0;">No tasks added yet.</div>';
+    list.innerHTML = allTasks.length ? '<div class="meta" style="padding:15px 0;">All tasks in this project have been approved.</div>' : '<div class="meta" style="padding:15px 0;">No tasks added yet.</div>';
     return;
   }
-  list.innerHTML = tasks.map(t=>`<div class="card" style="cursor:default;">
-    <div class="card-body">
-      <p class="card-title">${escapeHtml(t.task||"")}</p>
-      <p class="card-desc">${escapeHtml(t.location||"")}${t.unitNumber ? " &middot; " + escapeHtml(projectFieldLabels.unitNumber) + ": " + escapeHtml(t.unitNumber) : ""}</p>
-      <div class="meta">${escapeHtml(projectFieldLabels.staffName)}: ${escapeHtml(t.staffName||"Not assigned")} &middot; ${fmtDate(t.createdAt)}</div>
-      ${isAdmin ? `<div style="margin-top:8px;display:flex;gap:6px;">
-        <button class="btn btn-light edit-project-task" data-task-id="${t.id}">Edit</button>
-        <button class="btn btn-red delete-project-task" data-task-id="${t.id}">Delete</button>
-      </div>` : ""}
-    </div></div>`).join("");
+  list.innerHTML = tasks.map(t=>{
+    const rows=projectColumns.map(c=>{
+      const v=getProjectTaskValue(t,c);
+      if(!String(v).trim()) return "";
+      return `<div class="detail-row"><b>${escapeHtml(c.label)}:</b> ${escapeHtml(String(v))}</div>`;
+    }).filter(Boolean).join("");
+    const titleCol=projectColumns.find(c=>c.key==="task") || projectColumns[0];
+    const title=titleCol ? getProjectTaskValue(t,titleCol) : "Task";
+    return `<div class="card" style="cursor:default;">
+      <div class="card-body">
+        <p class="card-title">${escapeHtml(String(title||"Untitled task"))}</p>
+        ${rows}
+        <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
+          ${t.status === "approved" ? '<span class="badge badge-closed">Approved</span>' : '<span class="badge badge-open">Pending approval</span>'}
+          ${isAdmin && t.status !== "approved" ? `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button>` : ""}
+          ${isAdmin ? `<button class="btn btn-light edit-project-task" data-task-id="${t.id}">Edit / Assign</button><button class="btn btn-red delete-project-task" data-task-id="${t.id}">Delete</button>` : ""}
+        </div>
+      </div></div>`;
+  }).join("");
 
-  list.querySelectorAll(".edit-project-task").forEach(btn=>btn.addEventListener("click", e=>{
-    e.stopPropagation();
-    openEditProjectTask(btn.getAttribute("data-task-id"));
+  list.querySelectorAll(".approve-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
+    e.stopPropagation(); if(!isAdmin) return;
+    const id=btn.getAttribute("data-task-id"); btn.disabled=true;
+    try{ await updateDoc(doc(db,"projecttasks",id),{status:"approved",approvedBy:currentUser.email||null,approvedAt:serverTimestamp()}); }
+    catch(err){ console.error(err); alert("Could not approve task. Check your connection and try again."); btn.disabled=false; }
   }));
-  list.querySelectorAll(".delete-project-task").forEach(btn=>btn.addEventListener("click", async e=>{
-    e.stopPropagation();
-    const id=btn.getAttribute("data-task-id");
-    if(!confirm("Delete this project task?")) return;
-    try{ await deleteDoc(doc(db,"projecttasks",id)); }
-    catch(err){ console.error(err); alert("Could not delete task."); }
+  list.querySelectorAll(".edit-project-task").forEach(btn=>btn.addEventListener("click",e=>{e.stopPropagation();openEditProjectTask(btn.getAttribute("data-task-id"));}));
+  list.querySelectorAll(".delete-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
+    e.stopPropagation(); const id=btn.getAttribute("data-task-id"); if(!confirm("Delete this project task?")) return;
+    try{await deleteDoc(doc(db,"projecttasks",id));}catch(err){console.error(err);alert("Could not delete task.");}
   }));
+}
+
+function renderProjectTaskFields(values={}){
+  const box=$("projectTaskDynamicFields"); if(!box) return;
+  box.innerHTML=projectColumns.map(c=>{
+    const val=values[c.key] ?? "";
+    const legacyKey=c.key;
+    return `<div class="field"><label>${escapeHtml(c.label)}${c.required?'':' (optional)'}</label><input type="text" id="projectCol_${escapeHtml(legacyKey)}" data-project-column-key="${escapeHtml(legacyKey)}" placeholder="${escapeHtml(c.label)}" value="${escapeHtml(String(val))}" /></div>`;
+  }).join("");
+}
+
+function collectProjectTaskValues(){
+  const values={};
+  projectColumns.forEach(c=>{
+    const el=$("projectCol_"+c.key);
+    values[c.key]=el ? el.value.trim() : "";
+  });
+  return values;
 }
 
 function openEditProject(id){
@@ -2206,100 +2293,55 @@ async function deleteProject(id){
 
 function openEditProjectTask(id){
   if(!isAdmin) return;
-  const t=allProjectTasks.find(x=>x.id===id);
-  if(!t) return;
-  $("projectTaskInput").value=t.task||"";
-  $("projectLocationInput").value=t.location||"";
-  $("projectUnitInput").value=t.unitNumber||"";
-  $("projectStaffInput").value=t.staffName||"";
-  $("projectTaskError").textContent="";
+  const t=allProjectTasks.find(x=>x.id===id); if(!t) return;
+  const values={};
+  projectColumns.forEach(c=>values[c.key]=getProjectTaskValue(t,c));
   editingProjectTaskId=id;
+  $("projectTaskError").textContent="";
+  renderProjectTaskFields(values);
   $("saveProjectTaskBtn").textContent="Save changes";
-  applyProjectFieldLabels();
   showModal("newProjectTaskModal");
 }
 
 $("newProjectBtn").addEventListener("click",()=>{
-  $("projectNameInput").value="";
-  $("projectError").textContent="";
-  showModal("newProjectModal");
+  $("projectNameInput").value=""; $("projectError").textContent=""; showModal("newProjectModal");
 });
 
 $("saveProjectBtn").addEventListener("click",async()=>{
   if(!currentUser) return;
-  const name=$("projectNameInput").value.trim();
-  $("projectError").textContent="";
-  if(!name){ $("projectError").textContent="Project name is required."; return; }
+  const name=$("projectNameInput").value.trim(); $("projectError").textContent="";
+  if(!name){$("projectError").textContent="Project name is required.";return;}
   $("saveProjectBtn").disabled=true;
-  try{
-    await addDoc(collection(db,"projects"),{
-      name,
-      status:"pending",
-      createdBy:currentUser.email||null,
-      createdByUid:currentUser.uid,
-      createdByName:otpPendingName||null,
-      createdAt:serverTimestamp()
-    });
-    hideModal("newProjectModal");
-  }catch(err){
-    console.error(err);
-    $("projectError").textContent="Could not save project. Your OTP may have expired.";
-  }
+  try{await addDoc(collection(db,"projects"),{name,status:"active",createdBy:currentUser.email||null,createdByUid:currentUser.uid,createdByName:otpPendingName||null,createdAt:serverTimestamp()});hideModal("newProjectModal");}
+  catch(err){console.error(err);$("projectError").textContent="Could not save project. Your OTP may have expired.";}
   $("saveProjectBtn").disabled=false;
 });
 
 $("addProjectTaskBtn").addEventListener("click",()=>{
-  if(!isAdmin) return;
   editingProjectTaskId=null;
-  $("projectTaskInput").value="";
-  $("projectLocationInput").value="";
-  $("projectUnitInput").value="";
-  $("projectStaffInput").value="";
   $("projectTaskError").textContent="";
+  renderProjectTaskFields({});
   $("saveProjectTaskBtn").textContent="Save";
-  applyProjectFieldLabels();
   showModal("newProjectTaskModal");
 });
 
 $("saveProjectTaskBtn").addEventListener("click",async()=>{
-  if(!isAdmin) return;
-  const task=$("projectTaskInput").value.trim();
-  const location=$("projectLocationInput").value.trim();
-  const unitNumber=$("projectUnitInput").value.trim();
-  const staffName=$("projectStaffInput").value.trim();
+  if(!currentUser || !currentProjectId){$("projectTaskError").textContent="Project not selected.";return;}
+  const values=collectProjectTaskValues();
+  const missing=projectColumns.filter(c=>c.required && !String(values[c.key]||"").trim());
   $("projectTaskError").textContent="";
-  if(!task || !location || !unitNumber){
-    $("projectTaskError").textContent=`Please fill the required ${projectFieldLabels.task}, ${projectFieldLabels.location} and ${projectFieldLabels.unitNumber} fields.`;
-    return;
-  }
-  if(!currentProjectId){ $("projectTaskError").textContent="Project not selected."; return; }
+  if(missing.length){$("projectTaskError").textContent=`Please fill: ${missing.map(c=>c.label).join(", ")}.`;return;}
   $("saveProjectTaskBtn").disabled=true;
   try{
+    const payload={projectId:currentProjectId,projectName:currentProjectName,status:"pending",updatedAt:serverTimestamp()};
+    projectColumns.forEach(c=>payload[c.key]=values[c.key]||null);
     if(editingProjectTaskId){
-      await updateDoc(doc(db,"projecttasks",editingProjectTaskId),{
-        task,location,unitNumber,staffName:staffName||null,
-        projectName:currentProjectName,
-        updatedBy:currentUser.email||null,
-        updatedAt:serverTimestamp()
-      });
+      await updateDoc(doc(db,"projecttasks",editingProjectTaskId),{...payload,updatedBy:currentUser.email||null});
     }else{
-      await addDoc(collection(db,"projecttasks"),{
-        projectId:currentProjectId,
-        projectName:currentProjectName,
-        task,location,unitNumber,
-        staffName:staffName||null,
-        staffEmail:null,
-        status:"assigned",
-        createdAt:serverTimestamp()
-      });
+      await addDoc(collection(db,"projecttasks"),{...payload,createdBy:currentUser.email||null,createdByUid:currentUser.uid,createdAt:serverTimestamp()});
     }
-    editingProjectTaskId=null;
-    $("saveProjectTaskBtn").textContent="Save";
-    hideModal("newProjectTaskModal");
-  }catch(err){
-    console.error(err);
-    $("projectTaskError").textContent="Could not save task. Check your connection and try again.";
-  }
+    editingProjectTaskId=null; $("saveProjectTaskBtn").textContent="Save"; hideModal("newProjectTaskModal");
+  }catch(err){console.error(err);$("projectTaskError").textContent="Could not save task. Check your connection and try again.";}
   $("saveProjectTaskBtn").disabled=false;
 });
 
