@@ -2229,10 +2229,18 @@ function renderCurrentProjectTasks(){
       if(!String(v).trim()) return "";
       return `<div class="detail-row"><b>${escapeHtml(c.label)}:</b> ${escapeHtml(String(v))}</div>`;
     }).filter(Boolean).join("");
-    const titleCol=projectColumns.find(c=>c.key==="taskName") || projectColumns.find(c=>c.key==="task") || projectColumns[0];
-    const title=titleCol ? getProjectTaskValue(t,titleCol) : "Task";
+    const taskNameCol=projectColumns.find(c=>c.key==="taskName");
+    const legacyTaskCol=projectColumns.find(c=>c.key==="task");
+    let title = taskNameCol ? getProjectTaskValue(t,taskNameCol) : "";
+    if(!String(title).trim() && legacyTaskCol) title = getProjectTaskValue(t,legacyTaskCol);
+    if(!String(title).trim() && projectColumns[0]) title = getProjectTaskValue(t,projectColumns[0]);
     const staffCols=projectColumns.filter(c=>c.filledBy==="staff");
     const hasStaffValue=staffCols.some(c=>String(getProjectTaskValue(t,c)||"").trim());
+    // Only tasks the admin assigned (i.e. have a Task name) get the "Add
+    // Job Details" button, and only until it's filled in once — after
+    // that it's no longer editable from the staff view.
+    const assignedByAdmin=taskNameCol && String(getProjectTaskValue(t,taskNameCol)||"").trim();
+    const showAddJobDetails=!isAdmin && staffCols.length && assignedByAdmin && !hasStaffValue;
     return `<div class="card" style="cursor:default;">
       <div class="card-body">
         <p class="card-title">${escapeHtml(String(title||"Untitled task"))}</p>
@@ -2241,7 +2249,7 @@ function renderCurrentProjectTasks(){
           ${t.status === "approved" ? '<span class="badge badge-closed">Approved</span>' : '<span class="badge badge-open">Pending approval</span>'}
           ${isAdmin && t.status !== "approved" ? `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button>` : ""}
           ${isAdmin ? `<button class="btn btn-light edit-project-task" data-task-id="${t.id}">Edit</button><button class="btn btn-red delete-project-task" data-task-id="${t.id}">Delete</button>` : ""}
-          ${!isAdmin && staffCols.length ? `<button class="btn btn-light fill-job-details" data-task-id="${t.id}">${hasStaffValue ? "Edit Job Details" : "Add Job Details"}</button>` : ""}
+          ${showAddJobDetails ? `<button class="btn btn-light fill-job-details" data-task-id="${t.id}">Add Job Details</button>` : ""}
         </div>
       </div></div>`;
   }).join("");
@@ -2262,9 +2270,12 @@ function renderCurrentProjectTasks(){
 
 function renderProjectTaskFields(values={}, mode="admin"){
   const box=$("projectTaskDynamicFields"); if(!box) return;
-  // "all" is used when staff create a brand-new task themselves — same
-  // full field set as before this admin/staff split existed.
-  currentTaskFormColumns = mode==="all" ? projectColumns.slice() : projectColumns.filter(c => mode==="staff" ? c.filledBy==="staff" : c.filledBy!=="staff");
+  // "staffCreate" is used when staff add a brand-new task themselves — same
+  // fields as before this admin/staff split existed, minus the admin-only
+  // "Task" (taskName) field, which staff don't need to set.
+  currentTaskFormColumns = mode==="staffCreate"
+    ? projectColumns.filter(c=>c.key!=="taskName")
+    : projectColumns.filter(c => mode==="staff" ? c.filledBy==="staff" : c.filledBy!=="staff");
   if(!currentTaskFormColumns.length){
     box.innerHTML='<div class="hint" style="padding:8px 0;">No fields configured for this form.</div>';
     return;
@@ -2343,14 +2354,20 @@ function openEditProjectTask(id){
   showModal("newProjectTaskModal");
 }
 
-// Non-admin staff use this to fill in / update Job Details on a task the
-// admin already assigned to them — every other field (Task, Location,
-// Unit Number, Staff Name) stays read-only from this form.
+// Non-admin staff use this to fill in Job Details on a task the admin
+// assigned to them — every other field (Task, Location, Unit Number, Staff
+// Name) stays read-only from this form. Only usable once, on tasks the
+// admin assigned that don't have Job Details filled in yet (matches the
+// button's own visibility rule in renderCurrentProjectTasks).
 function openFillJobDetails(id){
   if(isAdmin) return;
   const t=allProjectTasks.find(x=>x.id===id); if(!t) return;
   const cols=projectColumns.filter(c=>c.filledBy==="staff");
   if(!cols.length) return;
+  const taskNameCol=projectColumns.find(c=>c.key==="taskName");
+  const assignedByAdmin=taskNameCol && String(getProjectTaskValue(t,taskNameCol)||"").trim();
+  const hasStaffValue=cols.some(c=>String(getProjectTaskValue(t,c)||"").trim());
+  if(!assignedByAdmin || hasStaffValue) return;
   const values={};
   cols.forEach(c=>values[c.key]=getProjectTaskValue(t,c));
   editingProjectTaskId=id;
@@ -2382,7 +2399,7 @@ $("addProjectTaskBtn").addEventListener("click",()=>{
     renderProjectTaskFields({}, "admin");
     $("newProjectTaskTitle").textContent="Assign Task";
   }else{
-    renderProjectTaskFields({}, "all");
+    renderProjectTaskFields({}, "staffCreate");
     $("newProjectTaskTitle").textContent="Add Task";
   }
   $("saveProjectTaskBtn").textContent="Save";
