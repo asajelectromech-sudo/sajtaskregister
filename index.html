@@ -224,7 +224,7 @@
 
 <div class="modal-overlay" id="newProjectTaskModal">
   <div class="modal">
-    <h2>Add Task</h2>
+    <h2 id="newProjectTaskTitle">Add Task</h2>
     <div id="projectTaskDynamicFields"></div>
     <div class="error-text" id="projectTaskError"></div>
     <div class="modal-actions"><button class="btn btn-light" data-close="newProjectTaskModal">Cancel</button><button class="btn btn-primary" id="saveProjectTaskBtn">Save</button></div>
@@ -572,11 +572,18 @@ let currentProjectId = null;
 let currentProjectName = "";
 let editingProjectId = null;
 let editingProjectTaskId = null;
+let currentTaskFormColumns = []; // columns rendered in the currently-open task form (admin vs staff fields)
+// Each column has a "filledBy" of "admin" or "staff". Admin fills in the
+// assignment fields (Task / Location / Unit Number / Staff Name) when
+// assigning work; the assigned staff member fills in "Job Details" (key
+// "task", kept for backward compatibility with existing records) from
+// their own (signed-out / non-admin) view of the project.
 let projectColumns = [
-  {key:"task", label:"Task", required:true},
-  {key:"location", label:"Location / Building", required:true},
-  {key:"unitNumber", label:"Unit Number", required:true},
-  {key:"staffName", label:"Staff Name", required:false}
+  {key:"taskName", label:"Task", required:true, filledBy:"admin"},
+  {key:"location", label:"Location / Building", required:true, filledBy:"admin"},
+  {key:"unitNumber", label:"Unit Number", required:true, filledBy:"admin"},
+  {key:"staffName", label:"Staff Name", required:true, filledBy:"admin"},
+  {key:"task", label:"Job Details", required:false, filledBy:"staff"}
 ];
 let otpPendingPurpose = "snag";
 
@@ -760,17 +767,30 @@ function renderAuthBox(){
 }
 
 function normalizeProjectColumns(raw){
-  if(!Array.isArray(raw) || raw.length===0) return [
-    {key:"task", label:"Task", required:true},
-    {key:"location", label:"Location / Building", required:true},
-    {key:"unitNumber", label:"Unit Number", required:true},
-    {key:"staffName", label:"Staff Name", required:false}
+  const defaults = [
+    {key:"taskName", label:"Task", required:true, filledBy:"admin"},
+    {key:"location", label:"Location / Building", required:true, filledBy:"admin"},
+    {key:"unitNumber", label:"Unit Number", required:true, filledBy:"admin"},
+    {key:"staffName", label:"Staff Name", required:true, filledBy:"admin"},
+    {key:"task", label:"Job Details", required:false, filledBy:"staff"}
   ];
-  return raw.map((c,i)=>({
+  if(!Array.isArray(raw) || raw.length===0) return defaults;
+  const cols = raw.map((c,i)=>({
     key: String(c.key || `col_${Date.now()}_${i}`),
     label: String(c.label || `Column ${i+1}`),
-    required: !!c.required
+    required: !!c.required,
+    // Legacy configs (saved before the admin/staff split existed) don't have
+    // a filledBy value yet. The "task" key was historically used as the
+    // free-text job-details field filled in by staff, so keep it staff-filled
+    // even for those older configs; everything else defaults to admin.
+    filledBy: c.key === "task" ? "staff" : (c.filledBy === "staff" ? "staff" : "admin")
   }));
+  // Older configs won't have a distinct "Task" (assignment) column — add one
+  // so admins have a field to describe what's being assigned.
+  if(!cols.some(c=>c.key==="taskName")){
+    cols.unshift({key:"taskName", label:"Task", required:true, filledBy:"admin"});
+  }
+  return cols;
 }
 
 async function loadProjectFieldLabels(){
@@ -817,6 +837,9 @@ function renderProjectColumnsSettings(){
       <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-muted);margin-top:8px;">
         <input type="checkbox" class="project-column-required" ${c.required?'checked':''} /> Required
       </label>
+      <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-muted);margin-top:6px;">
+        <input type="checkbox" class="project-column-staff-filled" ${c.filledBy==='staff'?'checked':''} /> Filled in by staff (not admin) — shown on the staff's own task view instead of the admin Assign Task form
+      </label>
     </div>`).join("");
 
   box.querySelectorAll(".project-column-name").forEach((input,i)=>input.addEventListener("input",()=>{
@@ -824,6 +847,9 @@ function renderProjectColumnsSettings(){
   }));
   box.querySelectorAll(".project-column-required").forEach((input,i)=>input.addEventListener("change",()=>{
     projectColumns[i].required=input.checked;
+  }));
+  box.querySelectorAll(".project-column-staff-filled").forEach((input,i)=>input.addEventListener("change",()=>{
+    projectColumns[i].filledBy = input.checked ? "staff" : "admin";
   }));
   box.querySelectorAll(".project-col-up").forEach(btn=>btn.addEventListener("click",()=>moveProjectColumn(btn.dataset.key,-1)));
   box.querySelectorAll(".project-col-down").forEach(btn=>btn.addEventListener("click",()=>moveProjectColumn(btn.dataset.key,1)));
@@ -847,7 +873,7 @@ function deleteProjectColumn(key){
 
 $("addProjectColumnBtn").addEventListener("click",()=>{
   const key=`col_${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
-  projectColumns.push({key,label:"New Column",required:false});
+  projectColumns.push({key,label:"New Column",required:false,filledBy:"admin"});
   renderProjectColumnsSettings();
   const inputs=document.querySelectorAll("#projectColumnsSettings .project-column-name");
   const last=inputs[inputs.length-1];
@@ -2175,7 +2201,9 @@ function openProject(id){
   currentProjectName = p.name || "Project";
   $("projectTasksTitle").textContent = currentProjectName;
   renderCurrentProjectTasks();
-  // Staff can add tasks from the user page. Admin can also add/assign tasks.
+  // Admin assigns tasks with the Task/Location/Unit Number/Staff Name
+  // fields. Staff can also add a task themselves from here (all fields),
+  // and separately fill in Job Details on any task via its own button.
   $("addProjectTaskBtn").style.display = "inline-block";
   showModal("projectTasksModal");
 }
@@ -2201,8 +2229,10 @@ function renderCurrentProjectTasks(){
       if(!String(v).trim()) return "";
       return `<div class="detail-row"><b>${escapeHtml(c.label)}:</b> ${escapeHtml(String(v))}</div>`;
     }).filter(Boolean).join("");
-    const titleCol=projectColumns.find(c=>c.key==="task") || projectColumns[0];
+    const titleCol=projectColumns.find(c=>c.key==="taskName") || projectColumns.find(c=>c.key==="task") || projectColumns[0];
     const title=titleCol ? getProjectTaskValue(t,titleCol) : "Task";
+    const staffCols=projectColumns.filter(c=>c.filledBy==="staff");
+    const hasStaffValue=staffCols.some(c=>String(getProjectTaskValue(t,c)||"").trim());
     return `<div class="card" style="cursor:default;">
       <div class="card-body">
         <p class="card-title">${escapeHtml(String(title||"Untitled task"))}</p>
@@ -2210,7 +2240,8 @@ function renderCurrentProjectTasks(){
         <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           ${t.status === "approved" ? '<span class="badge badge-closed">Approved</span>' : '<span class="badge badge-open">Pending approval</span>'}
           ${isAdmin && t.status !== "approved" ? `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button>` : ""}
-          ${isAdmin ? `<button class="btn btn-light edit-project-task" data-task-id="${t.id}">Edit / Assign</button><button class="btn btn-red delete-project-task" data-task-id="${t.id}">Delete</button>` : ""}
+          ${isAdmin ? `<button class="btn btn-light edit-project-task" data-task-id="${t.id}">Edit</button><button class="btn btn-red delete-project-task" data-task-id="${t.id}">Delete</button>` : ""}
+          ${!isAdmin && staffCols.length ? `<button class="btn btn-light fill-job-details" data-task-id="${t.id}">${hasStaffValue ? "Edit Job Details" : "Add Job Details"}</button>` : ""}
         </div>
       </div></div>`;
   }).join("");
@@ -2222,24 +2253,31 @@ function renderCurrentProjectTasks(){
     catch(err){ console.error(err); alert("Could not approve task. Check your connection and try again."); btn.disabled=false; }
   }));
   list.querySelectorAll(".edit-project-task").forEach(btn=>btn.addEventListener("click",e=>{e.stopPropagation();openEditProjectTask(btn.getAttribute("data-task-id"));}));
+  list.querySelectorAll(".fill-job-details").forEach(btn=>btn.addEventListener("click",e=>{e.stopPropagation();openFillJobDetails(btn.getAttribute("data-task-id"));}));
   list.querySelectorAll(".delete-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
     e.stopPropagation(); const id=btn.getAttribute("data-task-id"); if(!confirm("Delete this project task?")) return;
     try{await deleteDoc(doc(db,"projecttasks",id));}catch(err){console.error(err);alert("Could not delete task.");}
   }));
 }
 
-function renderProjectTaskFields(values={}){
+function renderProjectTaskFields(values={}, mode="admin"){
   const box=$("projectTaskDynamicFields"); if(!box) return;
-  box.innerHTML=projectColumns.map(c=>{
+  // "all" is used when staff create a brand-new task themselves — same
+  // full field set as before this admin/staff split existed.
+  currentTaskFormColumns = mode==="all" ? projectColumns.slice() : projectColumns.filter(c => mode==="staff" ? c.filledBy==="staff" : c.filledBy!=="staff");
+  if(!currentTaskFormColumns.length){
+    box.innerHTML='<div class="hint" style="padding:8px 0;">No fields configured for this form.</div>';
+    return;
+  }
+  box.innerHTML=currentTaskFormColumns.map(c=>{
     const val=values[c.key] ?? "";
-    const legacyKey=c.key;
-    return `<div class="field"><label>${escapeHtml(c.label)}${c.required?'':' (optional)'}</label><input type="text" id="projectCol_${escapeHtml(legacyKey)}" data-project-column-key="${escapeHtml(legacyKey)}" placeholder="${escapeHtml(c.label)}" value="${escapeHtml(String(val))}" /></div>`;
+    return `<div class="field"><label>${escapeHtml(c.label)}${c.required?'':' (optional)'}</label><input type="text" id="projectCol_${escapeHtml(c.key)}" data-project-column-key="${escapeHtml(c.key)}" placeholder="${escapeHtml(c.label)}" value="${escapeHtml(String(val))}" /></div>`;
   }).join("");
 }
 
 function collectProjectTaskValues(){
   const values={};
-  projectColumns.forEach(c=>{
+  currentTaskFormColumns.forEach(c=>{
     const el=$("projectCol_"+c.key);
     values[c.key]=el ? el.value.trim() : "";
   });
@@ -2294,12 +2332,32 @@ async function deleteProject(id){
 function openEditProjectTask(id){
   if(!isAdmin) return;
   const t=allProjectTasks.find(x=>x.id===id); if(!t) return;
+  const cols=projectColumns.filter(c=>c.filledBy!=="staff");
   const values={};
-  projectColumns.forEach(c=>values[c.key]=getProjectTaskValue(t,c));
+  cols.forEach(c=>values[c.key]=getProjectTaskValue(t,c));
   editingProjectTaskId=id;
   $("projectTaskError").textContent="";
-  renderProjectTaskFields(values);
+  renderProjectTaskFields(values, "admin");
+  $("newProjectTaskTitle").textContent="Edit Task";
   $("saveProjectTaskBtn").textContent="Save changes";
+  showModal("newProjectTaskModal");
+}
+
+// Non-admin staff use this to fill in / update Job Details on a task the
+// admin already assigned to them — every other field (Task, Location,
+// Unit Number, Staff Name) stays read-only from this form.
+function openFillJobDetails(id){
+  if(isAdmin) return;
+  const t=allProjectTasks.find(x=>x.id===id); if(!t) return;
+  const cols=projectColumns.filter(c=>c.filledBy==="staff");
+  if(!cols.length) return;
+  const values={};
+  cols.forEach(c=>values[c.key]=getProjectTaskValue(t,c));
+  editingProjectTaskId=id;
+  $("projectTaskError").textContent="";
+  renderProjectTaskFields(values, "staff");
+  $("newProjectTaskTitle").textContent="Job Details";
+  $("saveProjectTaskBtn").textContent="Save";
   showModal("newProjectTaskModal");
 }
 
@@ -2320,7 +2378,13 @@ $("saveProjectBtn").addEventListener("click",async()=>{
 $("addProjectTaskBtn").addEventListener("click",()=>{
   editingProjectTaskId=null;
   $("projectTaskError").textContent="";
-  renderProjectTaskFields({});
+  if(isAdmin){
+    renderProjectTaskFields({}, "admin");
+    $("newProjectTaskTitle").textContent="Assign Task";
+  }else{
+    renderProjectTaskFields({}, "all");
+    $("newProjectTaskTitle").textContent="Add Task";
+  }
   $("saveProjectTaskBtn").textContent="Save";
   showModal("newProjectTaskModal");
 });
@@ -2328,13 +2392,13 @@ $("addProjectTaskBtn").addEventListener("click",()=>{
 $("saveProjectTaskBtn").addEventListener("click",async()=>{
   if(!currentUser || !currentProjectId){$("projectTaskError").textContent="Project not selected.";return;}
   const values=collectProjectTaskValues();
-  const missing=projectColumns.filter(c=>c.required && !String(values[c.key]||"").trim());
+  const missing=currentTaskFormColumns.filter(c=>c.required && !String(values[c.key]||"").trim());
   $("projectTaskError").textContent="";
   if(missing.length){$("projectTaskError").textContent=`Please fill: ${missing.map(c=>c.label).join(", ")}.`;return;}
   $("saveProjectTaskBtn").disabled=true;
   try{
     const payload={projectId:currentProjectId,projectName:currentProjectName,status:"pending",updatedAt:serverTimestamp()};
-    projectColumns.forEach(c=>payload[c.key]=values[c.key]||null);
+    currentTaskFormColumns.forEach(c=>payload[c.key]=values[c.key]||null);
     if(editingProjectTaskId){
       await updateDoc(doc(db,"projecttasks",editingProjectTaskId),{...payload,updatedBy:currentUser.email||null});
     }else{
