@@ -217,6 +217,7 @@
 <div class="modal-overlay" id="projectTasksModal">
   <div class="modal">
     <h2 id="projectTasksTitle">Project</h2>
+    <div id="projectProjectStatus"></div>
     <div id="projectTasksList"></div>
     <div class="modal-actions"><button class="btn btn-light" data-close="projectTasksModal">Close</button><button class="btn btn-primary" id="addProjectTaskBtn">+ Add Task</button></div>
   </div>
@@ -225,12 +226,25 @@
 <div class="modal-overlay" id="newProjectTaskModal">
   <div class="modal">
     <h2>Add Task</h2>
-    <div class="field"><label>Task</label><input id="projectTaskInput" type="text" placeholder="Task" /></div>
-    <div class="field"><label>Location / Building</label><input id="projectLocationInput" type="text" placeholder="Location / Building" /></div>
-    <div class="field"><label>Unit Number</label><input id="projectUnitInput" type="text" placeholder="Unit number" /></div>
-    <div class="field"><label>Staff Name</label><input id="projectStaffInput" type="text" placeholder="Staff name" /></div>
+    <div class="field"><label id="projectTaskLabel">Task</label><input id="projectTaskInput" type="text" placeholder="Task" /></div>
+    <div class="field"><label id="projectLocationLabel">Location / Building</label><input id="projectLocationInput" type="text" placeholder="Location / Building" /></div>
+    <div class="field"><label id="projectUnitLabel">Unit Number</label><input id="projectUnitInput" type="text" placeholder="Unit number" /></div>
+    <div class="field"><label id="projectStaffLabel">Staff Name (optional)</label><input id="projectStaffInput" type="text" placeholder="Optional" /></div>
     <div class="error-text" id="projectTaskError"></div>
     <div class="modal-actions"><button class="btn btn-light" data-close="newProjectTaskModal">Cancel</button><button class="btn btn-primary" id="saveProjectTaskBtn">Save</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="editProjectModal">
+  <div class="modal">
+    <button class="close-x" data-close="editProjectModal">&times;</button>
+    <h2>Edit Project Report (admin)</h2>
+    <div class="field"><label>Project name</label><input id="editProjectNameInput" type="text" /></div>
+    <div class="error-text" id="editProjectError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" data-close="editProjectModal">Cancel</button>
+      <button class="btn btn-primary" id="saveEditProjectBtn">Save changes</button>
+    </div>
   </div>
 </div>
 
@@ -416,7 +430,12 @@
       <label>App password</label>
       <input type="text" id="appSettingsPassword" placeholder="Leave blank for no password" />
     </div>
-    <div class="hint">Anyone opening the app must enter this password before they can view or use it. Leave blank to disable the password requirement. Signed-in admins always bypass this by signing in directly.</div>
+    <div class="section-label">Project Report task-column names</div>
+    <div class="field"><label>Task column</label><input type="text" id="projectTaskLabelSetting" placeholder="Task" /></div>
+    <div class="field"><label>Location / Building column</label><input type="text" id="projectLocationLabelSetting" placeholder="Location / Building" /></div>
+    <div class="field"><label>Unit Number column</label><input type="text" id="projectUnitLabelSetting" placeholder="Unit Number" /></div>
+    <div class="field"><label>Staff column</label><input type="text" id="projectStaffLabelSetting" placeholder="Staff Name" /></div>
+    <div class="hint">These names are shown on the Add Task form and in Project Reports. Staff assignment is optional.</div>
     <div class="error-text" id="appSettingsError"></div>
     <div class="modal-actions">
       <button class="btn btn-primary" id="saveAppSettingsBtn" style="width:100%;">Save</button>
@@ -428,8 +447,8 @@
 <div class="modal-overlay" id="otpModal">
   <div class="modal">
     <button class="close-x" data-close="otpModal">&times;</button>
-    <h2>Verify to open a snag</h2>
-    <div class="hint">Opening a new snag needs a one-time code from your admin. Ask them for the code after you request it below — it does not apply to work reports.</div>
+    <h2 id="otpModalTitle">Admin approval required</h2>
+    <div class="hint" id="otpModalHint">This action needs a one-time code from your admin.</div>
     <div id="otpRequestStep">
       <div class="field"><label>Your name</label><input type="text" id="otpStaffName" placeholder="Enter your name" /></div>
       <div class="error-text" id="otpRequestError"></div>
@@ -438,7 +457,7 @@
       </div>
     </div>
     <div id="otpVerifyStep" style="display:none;">
-      <div class="hint">Code requested. Ask your admin for the 6-digit code, then enter it below. Once verified, you can open snags for the next 24 hours without asking again.</div>
+      <div class="hint" id="otpVerifyHint">Code requested. Ask your admin for the 6-digit code, then enter it below.</div>
       <div class="field"><label>Enter code</label><input type="text" id="otpCodeInput" inputmode="numeric" maxlength="6" placeholder="6-digit code" /></div>
       <div class="error-text" id="otpError"></div>
       <div class="modal-actions">
@@ -453,8 +472,8 @@
 <div class="modal-overlay" id="otpAdminModal">
   <div class="modal">
     <button class="close-x" data-close="otpAdminModal">&times;</button>
-    <h2>Snag OTP requests (admin)</h2>
-    <div class="hint">Read the code out to whoever requested it. Once they verify it, they can open snags for 24 hours.</div>
+    <h2>OTP requests (admin)</h2>
+    <div class="hint">Give the displayed code to the requester. Project creation and snag creation use separate OTP approvals.</div>
     <div id="otpAdminList"></div>
   </div>
 </div>
@@ -555,6 +574,15 @@ let projectListenerStarted = false;
 let projectTaskListenerStarted = false;
 let currentProjectId = null;
 let currentProjectName = "";
+let editingProjectId = null;
+let editingProjectTaskId = null;
+let projectFieldLabels = {
+  task: "Task",
+  location: "Location / Building",
+  unitNumber: "Unit Number",
+  staffName: "Staff Name"
+};
+let otpPendingPurpose = "snag";
 
 let activeStream = null;
 let currentSnagForClose = null;
@@ -667,6 +695,7 @@ function unlockApp(){
   updateFabVisibility();
   updateSnagExportLabel();
   updateWorkExportLabel();
+  loadProjectFieldLabels();
   startSnagListener();
   startWorkListener();
   startProjectListeners();
@@ -720,6 +749,10 @@ function renderAuthBox(){
     $("otpRequestsBtn").addEventListener("click", openOtpAdminModal);
     $("appSettingsBtn").addEventListener("click", ()=>{
       $("appSettingsPassword").value = appPassword || "";
+      $("projectTaskLabelSetting").value = projectFieldLabels.task;
+      $("projectLocationLabelSetting").value = projectFieldLabels.location;
+      $("projectUnitLabelSetting").value = projectFieldLabels.unitNumber;
+      $("projectStaffLabelSetting").value = projectFieldLabels.staffName;
       $("appSettingsError").textContent = "";
       showModal("appSettingsModal");
     });
@@ -733,13 +766,45 @@ function renderAuthBox(){
   $("newProjectBtn").style.display = (activeTab === "projects" && isAdmin) ? "inline-block" : "none";
 }
 
+async function loadProjectFieldLabels(){
+  try{
+    const snap = await getDoc(doc(db, "settings", "projectTaskLabels"));
+    if(snap.exists()){
+      const d = snap.data();
+      projectFieldLabels = {
+        task: d.task || "Task",
+        location: d.location || "Location / Building",
+        unitNumber: d.unitNumber || "Unit Number",
+        staffName: d.staffName || "Staff Name"
+      };
+    }
+  }catch(err){ console.error("Could not load project field labels:", err); }
+  applyProjectFieldLabels();
+}
+
+function applyProjectFieldLabels(){
+  $("projectTaskLabel").textContent = projectFieldLabels.task;
+  $("projectLocationLabel").textContent = projectFieldLabels.location;
+  $("projectUnitLabel").textContent = projectFieldLabels.unitNumber;
+  $("projectStaffLabel").textContent = projectFieldLabels.staffName + " (optional)";
+}
+
 $("saveAppSettingsBtn").addEventListener("click", async ()=>{
   const val = $("appSettingsPassword").value.trim();
+  const labels = {
+    task: $("projectTaskLabelSetting").value.trim() || "Task",
+    location: $("projectLocationLabelSetting").value.trim() || "Location / Building",
+    unitNumber: $("projectUnitLabelSetting").value.trim() || "Unit Number",
+    staffName: $("projectStaffLabelSetting").value.trim() || "Staff Name"
+  };
   $("appSettingsError").textContent = "";
   $("saveAppSettingsBtn").disabled = true;
   try{
     await setDoc(doc(db, "settings", "appAccess"), { password: val }, { merge: true });
+    await setDoc(doc(db, "settings", "projectTaskLabels"), labels, { merge: true });
     appPassword = val;
+    projectFieldLabels = labels;
+    applyProjectFieldLabels();
     hideModal("appSettingsModal");
   }catch(err){
     console.error(err);
@@ -748,7 +813,7 @@ $("saveAppSettingsBtn").addEventListener("click", async ()=>{
   $("saveAppSettingsBtn").disabled = false;
 });
 
-// ---------- OTP ADMIN PANEL (list pending/recent snag OTP requests) ----------
+// ---------- OTP ADMIN PANEL (admin only) ----------
 async function openOtpAdminModal(){
   showModal("otpAdminModal");
   $("otpAdminList").innerHTML = `<div class="hint">Loading…</div>`;
@@ -761,6 +826,7 @@ async function openOtpAdminModal(){
     const now = new Date();
     $("otpAdminList").innerHTML = snap.docs.map(d=>{
       const r = d.data();
+      const purpose = r.purpose === "project" ? "Project Report" : "Snag";
       const expiresDate = r.verifiedExpiresAt && r.verifiedExpiresAt.toDate ? r.verifiedExpiresAt.toDate() : null;
       const activeNow = r.status === "verified" && expiresDate && expiresDate > now;
       const badge = activeNow
@@ -771,7 +837,7 @@ async function openOtpAdminModal(){
       return `
         <div class="card" style="cursor:default;">
           <div class="card-body">
-            <p class="card-title">${escapeHtml(r.requestedBy || "Unknown")} ${badge}</p>
+            <p class="card-title">${escapeHtml(r.requestedBy || "Unknown")} <span class="badge badge-open">${purpose}</span> ${badge}</p>
             <p class="card-desc" style="font-size:22px;font-weight:700;letter-spacing:3px;color:var(--navy);white-space:normal;">${escapeHtml(r.code || "")}</p>
             <div class="meta">Requested ${fmtDate(r.createdAt)}${expiresDate ? ` &middot; Access ${activeNow ? "expires" : "expired"} ${expiresDate.toLocaleString("en-GB", { day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit" })}` : ""}</div>
           </div>
@@ -1906,6 +1972,55 @@ function openNewSnagFlow(prefillName){
   showModal("newSnagModal");
 }
 
+function downloadProjectPdf(projectId){
+  if(!isAdmin) return;
+  const p=allProjects.find(x=>x.id===projectId);
+  if(!p) return;
+  const tasks=allProjectTasks.filter(t=>t.projectId===projectId);
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({unit:"pt",format:"a4"});
+  const margin=40;
+  let y=50;
+  const lineHeight=16;
+  pdf.setFontSize(18);
+  pdf.text("SAJ Project Report", margin, y);
+  y+=28;
+  pdf.setFontSize(12);
+  pdf.text(`Project: ${p.name||""}`, margin, y);
+  y+=18;
+  pdf.text(`Status: ${p.status === "approved" ? "Approved" : "Pending admin approval"}`, margin, y);
+  y+=18;
+  pdf.text(`Created by: ${p.createdByName || p.createdBy || "User"}`, margin, y);
+  y+=18;
+  pdf.text(`Created: ${fmtDate(p.createdAt)}`, margin, y);
+  y+=28;
+  pdf.setFontSize(13);
+  pdf.text("Tasks", margin, y);
+  y+=20;
+  pdf.setFontSize(10);
+  if(!tasks.length){
+    pdf.text("No tasks added.", margin, y);
+  }else{
+    tasks.forEach((t,i)=>{
+      const rows=[
+        `${i+1}. ${projectFieldLabels.task}: ${t.task||""}`,
+        `${projectFieldLabels.location}: ${t.location||""}`,
+        `${projectFieldLabels.unitNumber}: ${t.unitNumber||""}`,
+        `${projectFieldLabels.staffName}: ${t.staffName||"Not assigned"}`
+      ];
+      rows.forEach(row=>{
+        const wrapped=pdf.splitTextToSize(row, 515);
+        if(y > 760){ pdf.addPage(); y=50; }
+        pdf.text(wrapped, margin, y);
+        y += lineHeight * wrapped.length;
+      });
+      y+=8;
+    });
+  }
+  const filename=`SAJ_Project_Report_${sanitizeForFilename(p.name)}_${fmtDateOnly(p.createdAt)}.pdf`;
+  pdf.save(filename);
+}
+
 // ---------- PROJECT REPORTS ----------
 function startProjectListeners(){
   if(projectListenerStarted) return;
@@ -1923,24 +2038,79 @@ function startProjectListeners(){
   }, err=>console.error("Project task listener:", err));
 }
 
+function visibleProjects(){
+  return isAdmin ? allProjects : allProjects.filter(p => p.status !== "approved");
+}
+
 function renderProjectList(){
   const list = $("projectList");
   if(!list) return;
   const empty = $("projectEmptyState");
-  if(allProjects.length === 0){ list.innerHTML=""; empty.style.display="block"; return; }
+  const projects = visibleProjects();
+  if(projects.length === 0){
+    list.innerHTML="";
+    empty.textContent = isAdmin ? "No projects created yet." : "No pending project reports.";
+    empty.style.display="block";
+    return;
+  }
   empty.style.display="none";
-  list.innerHTML = allProjects.map(p=>{
+  list.innerHTML = projects.map(p=>{
     const tasks = allProjectTasks.filter(t=>t.projectId===p.id);
-    const pending = tasks.filter(t=>t.status!=="approved").length;
-    const approved = tasks.filter(t=>t.status==="approved").length;
+    const statusBadge = p.status === "approved"
+      ? '<span class="badge badge-closed">Approved</span>'
+      : '<span class="badge badge-open">Pending admin approval</span>';
+    const adminActions = isAdmin ? `
+      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
+        ${p.status !== "approved" ? `<button class="btn btn-green approve-project" data-project-id="${p.id}">Approve</button>` : ""}
+        <button class="btn btn-light edit-project" data-project-id="${p.id}">Edit</button>
+        <button class="btn btn-red delete-project" data-project-id="${p.id}">Delete</button>
+        <button class="btn btn-navy pdf-project" data-project-id="${p.id}">Download PDF</button>
+      </div>` : "";
     return `<div class="card" data-project-id="${p.id}">
       <div class="thumb-placeholder">📁</div>
-      <div class="card-body"><p class="card-title">${escapeHtml(p.name||"")}</p>
-      <p class="card-desc">${tasks.length} task(s) &middot; ${pending} pending &middot; ${approved} approved</p>
-      <div class="meta">Created ${fmtDate(p.createdAt)}</div></div>
+      <div class="card-body">
+        <p class="card-title">${escapeHtml(p.name||"")} ${statusBadge}</p>
+        <p class="card-desc">${tasks.length} task(s) &middot; Created by ${escapeHtml(p.createdByName || p.createdBy || "User")}</p>
+        <div class="meta">Created ${fmtDate(p.createdAt)}</div>
+        ${adminActions}
+      </div>
     </div>`;
   }).join("");
-  list.querySelectorAll("[data-project-id]").forEach(card=>card.addEventListener("click",()=>openProject(card.getAttribute("data-project-id"))));
+
+  list.querySelectorAll("[data-project-id]").forEach(card=>{
+    card.addEventListener("click",(e)=>{
+      if(e.target.closest("button")) return;
+      openProject(card.getAttribute("data-project-id"));
+    });
+  });
+  list.querySelectorAll(".approve-project").forEach(btn=>btn.addEventListener("click", async e=>{
+    e.stopPropagation();
+    const id=btn.getAttribute("data-project-id");
+    btn.disabled=true;
+    try{
+      await updateDoc(doc(db,"projects",id),{
+        status:"approved",
+        approvedBy:currentUser.email||null,
+        approvedAt:serverTimestamp()
+      });
+    }catch(err){
+      console.error(err);
+      alert("Could not approve project. Check your connection and try again.");
+      btn.disabled=false;
+    }
+  }));
+  list.querySelectorAll(".edit-project").forEach(btn=>btn.addEventListener("click", e=>{
+    e.stopPropagation();
+    openEditProject(btn.getAttribute("data-project-id"));
+  }));
+  list.querySelectorAll(".delete-project").forEach(btn=>btn.addEventListener("click", async e=>{
+    e.stopPropagation();
+    await deleteProject(btn.getAttribute("data-project-id"));
+  }));
+  list.querySelectorAll(".pdf-project").forEach(btn=>btn.addEventListener("click", e=>{
+    e.stopPropagation();
+    downloadProjectPdf(btn.getAttribute("data-project-id"));
+  }));
 }
 
 function openProject(id){
@@ -1949,8 +2119,11 @@ function openProject(id){
   currentProjectId = id;
   currentProjectName = p.name || "Project";
   $("projectTasksTitle").textContent = currentProjectName;
+  $("projectProjectStatus").innerHTML = p.status === "approved"
+    ? '<span class="badge badge-closed">Approved by admin</span>'
+    : '<span class="badge badge-open">Pending admin approval</span>';
   renderCurrentProjectTasks();
-  $("addProjectTaskBtn").style.display = isAdmin ? "none" : "inline-block";
+  $("addProjectTaskBtn").style.display = isAdmin ? "inline-block" : "none";
   showModal("projectTasksModal");
 }
 
@@ -1958,57 +2131,215 @@ function renderCurrentProjectTasks(){
   const list = $("projectTasksList");
   if(!list || !currentProjectId) return;
   const tasks = allProjectTasks.filter(t=>t.projectId===currentProjectId);
-  if(tasks.length===0){ list.innerHTML='<div class="meta" style="padding:15px 0;">No tasks added yet.</div>'; return; }
+  if(tasks.length===0){
+    list.innerHTML='<div class="meta" style="padding:15px 0;">No tasks added yet.</div>';
+    return;
+  }
   list.innerHTML = tasks.map(t=>`<div class="card" style="cursor:default;">
-    <div class="card-body"><p class="card-title">${escapeHtml(t.task||"")}</p>
-    <p class="card-desc">${escapeHtml(t.location||"")}${t.unitNumber ? " &middot; Unit " + escapeHtml(t.unitNumber) : ""}</p>
-    <div class="meta">Staff: ${escapeHtml(t.staffName||"")} &middot; ${fmtDate(t.createdAt)}</div>
-    <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">${t.status==="approved" ? '<span class="badge badge-closed">Approved</span>' : '<span class="badge badge-open">Pending</span>'}${isAdmin && t.status!=="approved" ? `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button>` : ""}</div>
+    <div class="card-body">
+      <p class="card-title">${escapeHtml(t.task||"")}</p>
+      <p class="card-desc">${escapeHtml(t.location||"")}${t.unitNumber ? " &middot; " + escapeHtml(projectFieldLabels.unitNumber) + ": " + escapeHtml(t.unitNumber) : ""}</p>
+      <div class="meta">${escapeHtml(projectFieldLabels.staffName)}: ${escapeHtml(t.staffName||"Not assigned")} &middot; ${fmtDate(t.createdAt)}</div>
+      ${isAdmin ? `<div style="margin-top:8px;display:flex;gap:6px;">
+        <button class="btn btn-light edit-project-task" data-task-id="${t.id}">Edit</button>
+        <button class="btn btn-red delete-project-task" data-task-id="${t.id}">Delete</button>
+      </div>` : ""}
     </div></div>`).join("");
-  list.querySelectorAll(".approve-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
+
+  list.querySelectorAll(".edit-project-task").forEach(btn=>btn.addEventListener("click", e=>{
     e.stopPropagation();
-    btn.disabled=true;
-    try{ await updateDoc(doc(db,"projecttasks",btn.getAttribute("data-task-id")),{status:"approved",approvedBy:currentUser.email||null,approvedAt:serverTimestamp()}); }
-    catch(err){ console.error(err); alert("Could not approve task. Check your connection and try again."); btn.disabled=false; }
+    openEditProjectTask(btn.getAttribute("data-task-id"));
+  }));
+  list.querySelectorAll(".delete-project-task").forEach(btn=>btn.addEventListener("click", async e=>{
+    e.stopPropagation();
+    const id=btn.getAttribute("data-task-id");
+    if(!confirm("Delete this project task?")) return;
+    try{ await deleteDoc(doc(db,"projecttasks",id)); }
+    catch(err){ console.error(err); alert("Could not delete task."); }
   }));
 }
 
+function openEditProject(id){
+  if(!isAdmin) return;
+  const p=allProjects.find(x=>x.id===id);
+  if(!p) return;
+  editingProjectId=id;
+  $("editProjectNameInput").value=p.name||"";
+  $("editProjectError").textContent="";
+  showModal("editProjectModal");
+}
+
+$("saveEditProjectBtn").addEventListener("click",async()=>{
+  if(!isAdmin || !editingProjectId) return;
+  const name=$("editProjectNameInput").value.trim();
+  $("editProjectError").textContent="";
+  if(!name){ $("editProjectError").textContent="Project name is required."; return; }
+  $("saveEditProjectBtn").disabled=true;
+  try{
+    await updateDoc(doc(db,"projects",editingProjectId),{
+      name,
+      updatedBy:currentUser.email||null,
+      updatedAt:serverTimestamp()
+    });
+    hideModal("editProjectModal");
+  }catch(err){
+    console.error(err);
+    $("editProjectError").textContent="Could not save changes.";
+  }
+  $("saveEditProjectBtn").disabled=false;
+});
+
+async function deleteProject(id){
+  if(!isAdmin) return;
+  const p=allProjects.find(x=>x.id===id);
+  if(!p || !confirm(`Delete project "${p.name||"Project"}" and all of its tasks? This cannot be undone.`)) return;
+  try{
+    const tasks=allProjectTasks.filter(t=>t.projectId===id);
+    await Promise.all(tasks.map(t=>deleteDoc(doc(db,"projecttasks",t.id))));
+    await deleteDoc(doc(db,"projects",id));
+    if(currentProjectId===id){ currentProjectId=null; currentProjectName=""; }
+  }catch(err){
+    console.error(err);
+    alert("Could not delete the project.");
+  }
+}
+
+function openEditProjectTask(id){
+  if(!isAdmin) return;
+  const t=allProjectTasks.find(x=>x.id===id);
+  if(!t) return;
+  $("projectTaskInput").value=t.task||"";
+  $("projectLocationInput").value=t.location||"";
+  $("projectUnitInput").value=t.unitNumber||"";
+  $("projectStaffInput").value=t.staffName||"";
+  $("projectTaskError").textContent="";
+  editingProjectTaskId=id;
+  $("saveProjectTaskBtn").textContent="Save changes";
+  applyProjectFieldLabels();
+  showModal("newProjectTaskModal");
+}
+
 $("newProjectBtn").addEventListener("click",()=>{
-  $("projectNameInput").value=""; $("projectError").textContent=""; showModal("newProjectModal");
+  $("projectNameInput").value="";
+  $("projectError").textContent="";
+  showModal("newProjectModal");
 });
 
 $("saveProjectBtn").addEventListener("click",async()=>{
+  if(!currentUser) return;
   const name=$("projectNameInput").value.trim();
   $("projectError").textContent="";
   if(!name){ $("projectError").textContent="Project name is required."; return; }
   $("saveProjectBtn").disabled=true;
   try{
-    await addDoc(collection(db,"projects"),{name,createdBy:currentUser.email||null,createdAt:serverTimestamp()});
+    await addDoc(collection(db,"projects"),{
+      name,
+      status:"pending",
+      createdBy:currentUser.email||null,
+      createdByUid:currentUser.uid,
+      createdByName:otpPendingName||null,
+      createdAt:serverTimestamp()
+    });
     hideModal("newProjectModal");
-  }catch(err){ console.error(err); $("projectError").textContent="Could not save project. Check your connection and try again."; }
+  }catch(err){
+    console.error(err);
+    $("projectError").textContent="Could not save project. Your OTP may have expired.";
+  }
   $("saveProjectBtn").disabled=false;
 });
 
 $("addProjectTaskBtn").addEventListener("click",()=>{
-  $("projectTaskInput").value=""; $("projectLocationInput").value=""; $("projectUnitInput").value=""; $("projectStaffInput").value=""; $("projectTaskError").textContent="";
+  if(!isAdmin) return;
+  editingProjectTaskId=null;
+  $("projectTaskInput").value="";
+  $("projectLocationInput").value="";
+  $("projectUnitInput").value="";
+  $("projectStaffInput").value="";
+  $("projectTaskError").textContent="";
+  $("saveProjectTaskBtn").textContent="Save";
+  applyProjectFieldLabels();
   showModal("newProjectTaskModal");
 });
 
 $("saveProjectTaskBtn").addEventListener("click",async()=>{
-  const task=$("projectTaskInput").value.trim(), location=$("projectLocationInput").value.trim(), unitNumber=$("projectUnitInput").value.trim(), staffName=$("projectStaffInput").value.trim();
+  if(!isAdmin) return;
+  const task=$("projectTaskInput").value.trim();
+  const location=$("projectLocationInput").value.trim();
+  const unitNumber=$("projectUnitInput").value.trim();
+  const staffName=$("projectStaffInput").value.trim();
   $("projectTaskError").textContent="";
-  if(!task || !location || !unitNumber || !staffName){ $("projectTaskError").textContent="Please fill all fields."; return; }
+  if(!task || !location || !unitNumber){
+    $("projectTaskError").textContent=`Please fill the required ${projectFieldLabels.task}, ${projectFieldLabels.location} and ${projectFieldLabels.unitNumber} fields.`;
+    return;
+  }
   if(!currentProjectId){ $("projectTaskError").textContent="Project not selected."; return; }
   $("saveProjectTaskBtn").disabled=true;
   try{
-    await addDoc(collection(db,"projecttasks"),{projectId:currentProjectId,projectName:currentProjectName,task,location,unitNumber,staffName,staffEmail:currentUser.email||null,status:"pending",createdAt:serverTimestamp()});
+    if(editingProjectTaskId){
+      await updateDoc(doc(db,"projecttasks",editingProjectTaskId),{
+        task,location,unitNumber,staffName:staffName||null,
+        projectName:currentProjectName,
+        updatedBy:currentUser.email||null,
+        updatedAt:serverTimestamp()
+      });
+    }else{
+      await addDoc(collection(db,"projecttasks"),{
+        projectId:currentProjectId,
+        projectName:currentProjectName,
+        task,location,unitNumber,
+        staffName:staffName||null,
+        staffEmail:null,
+        status:"assigned",
+        createdAt:serverTimestamp()
+      });
+    }
+    editingProjectTaskId=null;
+    $("saveProjectTaskBtn").textContent="Save";
     hideModal("newProjectTaskModal");
-  }catch(err){ console.error(err); $("projectTaskError").textContent="Could not save task. Check your connection and try again."; }
+  }catch(err){
+    console.error(err);
+    $("projectTaskError").textContent="Could not save task. Check your connection and try again.";
+  }
   $("saveProjectTaskBtn").disabled=false;
 });
 
+function openProjectOtpFlow(){
+  otpPendingPurpose="project";
+  $("otpModalTitle").textContent="Admin approval for new project";
+  $("otpModalHint").textContent="Creating a new Project Report requires a one-time code from your admin. Request the code below, then ask the admin for the 6-digit code.";
+  $("otpVerifyHint").textContent="Code requested. Ask your admin for the 6-digit code, then enter it below.";
+  $("otpStaffName").value="";
+  $("otpRequestError").textContent="";
+  $("otpRequestStep").style.display="block";
+  $("otpVerifyStep").style.display="none";
+  $("otpError").textContent="";
+  showModal("otpModal");
+}
+
+function openSnagOtpFlow(){
+  otpPendingPurpose="snag";
+  $("otpModalTitle").textContent="Verify to open a snag";
+  $("otpModalHint").textContent="Opening a new snag needs a one-time code from your admin.";
+  $("otpVerifyHint").textContent="Code requested. Ask your admin for the 6-digit code, then enter it below. Once verified, you can open snags for the next 24 hours.";
+  $("otpStaffName").value="";
+  $("otpRequestError").textContent="";
+  $("otpRequestStep").style.display="block";
+  $("otpVerifyStep").style.display="none";
+  $("otpError").textContent="";
+  showModal("otpModal");
+}
+
 $("fab").addEventListener("click", async ()=>{
-  if(activeTab === "projects") return;
+  if(activeTab === "projects"){
+    if(isAdmin){
+      $("projectNameInput").value="";
+      $("projectError").textContent="";
+      showModal("newProjectModal");
+    }else{
+      openProjectOtpFlow();
+    }
+    return;
+  }
   if(activeTab === "work"){
     editingWorkId = null;
     $("workModalTitle").textContent = "New work report";
@@ -2041,7 +2372,7 @@ $("fab").addEventListener("click", async ()=>{
     if(snap.exists()){
       const r = snap.data();
       const expiresDate = r.verifiedExpiresAt && r.verifiedExpiresAt.toDate ? r.verifiedExpiresAt.toDate() : null;
-      if(r.status === "verified" && expiresDate && expiresDate > new Date()){
+      if(r.purpose === "snag" && r.status === "verified" && expiresDate && expiresDate > new Date()){
         openNewSnagFlow(r.requestedBy || "");
         return;
       }
@@ -2050,12 +2381,7 @@ $("fab").addEventListener("click", async ()=>{
     console.error(err);
   }
 
-  $("otpStaffName").value = "";
-  $("otpRequestError").textContent = "";
-  $("otpRequestStep").style.display = "block";
-  $("otpVerifyStep").style.display = "none";
-  $("otpError").textContent = "";
-  showModal("otpModal");
+  openSnagOtpFlow();
 });
 
 // ---------- OTP FLOW (non-admin staff opening a new snag) ----------
@@ -2071,6 +2397,7 @@ $("otpRequestBtn").addEventListener("click", async ()=>{
     await setDoc(doc(db, "otpRequests", currentUser.uid), {
       code,
       requestedBy: name,
+      purpose: otpPendingPurpose,
       status: "pending",
       createdAt: serverTimestamp(),
       verifiedExpiresAt: null
@@ -2100,13 +2427,25 @@ $("otpVerifyBtn").addEventListener("click", async ()=>{
       $("otpVerifyBtn").disabled = false;
       return;
     }
-    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // valid for 1 day
+    const r = snap.data();
+    if(r.purpose !== otpPendingPurpose){
+      $("otpError").textContent = "This code is for a different request. Please request a new code.";
+      $("otpVerifyBtn").disabled = false;
+      return;
+    }
+    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
     await updateDoc(doc(db, "otpRequests", currentUser.uid), {
       status: "verified",
       verifiedExpiresAt: expires
     });
     hideModal("otpModal");
-    openNewSnagFlow(otpPendingName);
+    if(otpPendingPurpose === "project"){
+      $("projectNameInput").value="";
+      $("projectError").textContent="";
+      showModal("newProjectModal");
+    }else{
+      openNewSnagFlow(otpPendingName);
+    }
   }catch(err){
     console.error(err);
     $("otpError").textContent = "Could not verify. Check your connection and try again.";
