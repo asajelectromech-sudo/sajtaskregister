@@ -142,6 +142,7 @@
   <div class="tabs" id="mainTabs">
     <button class="tab-btn active" data-tab="snags">Snag Reports</button>
     <button class="tab-btn" data-tab="work">Work Reports</button>
+    <button class="tab-btn" data-tab="projects">Project Reports</button>
   </div>
 
   <div id="snagsView">
@@ -191,9 +192,47 @@
     <div id="workList"></div>
     <div id="workEmptyState" style="display:none;">No work reports match your filters.</div>
   </div>
+
+  <div id="projectsView" style="display:none;">
+    <div class="toolbar">
+      <button class="btn btn-primary" id="newProjectBtn" style="display:none;">+ New Project</button>
+    </div>
+    <div id="projectList"></div>
+    <div id="projectEmptyState" style="display:none;">No projects created yet.</div>
+  </div>
 </main>
 
 <button id="fab" title="Add new">+</button>
+
+<!-- PROJECT REPORT MODALS -->
+<div class="modal-overlay" id="newProjectModal">
+  <div class="modal">
+    <h2>New Project</h2>
+    <div class="field"><label>Project name</label><input id="projectNameInput" type="text" placeholder="Project name" /></div>
+    <div class="error-text" id="projectError"></div>
+    <div class="modal-actions"><button class="btn btn-light" data-close="newProjectModal">Cancel</button><button class="btn btn-primary" id="saveProjectBtn">Save</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="projectTasksModal">
+  <div class="modal">
+    <h2 id="projectTasksTitle">Project</h2>
+    <div id="projectTasksList"></div>
+    <div class="modal-actions"><button class="btn btn-light" data-close="projectTasksModal">Close</button><button class="btn btn-primary" id="addProjectTaskBtn">+ Add Task</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="newProjectTaskModal">
+  <div class="modal">
+    <h2>Add Task</h2>
+    <div class="field"><label>Task</label><input id="projectTaskInput" type="text" placeholder="Task" /></div>
+    <div class="field"><label>Location / Building</label><input id="projectLocationInput" type="text" placeholder="Location / Building" /></div>
+    <div class="field"><label>Unit Number</label><input id="projectUnitInput" type="text" placeholder="Unit number" /></div>
+    <div class="field"><label>Staff Name</label><input id="projectStaffInput" type="text" placeholder="Staff name" /></div>
+    <div class="error-text" id="projectTaskError"></div>
+    <div class="modal-actions"><button class="btn btn-light" data-close="newProjectTaskModal">Cancel</button><button class="btn btn-primary" id="saveProjectTaskBtn">Save</button></div>
+  </div>
+</div>
 
 <!-- ADMIN LOGIN MODAL -->
 <div class="modal-overlay" id="loginModal">
@@ -510,6 +549,12 @@ let allWorkReports = [];
 let workListenerStarted = false;
 let workFilters = { status: "all", site: "", search: "" };
 let activeTab = "snags";
+let allProjects = [];
+let allProjectTasks = [];
+let projectListenerStarted = false;
+let projectTaskListenerStarted = false;
+let currentProjectId = null;
+let currentProjectName = "";
 
 let activeStream = null;
 let currentSnagForClose = null;
@@ -624,6 +669,7 @@ function unlockApp(){
   updateWorkExportLabel();
   startSnagListener();
   startWorkListener();
+  startProjectListeners();
 }
 
 $("gateSubmitBtn").addEventListener("click", ()=>{
@@ -659,6 +705,9 @@ document.querySelectorAll("#mainTabs .tab-btn").forEach(btn=>{
     btn.classList.add("active");
     $("snagsView").style.display = activeTab === "snags" ? "block" : "none";
     $("workView").style.display = activeTab === "work" ? "block" : "none";
+    $("projectsView").style.display = activeTab === "projects" ? "block" : "none";
+    $("newProjectBtn").style.display = (activeTab === "projects" && isAdmin) ? "inline-block" : "none";
+    renderProjectList();
     updateFabVisibility();
   });
 });
@@ -681,6 +730,7 @@ function renderAuthBox(){
       showModal("loginModal");
     });
   }
+  $("newProjectBtn").style.display = (activeTab === "projects" && isAdmin) ? "inline-block" : "none";
 }
 
 $("saveAppSettingsBtn").addEventListener("click", async ()=>{
@@ -1856,7 +1906,109 @@ function openNewSnagFlow(prefillName){
   showModal("newSnagModal");
 }
 
+// ---------- PROJECT REPORTS ----------
+function startProjectListeners(){
+  if(projectListenerStarted) return;
+  projectListenerStarted = true;
+  const pq = query(collection(db, "projects"), orderBy("createdAt", "desc"));
+  onSnapshot(pq, snap=>{
+    allProjects = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    renderProjectList();
+  }, err=>console.error("Project listener:", err));
+  const tq = query(collection(db, "projecttasks"), orderBy("createdAt", "desc"));
+  onSnapshot(tq, snap=>{
+    allProjectTasks = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    renderProjectList();
+    renderCurrentProjectTasks();
+  }, err=>console.error("Project task listener:", err));
+}
+
+function renderProjectList(){
+  const list = $("projectList");
+  if(!list) return;
+  const empty = $("projectEmptyState");
+  if(allProjects.length === 0){ list.innerHTML=""; empty.style.display="block"; return; }
+  empty.style.display="none";
+  list.innerHTML = allProjects.map(p=>{
+    const tasks = allProjectTasks.filter(t=>t.projectId===p.id);
+    const pending = tasks.filter(t=>t.status!=="approved").length;
+    const approved = tasks.filter(t=>t.status==="approved").length;
+    return `<div class="card" data-project-id="${p.id}">
+      <div class="thumb-placeholder">📁</div>
+      <div class="card-body"><p class="card-title">${escapeHtml(p.name||"")}</p>
+      <p class="card-desc">${tasks.length} task(s) &middot; ${pending} pending &middot; ${approved} approved</p>
+      <div class="meta">Created ${fmtDate(p.createdAt)}</div></div>
+    </div>`;
+  }).join("");
+  list.querySelectorAll("[data-project-id]").forEach(card=>card.addEventListener("click",()=>openProject(card.getAttribute("data-project-id"))));
+}
+
+function openProject(id){
+  const p = allProjects.find(x=>x.id===id);
+  if(!p) return;
+  currentProjectId = id;
+  currentProjectName = p.name || "Project";
+  $("projectTasksTitle").textContent = currentProjectName;
+  renderCurrentProjectTasks();
+  $("addProjectTaskBtn").style.display = isAdmin ? "none" : "inline-block";
+  showModal("projectTasksModal");
+}
+
+function renderCurrentProjectTasks(){
+  const list = $("projectTasksList");
+  if(!list || !currentProjectId) return;
+  const tasks = allProjectTasks.filter(t=>t.projectId===currentProjectId);
+  if(tasks.length===0){ list.innerHTML='<div class="meta" style="padding:15px 0;">No tasks added yet.</div>'; return; }
+  list.innerHTML = tasks.map(t=>`<div class="card" style="cursor:default;">
+    <div class="card-body"><p class="card-title">${escapeHtml(t.task||"")}</p>
+    <p class="card-desc">${escapeHtml(t.location||"")}${t.unitNumber ? " &middot; Unit " + escapeHtml(t.unitNumber) : ""}</p>
+    <div class="meta">Staff: ${escapeHtml(t.staffName||"")} &middot; ${fmtDate(t.createdAt)}</div>
+    <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">${t.status==="approved" ? '<span class="badge badge-closed">Approved</span>' : '<span class="badge badge-open">Pending</span>'}${isAdmin && t.status!=="approved" ? `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button>` : ""}</div>
+    </div></div>`).join("");
+  list.querySelectorAll(".approve-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
+    e.stopPropagation();
+    btn.disabled=true;
+    try{ await updateDoc(doc(db,"projecttasks",btn.getAttribute("data-task-id")),{status:"approved",approvedBy:currentUser.email||null,approvedAt:serverTimestamp()}); }
+    catch(err){ console.error(err); alert("Could not approve task. Check your connection and try again."); btn.disabled=false; }
+  }));
+}
+
+$("newProjectBtn").addEventListener("click",()=>{
+  $("projectNameInput").value=""; $("projectError").textContent=""; showModal("newProjectModal");
+});
+
+$("saveProjectBtn").addEventListener("click",async()=>{
+  const name=$("projectNameInput").value.trim();
+  $("projectError").textContent="";
+  if(!name){ $("projectError").textContent="Project name is required."; return; }
+  $("saveProjectBtn").disabled=true;
+  try{
+    await addDoc(collection(db,"projects"),{name,createdBy:currentUser.email||null,createdAt:serverTimestamp()});
+    hideModal("newProjectModal");
+  }catch(err){ console.error(err); $("projectError").textContent="Could not save project. Check your connection and try again."; }
+  $("saveProjectBtn").disabled=false;
+});
+
+$("addProjectTaskBtn").addEventListener("click",()=>{
+  $("projectTaskInput").value=""; $("projectLocationInput").value=""; $("projectUnitInput").value=""; $("projectStaffInput").value=""; $("projectTaskError").textContent="";
+  showModal("newProjectTaskModal");
+});
+
+$("saveProjectTaskBtn").addEventListener("click",async()=>{
+  const task=$("projectTaskInput").value.trim(), location=$("projectLocationInput").value.trim(), unitNumber=$("projectUnitInput").value.trim(), staffName=$("projectStaffInput").value.trim();
+  $("projectTaskError").textContent="";
+  if(!task || !location || !unitNumber || !staffName){ $("projectTaskError").textContent="Please fill all fields."; return; }
+  if(!currentProjectId){ $("projectTaskError").textContent="Project not selected."; return; }
+  $("saveProjectTaskBtn").disabled=true;
+  try{
+    await addDoc(collection(db,"projecttasks"),{projectId:currentProjectId,projectName:currentProjectName,task,location,unitNumber,staffName,staffEmail:currentUser.email||null,status:"pending",createdAt:serverTimestamp()});
+    hideModal("newProjectTaskModal");
+  }catch(err){ console.error(err); $("projectTaskError").textContent="Could not save task. Check your connection and try again."; }
+  $("saveProjectTaskBtn").disabled=false;
+});
+
 $("fab").addEventListener("click", async ()=>{
+  if(activeTab === "projects") return;
   if(activeTab === "work"){
     editingWorkId = null;
     $("workModalTitle").textContent = "New work report";
