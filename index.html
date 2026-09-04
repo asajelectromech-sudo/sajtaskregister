@@ -2144,7 +2144,11 @@ function downloadProjectPdf(projectId, taskIdsFilter){
       });
       const statusLabel = t.status === "approved" ? "Approved" : (t.status === "rejected" ? "Rejected" : "Pending admin approval");
       rows.push(`Status: ${statusLabel}`);
-      const completedTs = t.completedAt || t.createdAt;
+      // Only report a completion time once Job Details has actually been
+      // filled in — otherwise it's just the assignment/creation time.
+      const staffColsPdf = projectColumns.filter(c=>c.filledBy==="staff");
+      const hasStaffValuePdf = staffColsPdf.some(c=>String(getProjectTaskValue(t,c)||"").trim());
+      const completedTs = hasStaffValuePdf ? (t.completedAt || t.createdAt) : null;
       if(completedTs) rows.push(`Job completed: ${fmtDate(completedTs)}`);
       if(t.status === "approved" && t.rating) rows.push(`Rating: ${t.rating}/5`);
       rows.forEach(row=>{
@@ -2369,7 +2373,10 @@ function renderCurrentProjectTasks(){
       statusBadge = '<span class="badge badge-open">Pending approval</span>';
     }
     const ratingBadge = t.rating ? `<span class="badge badge-closed">${"★".repeat(t.rating)}${"☆".repeat(5-t.rating)} (${t.rating}/5)</span>` : "";
-    const completedTs = t.completedAt || t.createdAt;
+    // Only show "Job completed" once Job Details has actually been filled
+    // in — otherwise this would just be showing the assignment/creation
+    // time mislabeled as a completion time.
+    const completedTs = hasStaffValue ? (t.completedAt || t.createdAt) : null;
     const completedLine = completedTs ? `<div class="detail-row"><b>Job completed:</b> ${escapeHtml(fmtDate(completedTs))}</div>` : "";
     let adminActionButtons = "";
     if(isAdmin){
