@@ -67,9 +67,15 @@
   .badge-open{background:var(--amber-bg);color:var(--amber);}
   .badge-closed{background:var(--green-bg);color:var(--green);}
   .badge-assigned{background:var(--blue-bg);color:var(--blue);animation:badgePulse 1.6s ease-in-out infinite;}
+  .badge-rejected{background:var(--red-bg);color:var(--red);}
+  .badge-rejected-alert{background:var(--red-bg);color:var(--red);animation:badgePulseRed 1.6s ease-in-out infinite;}
   @keyframes badgePulse{
     0%,100%{box-shadow:0 0 0 0 rgba(29,78,216,.35);}
     50%{box-shadow:0 0 0 5px rgba(29,78,216,0);}
+  }
+  @keyframes badgePulseRed{
+    0%,100%{box-shadow:0 0 0 0 rgba(185,28,28,.35);}
+    50%{box-shadow:0 0 0 5px rgba(185,28,28,0);}
   }
   .meta{font-size:11px;color:var(--text-muted);margin-top:4px;}
   #emptyState{text-align:center;color:var(--text-muted);padding:50px 20px;font-size:14px;}
@@ -224,6 +230,15 @@
 <div class="modal-overlay" id="projectTasksModal">
   <div class="modal">
     <h2 id="projectTasksTitle">Project</h2>
+    <div class="toolbar" id="taskSelectToolbar" style="display:none;">
+      <button class="btn btn-light" id="taskSelectModeBtn">Select</button>
+      <button class="btn btn-light" id="taskExportBtn">Export PDF</button>
+    </div>
+    <div class="toolbar" id="taskSelectAllRow" style="display:none;">
+      <button class="btn btn-light" id="selectAllTasksBtn">Select all</button>
+      <button class="btn btn-light" id="clearTasksBtn">Clear selection</button>
+      <button class="btn btn-red" id="deleteSelectedTasksBtn" style="display:none;">Delete selected</button>
+    </div>
     <div id="projectTasksList"></div>
     <div class="modal-actions"><button class="btn btn-light" data-close="projectTasksModal">Close</button><button class="btn btn-primary" id="addProjectTaskBtn">+ Add Task</button></div>
   </div>
@@ -235,6 +250,16 @@
     <div id="projectTaskDynamicFields"></div>
     <div class="error-text" id="projectTaskError"></div>
     <div class="modal-actions"><button class="btn btn-light" data-close="newProjectTaskModal">Cancel</button><button class="btn btn-primary" id="saveProjectTaskBtn">Save</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="taskRatingModal">
+  <div class="modal">
+    <h2>Rate this task</h2>
+    <p class="hint" id="taskRatingHint"></p>
+    <div id="taskRatingStars" style="font-size:34px;letter-spacing:8px;text-align:center;margin:16px 0;"></div>
+    <div class="error-text" id="taskRatingError"></div>
+    <div class="modal-actions"><button class="btn btn-light" data-close="taskRatingModal">Skip</button><button class="btn btn-primary" id="saveTaskRatingBtn">Save rating</button></div>
   </div>
 </div>
 
@@ -580,6 +605,11 @@ let currentProjectName = "";
 let editingProjectId = null;
 let editingProjectTaskId = null;
 let currentTaskFormColumns = []; // columns rendered in the currently-open task form (admin vs staff fields)
+let currentTaskFormMode = "admin"; // which form is currently open: "admin" | "staff" | "staffCreate"
+let taskSelectMode = false;
+let selectedProjectTaskIds = new Set();
+let ratingTaskId = null;
+let selectedTaskRating = 0;
 // Each column has a "filledBy" of "admin" or "staff". Admin fills in the
 // assignment fields (Task / Location / Unit Number / Staff Name) when
 // assigning work; the assigned staff member fills in "Job Details" (key
@@ -2070,11 +2100,16 @@ function openNewSnagFlow(prefillName){
   showModal("newSnagModal");
 }
 
-function downloadProjectPdf(projectId){
+function downloadProjectPdf(projectId, taskIdsFilter){
   if(!isAdmin) return;
   const p=allProjects.find(x=>x.id===projectId);
   if(!p) return;
-  const tasks=allProjectTasks.filter(t=>t.projectId===projectId);
+  let tasks=allProjectTasks.filter(t=>t.projectId===projectId);
+  const isFiltered = Array.isArray(taskIdsFilter) && taskIdsFilter.length>0;
+  if(isFiltered){
+    const idSet=new Set(taskIdsFilter);
+    tasks=tasks.filter(t=>idSet.has(t.id));
+  }
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF({unit:"pt",format:"a4"});
   const margin=40;
@@ -2093,7 +2128,7 @@ function downloadProjectPdf(projectId){
   pdf.text(`Created: ${fmtDate(p.createdAt)}`, margin, y);
   y+=28;
   pdf.setFontSize(13);
-  pdf.text("Tasks", margin, y);
+  pdf.text(isFiltered ? `Selected Tasks (${tasks.length})` : "Tasks", margin, y);
   y+=20;
   pdf.setFontSize(10);
   if(!tasks.length){
@@ -2105,6 +2140,11 @@ function downloadProjectPdf(projectId){
         const v=getProjectTaskValue(t,c);
         rows.push(`${c.label}: ${v || (c.key === "staffName" ? "Not assigned" : "")}`);
       });
+      const statusLabel = t.status === "approved" ? "Approved" : (t.status === "rejected" ? "Rejected" : "Pending admin approval");
+      rows.push(`Status: ${statusLabel}`);
+      const completedTs = t.completedAt || t.createdAt;
+      if(completedTs) rows.push(`Job completed: ${fmtDate(completedTs)}`);
+      if(t.status === "approved" && t.rating) rows.push(`Rating: ${t.rating}/5`);
       rows.forEach(row=>{
         const wrapped=pdf.splitTextToSize(row, 515);
         if(y > 760){ pdf.addPage(); y=50; }
@@ -2114,7 +2154,7 @@ function downloadProjectPdf(projectId){
       y+=8;
     });
   }
-  const filename=`SAJ_Project_Report_${sanitizeForFilename(p.name)}_${fmtDateOnly(p.createdAt)}.pdf`;
+  const filename=`SAJ_Project_Report_${sanitizeForFilename(p.name)}${isFiltered ? "_selected" : ""}_${fmtDateOnly(p.createdAt)}.pdf`;
   pdf.save(filename);
 }
 
@@ -2207,7 +2247,15 @@ function openProject(id){
   currentProjectId = id;
   currentProjectName = p.name || "Project";
   $("projectTasksTitle").textContent = currentProjectName;
+  // Reset multi-select state each time the project is opened.
+  taskSelectMode = false;
+  selectedProjectTaskIds.clear();
+  $("taskSelectModeBtn").textContent = "Select";
+  $("taskSelectModeBtn").classList.remove("btn-navy");
+  $("taskSelectAllRow").style.display = "none";
+  $("taskSelectToolbar").style.display = isAdmin ? "flex" : "none";
   renderCurrentProjectTasks();
+  updateTaskSelectionLabel();
   // Admin assigns tasks with the Task/Location/Unit Number/Staff Name
   // fields. Staff can also add a task themselves from here (all fields),
   // and separately fill in Job Details on any task via its own button.
@@ -2244,24 +2292,50 @@ function renderCurrentProjectTasks(){
     const staffCols=projectColumns.filter(c=>c.filledBy==="staff");
     const hasStaffValue=staffCols.some(c=>String(getProjectTaskValue(t,c)||"").trim());
     // Only tasks the admin assigned (i.e. have a Task name) get the "Add
-    // Job Details" button, and only until it's filled in once — after
-    // that it's no longer editable from the staff view.
+    // Job Details" button. It stays available on a rejected task so staff
+    // can correct and resubmit; otherwise it disappears once filled in.
     const assignedByAdmin=taskNameCol && String(getProjectTaskValue(t,taskNameCol)||"").trim();
-    const showAddJobDetails=!isAdmin && staffCols.length && assignedByAdmin && !hasStaffValue;
-    const statusBadge = t.status === "approved"
-      ? '<span class="badge badge-closed">Approved</span>'
-      : (showAddJobDetails
-          ? '<span class="badge badge-assigned">New task assigned to you</span>'
-          : '<span class="badge badge-open">Pending approval</span>');
-    return `<div class="card" style="cursor:default;">
+    const showAddJobDetails=!isAdmin && staffCols.length && assignedByAdmin && (!hasStaffValue || t.status==="rejected");
+    let statusBadge;
+    if(t.status === "approved"){
+      statusBadge = '<span class="badge badge-closed">Approved</span>';
+    } else if(t.status === "rejected"){
+      statusBadge = isAdmin
+        ? '<span class="badge badge-rejected">Rejected</span>'
+        : '<span class="badge badge-rejected-alert">Rejected — please review &amp; resubmit</span>';
+    } else if(showAddJobDetails){
+      statusBadge = '<span class="badge badge-assigned">New task assigned to you</span>';
+    } else {
+      statusBadge = '<span class="badge badge-open">Pending approval</span>';
+    }
+    const ratingBadge = t.rating ? `<span class="badge badge-closed">${"★".repeat(t.rating)}${"☆".repeat(5-t.rating)} (${t.rating}/5)</span>` : "";
+    const completedTs = t.completedAt || t.createdAt;
+    const completedLine = completedTs ? `<div class="detail-row"><b>Job completed:</b> ${escapeHtml(fmtDate(completedTs))}</div>` : "";
+    let adminActionButtons = "";
+    if(isAdmin){
+      if(t.status === "approved"){
+        adminActionButtons = `<button class="btn btn-light revert-project-task" data-task-id="${t.id}">Revert to Pending</button>`;
+      } else if(t.status === "rejected"){
+        adminActionButtons = `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button><button class="btn btn-light revert-project-task" data-task-id="${t.id}">Mark Pending</button>`;
+      } else {
+        adminActionButtons = `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button><button class="btn btn-red reject-project-task" data-task-id="${t.id}">Reject</button>`;
+      }
+      adminActionButtons += `<button class="btn btn-light edit-project-task" data-task-id="${t.id}">Edit</button><button class="btn btn-red delete-project-task" data-task-id="${t.id}">Delete</button>`;
+    }
+    const checkboxHtml = (isAdmin && taskSelectMode)
+      ? `<input type="checkbox" class="task-check" data-task-id="${t.id}" ${selectedProjectTaskIds.has(t.id)?"checked":""} style="margin-top:2px;width:18px;height:18px;flex-shrink:0;" />`
+      : "";
+    return `<div class="card" style="cursor:default;align-items:flex-start;">
+      ${checkboxHtml}
       <div class="card-body">
         <p class="card-title">${escapeHtml(String(title||"Untitled task"))}</p>
         ${rows}
+        ${completedLine}
         <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           ${statusBadge}
-          ${isAdmin && t.status !== "approved" ? `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button>` : ""}
-          ${isAdmin ? `<button class="btn btn-light edit-project-task" data-task-id="${t.id}">Edit</button><button class="btn btn-red delete-project-task" data-task-id="${t.id}">Delete</button>` : ""}
-          ${showAddJobDetails ? `<button class="btn btn-light fill-job-details" data-task-id="${t.id}">Add Job Details</button>` : ""}
+          ${ratingBadge}
+          ${adminActionButtons}
+          ${showAddJobDetails ? `<button class="btn btn-light fill-job-details" data-task-id="${t.id}">${hasStaffValue ? "Update Job Details" : "Add Job Details"}</button>` : ""}
         </div>
       </div></div>`;
   }).join("");
@@ -2269,8 +2343,24 @@ function renderCurrentProjectTasks(){
   list.querySelectorAll(".approve-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
     e.stopPropagation(); if(!isAdmin) return;
     const id=btn.getAttribute("data-task-id"); btn.disabled=true;
-    try{ await updateDoc(doc(db,"projecttasks",id),{status:"approved",approvedBy:currentUser.email||null,approvedAt:serverTimestamp()}); }
+    try{
+      await updateDoc(doc(db,"projecttasks",id),{status:"approved",approvedBy:currentUser.email||null,approvedAt:serverTimestamp(),rejectedBy:null,rejectedAt:null});
+      openTaskRatingModal(id);
+    }
     catch(err){ console.error(err); alert("Could not approve task. Check your connection and try again."); btn.disabled=false; }
+  }));
+  list.querySelectorAll(".reject-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
+    e.stopPropagation(); if(!isAdmin) return;
+    const id=btn.getAttribute("data-task-id"); btn.disabled=true;
+    try{ await updateDoc(doc(db,"projecttasks",id),{status:"rejected",rejectedBy:currentUser.email||null,rejectedAt:serverTimestamp()}); }
+    catch(err){ console.error(err); alert("Could not reject task. Check your connection and try again."); btn.disabled=false; }
+  }));
+  list.querySelectorAll(".revert-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
+    e.stopPropagation(); if(!isAdmin) return;
+    if(!confirm("Move this task back to Pending approval?")) return;
+    const id=btn.getAttribute("data-task-id"); btn.disabled=true;
+    try{ await updateDoc(doc(db,"projecttasks",id),{status:"pending",approvedBy:null,approvedAt:null,rejectedBy:null,rejectedAt:null,rating:null}); }
+    catch(err){ console.error(err); alert("Could not update task. Check your connection and try again."); btn.disabled=false; }
   }));
   list.querySelectorAll(".edit-project-task").forEach(btn=>btn.addEventListener("click",e=>{e.stopPropagation();openEditProjectTask(btn.getAttribute("data-task-id"));}));
   list.querySelectorAll(".fill-job-details").forEach(btn=>btn.addEventListener("click",e=>{e.stopPropagation();openFillJobDetails(btn.getAttribute("data-task-id"));}));
@@ -2278,10 +2368,101 @@ function renderCurrentProjectTasks(){
     e.stopPropagation(); const id=btn.getAttribute("data-task-id"); if(!confirm("Delete this project task?")) return;
     try{await deleteDoc(doc(db,"projecttasks",id));}catch(err){console.error(err);alert("Could not delete task.");}
   }));
+  list.querySelectorAll(".task-check").forEach(cb=>cb.addEventListener("change",e=>{
+    e.stopPropagation();
+    const id=cb.getAttribute("data-task-id");
+    if(cb.checked) selectedProjectTaskIds.add(id); else selectedProjectTaskIds.delete(id);
+    updateTaskSelectionLabel();
+  }));
 }
+
+// ---------- TASK MULTI-SELECT (PDF export + bulk delete) ----------
+function updateTaskSelectionLabel(){
+  $("taskExportBtn").textContent = (taskSelectMode && selectedProjectTaskIds.size > 0) ? `Export Selected (${selectedProjectTaskIds.size})` : "Export PDF";
+  $("deleteSelectedTasksBtn").style.display = (isAdmin && taskSelectMode && selectedProjectTaskIds.size > 0) ? "block" : "none";
+}
+$("taskSelectModeBtn").addEventListener("click", ()=>{
+  taskSelectMode = !taskSelectMode;
+  if(!taskSelectMode) selectedProjectTaskIds.clear();
+  $("taskSelectModeBtn").textContent = taskSelectMode ? "Cancel" : "Select";
+  $("taskSelectModeBtn").classList.toggle("btn-navy", taskSelectMode);
+  $("taskSelectAllRow").style.display = taskSelectMode ? "flex" : "none";
+  renderCurrentProjectTasks();
+  updateTaskSelectionLabel();
+});
+$("selectAllTasksBtn").addEventListener("click", ()=>{
+  allProjectTasks.filter(t=>t.projectId===currentProjectId).forEach(t=> selectedProjectTaskIds.add(t.id));
+  renderCurrentProjectTasks();
+  updateTaskSelectionLabel();
+});
+$("clearTasksBtn").addEventListener("click", ()=>{
+  selectedProjectTaskIds.clear();
+  renderCurrentProjectTasks();
+  updateTaskSelectionLabel();
+});
+$("deleteSelectedTasksBtn").addEventListener("click", async ()=>{
+  if(!isAdmin || selectedProjectTaskIds.size === 0) return;
+  if(!confirm(`Delete ${selectedProjectTaskIds.size} selected task(s)? This cannot be undone.`)) return;
+  $("deleteSelectedTasksBtn").disabled = true;
+  try{
+    await Promise.all(Array.from(selectedProjectTaskIds).map(id=> deleteDoc(doc(db,"projecttasks",id))));
+    selectedProjectTaskIds.clear();
+    renderCurrentProjectTasks();
+    updateTaskSelectionLabel();
+  }catch(err){
+    console.error(err);
+    alert("Could not delete some tasks. Check your connection and try again.");
+  }
+  $("deleteSelectedTasksBtn").disabled = false;
+});
+$("taskExportBtn").addEventListener("click", ()=>{
+  if(!currentProjectId) return;
+  if(taskSelectMode && selectedProjectTaskIds.size > 0){
+    downloadProjectPdf(currentProjectId, Array.from(selectedProjectTaskIds));
+  } else {
+    downloadProjectPdf(currentProjectId);
+  }
+});
+
+// ---------- TASK RATING (shown right after Approve) ----------
+function renderTaskRatingStars(){
+  const box=$("taskRatingStars"); if(!box) return;
+  box.innerHTML=[1,2,3,4,5].map(n=>`<span class="rating-star" data-star="${n}" style="cursor:pointer;color:${n<=selectedTaskRating?'#f59e0b':'#d8dee5'};">★</span>`).join("");
+  box.querySelectorAll(".rating-star").forEach(s=>s.addEventListener("click",()=>{
+    selectedTaskRating = Number(s.getAttribute("data-star"));
+    renderTaskRatingStars();
+  }));
+}
+function openTaskRatingModal(id){
+  ratingTaskId = id;
+  selectedTaskRating = 0;
+  const t = allProjectTasks.find(x=>x.id===id);
+  const staffCol = projectColumns.find(c=>c.key==="staffName");
+  const staffName = (t && staffCol) ? (getProjectTaskValue(t, staffCol) || "the assigned staff") : "the assigned staff";
+  $("taskRatingHint").textContent = `Rate ${staffName}'s work on this task (optional — tap Skip to leave it unrated).`;
+  $("taskRatingError").textContent = "";
+  renderTaskRatingStars();
+  showModal("taskRatingModal");
+}
+$("saveTaskRatingBtn").addEventListener("click", async ()=>{
+  if(!ratingTaskId){ hideModal("taskRatingModal"); return; }
+  if(selectedTaskRating < 1){ $("taskRatingError").textContent = "Tap a star to rate, or Skip."; return; }
+  $("saveTaskRatingBtn").disabled = true;
+  try{
+    await updateDoc(doc(db,"projecttasks",ratingTaskId),{rating:selectedTaskRating, ratedBy: currentUser.email||null, ratedAt: serverTimestamp()});
+    ratingTaskId = null;
+    hideModal("taskRatingModal");
+  }catch(err){
+    console.error(err);
+    $("taskRatingError").textContent = "Could not save the rating. Check your connection and try again.";
+  }
+  $("saveTaskRatingBtn").disabled = false;
+});
+
 
 function renderProjectTaskFields(values={}, mode="admin"){
   const box=$("projectTaskDynamicFields"); if(!box) return;
+  currentTaskFormMode = mode;
   // "staffCreate" is used when staff add a brand-new task themselves — same
   // fields as before this admin/staff split existed, minus the admin-only
   // "Task" (taskName) field, which staff don't need to set.
@@ -2368,9 +2549,10 @@ function openEditProjectTask(id){
 
 // Non-admin staff use this to fill in Job Details on a task the admin
 // assigned to them — every other field (Task, Location, Unit Number, Staff
-// Name) stays read-only from this form. Only usable once, on tasks the
-// admin assigned that don't have Job Details filled in yet (matches the
-// button's own visibility rule in renderCurrentProjectTasks).
+// Name) stays read-only from this form. Usable on a task that doesn't have
+// Job Details yet, or that the admin rejected (so staff can correct and
+// resubmit it) — matches the button's own visibility rule in
+// renderCurrentProjectTasks.
 function openFillJobDetails(id){
   if(isAdmin) return;
   const t=allProjectTasks.find(x=>x.id===id); if(!t) return;
@@ -2379,7 +2561,8 @@ function openFillJobDetails(id){
   const taskNameCol=projectColumns.find(c=>c.key==="taskName");
   const assignedByAdmin=taskNameCol && String(getProjectTaskValue(t,taskNameCol)||"").trim();
   const hasStaffValue=cols.some(c=>String(getProjectTaskValue(t,c)||"").trim());
-  if(!assignedByAdmin || hasStaffValue) return;
+  if(!assignedByAdmin) return;
+  if(hasStaffValue && t.status !== "rejected") return;
   const values={};
   cols.forEach(c=>values[c.key]=getProjectTaskValue(t,c));
   editingProjectTaskId=id;
@@ -2428,6 +2611,11 @@ $("saveProjectTaskBtn").addEventListener("click",async()=>{
   try{
     const payload={projectId:currentProjectId,projectName:currentProjectName,status:"pending",updatedAt:serverTimestamp()};
     currentTaskFormColumns.forEach(c=>payload[c.key]=values[c.key]||null);
+    if(currentTaskFormMode==="staff"){
+      // Staff just filled in / resubmitted Job Details — record this as the
+      // job completion time, taken from the staff's save, not admin review.
+      payload.completedAt=serverTimestamp();
+    }
     if(editingProjectTaskId){
       await updateDoc(doc(db,"projecttasks",editingProjectTaskId),{...payload,updatedBy:currentUser.email||null});
     }else{
