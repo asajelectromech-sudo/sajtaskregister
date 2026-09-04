@@ -207,6 +207,7 @@
   </div>
 
   <div id="projectsView" style="display:none;">
+    <div id="taskNotificationsBanner" style="display:none;"></div>
     <div class="toolbar">
       <button class="btn btn-primary" id="newProjectBtn" style="display:none;">+ New Project</button>
     </div>
@@ -393,10 +394,10 @@
       <div class="field"><label>Location</label><input type="text" id="workLocation" placeholder="e.g. Level 3 corridor" /></div>
       <div class="field"><label>Reporting staff</label><input type="text" id="workReportedBy" placeholder="Enter your name" /></div>
       <div class="field"><label>Problem / task</label><textarea id="workProblem" placeholder="Describe the problem or task…"></textarea></div>
-
-      <div class="section-label">Before photos (minimum 2 required)</div>
-      <div id="workBeforeCamArea"></div>
     </div>
+
+    <div class="section-label">Before photos (optional to save as Open — minimum 2 required to save as Closed)</div>
+    <div id="workBeforeCamArea"></div>
 
     <div class="field"><label>Rectification</label><textarea id="workRectification" placeholder="What was done to fix / complete it…"></textarea></div>
     <div class="field"><label>Material used</label><textarea id="workMaterial" placeholder="Materials used…"></textarea></div>
@@ -1430,11 +1431,11 @@ function updateSaveWorkBtn(){
   const requiredOk = editingWorkId
     ? true
     : ($("workSite").value.trim() && $("workLocation").value.trim()
-        && $("workReportedBy").value.trim() && $("workProblem").value.trim()
-        && workBeforePhotos.length >= 2);
+        && $("workReportedBy").value.trim() && $("workProblem").value.trim());
   $("saveWorkBtn").disabled = !requiredOk;
 
-  const willBeComplete = workAfterPhotos.length >= 2
+  const willBeComplete = workBeforePhotos.length >= 2
+    && workAfterPhotos.length >= 2
     && $("workRectification").value.trim()
     && $("workMaterial").value.trim()
     && $("workClosedBy").value.trim()
@@ -1449,8 +1450,8 @@ function updateSaveWorkBtn(){
   $("workCompletenessHint").textContent = requiredOk
     ? (willBeComplete
         ? "This report will be saved as: Closed"
-        : "This report will be saved as: Open (missing after photos, rectification, material used, closed-by name, client checked, client name, or client signature)")
-    : "Site, location, reporting staff, problem/task and at least 2 before photos are required to save.";
+        : "This report will be saved as: Open (missing before photos, after photos, rectification, material used, closed-by name, client checked, client name, or client signature)")
+    : "Site, location, reporting staff and problem/task are required to save.";
 }
 ["workSite","workLocation","workReportedBy","workProblem","workRectification","workMaterial","workClosedBy","workClientName"].forEach(id=>{
   $(id).addEventListener("input", updateSaveWorkBtn);
@@ -1480,6 +1481,9 @@ function openCompleteWorkModal(s){
   $("workClientName").value = s.clientName || "";
   $("newWorkError").textContent = "";
 
+  workBeforePhotos.length = 0;
+  (s.beforePhotos||[]).forEach(p=> workBeforePhotos.push(p));
+  workBeforeCamHandle.reset();
   workAfterPhotos.length = 0;
   (s.afterPhotos||[]).forEach(p=> workAfterPhotos.push(p));
   workAfterCamHandle.reset();
@@ -1497,13 +1501,16 @@ $("saveWorkBtn").addEventListener("click", async ()=>{
   const clientChecked = $("workClientChecked").checked;
   const clientName = $("workClientName").value.trim();
   const clientSignature = workClientSignatureUrl;
-  const isComplete = workAfterPhotos.length >= 2 && !!rectification && !!materialUsed && !!closedBy
+  // Before photos are optional to save a report as Open, but required
+  // (like after photos and the rest) to save it as Closed.
+  const isComplete = workBeforePhotos.length >= 2 && workAfterPhotos.length >= 2 && !!rectification && !!materialUsed && !!closedBy
     && clientChecked && !!clientName && !!clientSignature;
 
   $("saveWorkBtn").disabled = true;
   try{
     if(editingWorkId){
       await updateDoc(doc(db, "workreports", editingWorkId), {
+        beforePhotos: workBeforePhotos.slice(),
         afterPhotos: workAfterPhotos.slice(),
         rectification: rectification || null,
         materialUsed: materialUsed || null,
@@ -1522,11 +1529,6 @@ $("saveWorkBtn").addEventListener("click", async ()=>{
       const problemTask = $("workProblem").value.trim();
       if(!site || !location || !reportedBy || !problemTask){
         $("newWorkError").textContent = "Site, location, reporting staff and problem/task are all required.";
-        $("saveWorkBtn").disabled = false;
-        return;
-      }
-      if(workBeforePhotos.length < 2){
-        $("newWorkError").textContent = "At least 2 before photos are required.";
         $("saveWorkBtn").disabled = false;
         return;
       }
@@ -2180,7 +2182,63 @@ function visibleProjects(){
   return allProjects;
 }
 
+function renderTaskNotificationsBanner(){
+  const box=$("taskNotificationsBanner");
+  if(!box) return;
+  if(isAdmin){ box.style.display="none"; box.innerHTML=""; return; }
+
+  const items=[];
+  allProjectTasks.forEach(t=>{
+    if(t.status === "approved") return;
+    const taskNameCol=projectColumns.find(c=>c.key==="taskName");
+    const legacyTaskCol=projectColumns.find(c=>c.key==="task");
+    let title = taskNameCol ? getProjectTaskValue(t,taskNameCol) : "";
+    if(!String(title).trim() && legacyTaskCol) title = getProjectTaskValue(t,legacyTaskCol);
+    if(!String(title).trim() && projectColumns[0]) title = getProjectTaskValue(t,projectColumns[0]);
+    const staffCols=projectColumns.filter(c=>c.filledBy==="staff");
+    const hasStaffValue=staffCols.some(c=>String(getProjectTaskValue(t,c)||"").trim());
+    const assignedByAdmin=taskNameCol && String(getProjectTaskValue(t,taskNameCol)||"").trim();
+    const isRejected = t.status === "rejected";
+    const isNew = !!(staffCols.length && assignedByAdmin && !hasStaffValue && !isRejected);
+    if(!isNew && !isRejected) return;
+    const project = allProjects.find(p=>p.id===t.projectId);
+    items.push({
+      projectId: t.projectId,
+      projectName: project ? (project.name||"Project") : (t.projectName||"Project"),
+      title: title || "Untitled task",
+      kind: isRejected ? "rejected" : "new"
+    });
+  });
+
+  if(!items.length){ box.style.display="none"; box.innerHTML=""; return; }
+
+  const rejectedItems = items.filter(i=>i.kind==="rejected");
+  const newItems = items.filter(i=>i.kind==="new");
+
+  box.style.display="block";
+  box.innerHTML = `
+    <div class="card" style="border-left:4px solid var(--red);margin-bottom:14px;cursor:default;">
+      <div class="card-body">
+        <p class="card-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span class="badge badge-rejected-alert">Action needed</span>
+          Task notifications
+        </p>
+        ${rejectedItems.length ? `<div class="detail-row" style="margin-top:4px;"><b>Rejected — please review &amp; resubmit (${rejectedItems.length}):</b></div>` + rejectedItems.map(i=>`
+          <div class="detail-row" style="cursor:pointer;color:var(--red);" data-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${escapeHtml(i.title)}</div>
+        `).join("") : ""}
+        ${newItems.length ? `<div class="detail-row" style="margin-top:6px;"><b>New tasks assigned to you (${newItems.length}):</b></div>` + newItems.map(i=>`
+          <div class="detail-row" style="cursor:pointer;color:var(--blue);" data-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${escapeHtml(i.title)}</div>
+        `).join("") : ""}
+      </div>
+    </div>`;
+
+  box.querySelectorAll("[data-notif-project]").forEach(el=>{
+    el.addEventListener("click", ()=> openProject(el.getAttribute("data-notif-project")));
+  });
+}
+
 function renderProjectList(){
+  renderTaskNotificationsBanner();
   const list = $("projectList");
   if(!list) return;
   const empty = $("projectEmptyState");
@@ -2296,6 +2354,8 @@ function renderCurrentProjectTasks(){
     // can correct and resubmit; otherwise it disappears once filled in.
     const assignedByAdmin=taskNameCol && String(getProjectTaskValue(t,taskNameCol)||"").trim();
     const showAddJobDetails=!isAdmin && staffCols.length && assignedByAdmin && (!hasStaffValue || t.status==="rejected");
+    const staffNameCol=projectColumns.find(c=>c.key==="staffName");
+    const assignedStaffName=staffNameCol ? String(getProjectTaskValue(t,staffNameCol)||"").trim() : "";
     let statusBadge;
     if(t.status === "approved"){
       statusBadge = '<span class="badge badge-closed">Approved</span>';
@@ -2304,7 +2364,7 @@ function renderCurrentProjectTasks(){
         ? '<span class="badge badge-rejected">Rejected</span>'
         : '<span class="badge badge-rejected-alert">Rejected — please review &amp; resubmit</span>';
     } else if(showAddJobDetails){
-      statusBadge = '<span class="badge badge-assigned">New task assigned to you</span>';
+      statusBadge = `<span class="badge badge-assigned">New task assigned to ${escapeHtml(assignedStaffName || "assigned staff")}</span>`;
     } else {
       statusBadge = '<span class="badge badge-open">Pending approval</span>';
     }
@@ -2335,7 +2395,7 @@ function renderCurrentProjectTasks(){
           ${statusBadge}
           ${ratingBadge}
           ${adminActionButtons}
-          ${showAddJobDetails ? `<button class="btn btn-light fill-job-details" data-task-id="${t.id}">${hasStaffValue ? "Update Job Details" : "Add Job Details"}</button>` : ""}
+          ${showAddJobDetails ? `<button class="btn btn-light fill-job-details" data-task-id="${t.id}">${(hasStaffValue || t.status==="rejected") ? "Update Job Details" : "Add Job Details"}</button>` : ""}
         </div>
       </div></div>`;
   }).join("");
