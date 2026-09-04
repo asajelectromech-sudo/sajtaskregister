@@ -2349,11 +2349,11 @@ function renderCurrentProjectTasks(){
     if(!String(title).trim() && projectColumns[0]) title = getProjectTaskValue(t,projectColumns[0]);
     const staffCols=projectColumns.filter(c=>c.filledBy==="staff");
     const hasStaffValue=staffCols.some(c=>String(getProjectTaskValue(t,c)||"").trim());
-    // Only tasks the admin assigned (i.e. have a Task name) get the "Add
-    // Job Details" button. It stays available on a rejected task so staff
-    // can correct and resubmit; otherwise it disappears once filled in.
+    // Any rejected task gets the resubmit button, whether admin assigned it
+    // or staff created it themselves. Otherwise the "Add Job Details" button
+    // only appears on a task the admin assigned that isn't filled in yet.
     const assignedByAdmin=taskNameCol && String(getProjectTaskValue(t,taskNameCol)||"").trim();
-    const showAddJobDetails=!isAdmin && staffCols.length && assignedByAdmin && (!hasStaffValue || t.status==="rejected");
+    const showAddJobDetails=!isAdmin && staffCols.length && (t.status==="rejected" || (assignedByAdmin && !hasStaffValue));
     const staffNameCol=projectColumns.find(c=>c.key==="staffName");
     const assignedStaffName=staffNameCol ? String(getProjectTaskValue(t,staffNameCol)||"").trim() : "";
     let statusBadge;
@@ -2395,7 +2395,7 @@ function renderCurrentProjectTasks(){
           ${statusBadge}
           ${ratingBadge}
           ${adminActionButtons}
-          ${showAddJobDetails ? `<button class="btn btn-light fill-job-details" data-task-id="${t.id}">${(hasStaffValue || t.status==="rejected") ? "Update Job Details" : "Add Job Details"}</button>` : ""}
+          ${showAddJobDetails ? `<button class="btn btn-light fill-job-details" data-task-id="${t.id}">${t.status==="rejected" ? "Resubmit Job Details" : (hasStaffValue ? "Update Job Details" : "Add Job Details")}</button>` : ""}
         </div>
       </div></div>`;
   }).join("");
@@ -2609,9 +2609,10 @@ function openEditProjectTask(id){
 
 // Non-admin staff use this to fill in Job Details on a task the admin
 // assigned to them — every other field (Task, Location, Unit Number, Staff
-// Name) stays read-only from this form. Usable on a task that doesn't have
-// Job Details yet, or that the admin rejected (so staff can correct and
-// resubmit it) — matches the button's own visibility rule in
+// Name) stays read-only from this form. Usable on a task the admin
+// assigned that doesn't have Job Details yet, or on ANY rejected task
+// (whether admin-assigned or staff-created) so it can be corrected and
+// resubmitted — matches the button's own visibility rule in
 // renderCurrentProjectTasks.
 function openFillJobDetails(id){
   if(isAdmin) return;
@@ -2621,14 +2622,16 @@ function openFillJobDetails(id){
   const taskNameCol=projectColumns.find(c=>c.key==="taskName");
   const assignedByAdmin=taskNameCol && String(getProjectTaskValue(t,taskNameCol)||"").trim();
   const hasStaffValue=cols.some(c=>String(getProjectTaskValue(t,c)||"").trim());
-  if(!assignedByAdmin) return;
-  if(hasStaffValue && t.status !== "rejected") return;
+  const isRejected = t.status === "rejected";
+  if(!isRejected){
+    if(!assignedByAdmin || hasStaffValue) return;
+  }
   const values={};
   cols.forEach(c=>values[c.key]=getProjectTaskValue(t,c));
   editingProjectTaskId=id;
   $("projectTaskError").textContent="";
   renderProjectTaskFields(values, "staff");
-  $("newProjectTaskTitle").textContent="Job Details";
+  $("newProjectTaskTitle").textContent=isRejected ? "Resubmit Job Details" : "Job Details";
   $("saveProjectTaskBtn").textContent="Save";
   showModal("newProjectTaskModal");
 }
