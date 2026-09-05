@@ -476,44 +476,20 @@
 <div class="modal-overlay" id="verifyEmailModal">
   <div class="modal">
     <button class="close-x" data-close="verifyEmailModal">&times;</button>
-    <h2>Verify your email</h2>
-    <div class="hint">Enter your email. If your admin has already approved it, we'll email you a one-time sign-in link — tap it to verify. Once verified you can open snags/projects and approve, reject, assign and export tasks (editing and deleting still need an admin). Not approved yet? You can send your admin a request from here.</div>
+    <h2>Staff sign-in</h2>
+    <div class="hint">Sign in with your Google account. If your admin has already approved that email, you'll be verified immediately and can open snags/projects and approve, reject, assign and export tasks (editing and deleting still need an admin). Not approved yet? You can send your admin a request from here.</div>
     <div id="verifyEmailRequestStep">
-      <div class="field"><label>Email</label><input type="email" id="verifyEmailInput" placeholder="you@example.com" /></div>
       <div class="error-text" id="verifyEmailError"></div>
       <button class="btn btn-navy" id="verifyEmailRequestAccessBtn" style="width:100%;margin-top:4px;display:none;">Request access from admin</button>
       <div class="modal-actions">
-        <button class="btn btn-primary" id="verifyEmailSendBtn" style="width:100%;">Send link</button>
-      </div>
-    </div>
-    <div id="verifyEmailSentStep" style="display:none;">
-      <div class="hint">Link sent to <b id="verifyEmailSentTo"></b>. Open your email and tap the link — if you open it on this device you'll come right back here verified. Opened it on another device? Come back to this tab afterward and refresh.</div>
-      <div class="modal-actions">
-        <button class="btn btn-light" id="verifyEmailResendBtn" style="width:100%;">Resend link</button>
+        <button class="btn btn-primary" id="verifyGoogleBtn" style="width:100%;">Continue with Google</button>
       </div>
     </div>
     <div id="verifyEmailRequestedStep" style="display:none;">
-      <div class="hint">Request sent for <b id="verifyEmailRequestedTo"></b>. Ask your admin to check Staff Access and add you, then come back here and verify again.</div>
+      <div class="hint">Request sent for <b id="verifyEmailRequestedTo"></b>. Ask your admin to check Staff Access and add you, then come back here and sign in again.</div>
       <div class="modal-actions">
         <button class="btn btn-light" data-close="verifyEmailModal" style="width:100%;">Close</button>
       </div>
-    </div>
-  </div>
-</div>
-
-<!-- Shown when a verification link is opened somewhere that doesn't already
-     know the email it was sent to — e.g. tapped inside the Gmail/Outlook
-     app's own in-app browser rather than the browser "Send link" was tapped
-     in, which doesn't share storage with it. -->
-<div class="modal-overlay" id="confirmEmailLinkModal">
-  <div class="modal">
-    <h2>Confirm your email</h2>
-    <div class="hint">To finish verifying, confirm the email address you requested this link for.</div>
-    <div class="field"><label>Email</label><input type="email" id="confirmEmailLinkInput" placeholder="you@example.com" /></div>
-    <div class="error-text" id="confirmEmailLinkError"></div>
-    <div class="modal-actions">
-      <button class="btn btn-light" id="confirmEmailLinkCancelBtn">Cancel</button>
-      <button class="btn btn-primary" id="confirmEmailLinkBtn">Continue</button>
     </div>
   </div>
 </div>
@@ -597,7 +573,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
   getAuth, signInAnonymously, signInWithEmailAndPassword, onAuthStateChanged, signOut,
-  sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink
+  GoogleAuthProvider, signInWithPopup
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDoc, getDocs, setDoc, onSnapshot, query, orderBy, serverTimestamp
@@ -732,119 +708,10 @@ function escapeHtml(str){
 }
 
 // ---------- AUTH ----------
-// Temporary diagnostic banner so we can see exactly what happened when an
-// email sign-in link is opened, including the real Firebase error code —
-// this is much more reliable than trying to reproduce a mobile mail-app
-// environment. Screenshot this if verification fails again.
-function showEmailLinkDebugBanner(text, isError){
-  let banner = document.getElementById("emailLinkDebugBanner");
-  if(!banner){
-    banner = document.createElement("div");
-    banner.id = "emailLinkDebugBanner";
-    banner.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;padding:10px 14px;font-size:13px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.15);";
-    document.body.appendChild(banner);
-  }
-  banner.style.background = isError ? "#fdecec" : "#e7f7ec";
-  banner.style.color = isError ? "#b91c1c" : "#15803d";
-  banner.textContent = text;
-}
-
-// Runs once at load: if the URL looks like it came from a sign-in link at
-// all (even judged by a raw substring match) but Firebase's own check
-// disagrees, that's a strong sign the link got rewritten by an email
-// provider's link-safety/"Safe Links" scanner before it ever reached the
-// browser — which can also silently burn the single-use code server-side.
-(function debugEmailLinkDetection(){
-  const href = window.location.href;
-  const looksLikeSignInLink = href.includes("mode=signIn") || href.includes("oobCode=");
-  const recognized = isSignInWithEmailLink(auth, href);
-  if(looksLikeSignInLink && !recognized){
-    showEmailLinkDebugBanner("This link looked like a sign-in link, but Firebase didn't recognize it — it may have been rewritten by your email provider's link-safety scanner. Try copying the link text and pasting it directly into the address bar instead of tapping it.", true);
-  }
-})();
-
-// Shows a real in-app modal to ask for the email, instead of window.prompt()
-// — many mobile mail apps open links in their own in-app browser, which
-// blocks or silently no-ops window.prompt(), so relying on it made the whole
-// verification fail invisibly (falling back to anonymous access) whenever
-// the link wasn't opened in the same browser "Send link" was tapped in.
-// Resolves with the typed email, or null if the person cancels.
-function askForEmailToCompleteLink(){
-  return new Promise((resolve)=>{
-    $("confirmEmailLinkInput").value = "";
-    $("confirmEmailLinkError").textContent = "";
-    showModal("confirmEmailLinkModal");
-    const cleanup = ()=>{
-      $("confirmEmailLinkBtn").removeEventListener("click", onContinue);
-      $("confirmEmailLinkCancelBtn").removeEventListener("click", onCancel);
-    };
-    const onContinue = ()=>{
-      const email = $("confirmEmailLinkInput").value.trim().toLowerCase();
-      if(!email || !email.includes("@") || !email.includes(".")){
-        $("confirmEmailLinkError").textContent = "Enter a valid email address.";
-        return;
-      }
-      cleanup();
-      hideModal("confirmEmailLinkModal");
-      resolve(email);
-    };
-    const onCancel = ()=>{
-      cleanup();
-      hideModal("confirmEmailLinkModal");
-      resolve(null);
-    };
-    $("confirmEmailLinkBtn").addEventListener("click", onContinue);
-    $("confirmEmailLinkCancelBtn").addEventListener("click", onCancel);
-  });
-}
-
-// If this page load is the result of tapping the sign-in link from an email
-// verification, complete it. Returns true once handled (whether it
-// succeeded or failed) so the caller knows not to also sign in anonymously.
-async function completeEmailLinkSignInIfNeeded(){
-  if(!isSignInWithEmailLink(auth, window.location.href)) return false;
-  let email = window.localStorage.getItem("emailForSignIn");
-  const gotFromStorage = !!email;
-  if(!email){
-    email = await askForEmailToCompleteLink();
-  }
-  // Always clean the sign-in params out of the URL so a refresh doesn't
-  // try to replay this link.
-  const cleanUrl = ()=> window.history.replaceState({}, document.title, window.location.pathname);
-  if(!email){
-    showEmailLinkDebugBanner("Verification cancelled — no email was confirmed.", true);
-    cleanUrl();
-    return false;
-  }
-  try{
-    await signInWithEmailLink(auth, email, window.location.href);
-    window.localStorage.removeItem("emailForSignIn");
-    cleanUrl();
-    showEmailLinkDebugBanner(`Verified as ${email} (email was ${gotFromStorage ? "found automatically" : "typed in"}).`, false);
-    return true;
-  }catch(err){
-    console.error("Email link sign-in failed", err);
-    showEmailLinkDebugBanner(`Could not verify ${email}: ${err.code || err.message || "unknown error"} (email was ${gotFromStorage ? "found automatically" : "typed in"}).`, true);
-    cleanUrl();
-    return false;
-  }
-}
+const googleProvider = new GoogleAuthProvider();
 
 onAuthStateChanged(auth, async (user)=>{
-  // Check for a sign-in link FIRST, regardless of whether a session
-  // (even an anonymous one left over from a previous visit) already
-  // exists. Without this, an old anonymous session silently blocks
-  // email-link verification from ever running.
-  if(isSignInWithEmailLink(auth, window.location.href)){
-    const handledLink = await completeEmailLinkSignInIfNeeded();
-    if(handledLink) return; // onAuthStateChanged fires again with the newly verified user
-    if(!user){
-      signInAnonymously(auth).catch(err=> console.error("Anon sign-in failed", err));
-      return;
-    }
-    // link failed to verify — fall through and render with whatever
-    // session we already had (likely still anonymous)
-  } else if(!user){
+  if(!user){
     signInAnonymously(auth).catch(err=> console.error("Anon sign-in failed", err));
     return;
   }
@@ -2989,11 +2856,9 @@ $("saveProjectTaskBtn").addEventListener("click",async()=>{
 });
 
 function openVerifyEmailModal(){
-  $("verifyEmailInput").value = window.localStorage.getItem("emailForSignIn") || "";
   $("verifyEmailError").textContent = "";
   $("verifyEmailRequestAccessBtn").style.display = "none";
   $("verifyEmailRequestStep").style.display = "block";
-  $("verifyEmailSentStep").style.display = "none";
   $("verifyEmailRequestedStep").style.display = "none";
   showModal("verifyEmailModal");
 }
@@ -3036,59 +2901,73 @@ $("fab").addEventListener("click", async ()=>{
   openVerifyEmailModal();
 });
 
-// ---------- EMAIL VERIFICATION (non-admin staff unlocking elevated actions) ----------
-$("verifyEmailSendBtn").addEventListener("click", async ()=>{
-  const email = $("verifyEmailInput").value.trim().toLowerCase();
+// ---------- GOOGLE SIGN-IN (non-admin staff unlocking elevated actions) ----------
+// Uses Google Sign-In instead of Firebase's email-link sign-in, which is
+// capped at just 5 emails/day on the free Spark plan. Google Sign-In sends
+// no email at all — the person authenticates directly with Google — so
+// there's no daily quota to run into. Firebase already returns
+// emailVerified === true for Google accounts, so isVerifiedStaff (below)
+// and the isAuthorizedStaff() Firestore rule both work exactly as before.
+$("verifyGoogleBtn").addEventListener("click", async ()=>{
   $("verifyEmailError").textContent = "";
   $("verifyEmailRequestAccessBtn").style.display = "none";
-  if(!email || !email.includes("@") || !email.includes(".")){
-    $("verifyEmailError").textContent = "Enter a valid email address.";
-    return;
-  }
-  $("verifyEmailSendBtn").disabled = true;
-
-  let snap;
-  try{
-    snap = await getDoc(doc(db, "authorizedStaff", email));
-  }catch(err){
-    console.error("authorizedStaff lookup failed", err);
-    $("verifyEmailError").textContent = `Could not check your email (${err.code || err.message || "unknown error"}).`;
-    $("verifyEmailSendBtn").disabled = false;
-    return;
-  }
-
-  if(!snap.exists()){
-    $("verifyEmailError").textContent = "This email hasn't been added by your admin yet.";
-    $("verifyEmailRequestAccessBtn").setAttribute("data-email", email);
-    $("verifyEmailRequestAccessBtn").style.display = "block";
-    $("verifyEmailSendBtn").disabled = false;
-    return;
-  }
+  $("verifyGoogleBtn").disabled = true;
 
   try{
-    const actionCodeSettings = {
-      url: window.location.origin + window.location.pathname,
-      handleCodeInApp: true
-    };
-    await sendSignInLinkToEmail(auth, email, actionCodeSettings);
-    window.localStorage.setItem("emailForSignIn", email);
-    $("verifyEmailSentTo").textContent = email;
-    $("verifyEmailRequestStep").style.display = "none";
-    $("verifyEmailSentStep").style.display = "block";
+    const result = await signInWithPopup(auth, googleProvider);
+    const email = (result.user.email || "").toLowerCase();
+
+    if(!email){
+      $("verifyEmailError").textContent = "Could not read an email address from that Google account.";
+      await signOut(auth);
+      $("verifyGoogleBtn").disabled = false;
+      return;
+    }
+
+    // Admin signing in via this same button — just let it through, the
+    // isAdmin check elsewhere already handles the rest.
+    if(ADMIN_EMAILS.includes(email)){
+      hideModal("verifyEmailModal");
+      $("verifyGoogleBtn").disabled = false;
+      return;
+    }
+
+    let snap;
+    try{
+      snap = await getDoc(doc(db, "authorizedStaff", email));
+    }catch(err){
+      console.error("authorizedStaff lookup failed", err);
+      $("verifyEmailError").textContent = `Could not check your email (${err.code || err.message || "unknown error"}).`;
+      $("verifyGoogleBtn").disabled = false;
+      return;
+    }
+
+    if(!snap.exists()){
+      $("verifyEmailError").textContent = `${email} hasn't been added by your admin yet.`;
+      $("verifyEmailRequestAccessBtn").setAttribute("data-email", email);
+      $("verifyEmailRequestAccessBtn").style.display = "block";
+      // Don't leave them signed in as an unapproved Google account — back
+      // to anonymous until the admin approves them.
+      await signOut(auth);
+      $("verifyGoogleBtn").disabled = false;
+      return;
+    }
+
+    hideModal("verifyEmailModal");
   }catch(err){
-    console.error("sendSignInLinkToEmail failed", err);
-    $("verifyEmailError").textContent = `Could not send the link (${err.code || err.message || "unknown error"}).`;
+    console.error("Google sign-in failed", err);
+    if(err.code !== "auth/popup-closed-by-user" && err.code !== "auth/cancelled-popup-request"){
+      $("verifyEmailError").textContent = `Could not sign in (${err.code || err.message || "unknown error"}).`;
+    }
   }
-  $("verifyEmailSendBtn").disabled = false;
+  $("verifyGoogleBtn").disabled = false;
 });
-
-$("verifyEmailResendBtn").addEventListener("click", ()=> $("verifyEmailSendBtn").click());
 
 // A staff member whose email isn't on the whitelist yet can send the admin a
 // request instead of hitting a dead end — it shows up in the admin's Staff
 // Access panel under "Pending access requests" for a one-tap approval.
 $("verifyEmailRequestAccessBtn").addEventListener("click", async ()=>{
-  const email = $("verifyEmailRequestAccessBtn").getAttribute("data-email") || $("verifyEmailInput").value.trim().toLowerCase();
+  const email = $("verifyEmailRequestAccessBtn").getAttribute("data-email");
   if(!email) return;
   $("verifyEmailRequestAccessBtn").disabled = true;
   try{
@@ -3097,7 +2976,6 @@ $("verifyEmailRequestAccessBtn").addEventListener("click", async ()=>{
     });
     $("verifyEmailRequestedTo").textContent = email;
     $("verifyEmailRequestStep").style.display = "none";
-    $("verifyEmailSentStep").style.display = "none";
     $("verifyEmailRequestedStep").style.display = "block";
   }catch(err){
     console.error(err);
