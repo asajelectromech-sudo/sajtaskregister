@@ -472,38 +472,44 @@
   </div>
 </div>
 
-<!-- OTP MODAL (non-admin staff opening a new snag) -->
-<div class="modal-overlay" id="otpModal">
+<!-- VERIFY EMAIL MODAL (non-admin staff verifying to unlock elevated actions) -->
+<div class="modal-overlay" id="verifyEmailModal">
   <div class="modal">
-    <button class="close-x" data-close="otpModal">&times;</button>
-    <h2 id="otpModalTitle">Admin approval required</h2>
-    <div class="hint" id="otpModalHint">This action needs a one-time code from your admin.</div>
-    <div id="otpRequestStep">
-      <div class="field"><label>Your name</label><input type="text" id="otpStaffName" placeholder="Enter your name" /></div>
-      <div class="error-text" id="otpRequestError"></div>
+    <button class="close-x" data-close="verifyEmailModal">&times;</button>
+    <h2>Verify your email</h2>
+    <div class="hint">Enter the email address you already gave your admin. We'll email you a one-time sign-in link — tap it to verify. Once verified you can open snags/projects and approve, reject, assign and export tasks (editing and deleting still need an admin).</div>
+    <div id="verifyEmailRequestStep">
+      <div class="field"><label>Email</label><input type="email" id="verifyEmailInput" placeholder="you@example.com" /></div>
+      <div class="error-text" id="verifyEmailError"></div>
       <div class="modal-actions">
-        <button class="btn btn-primary" id="otpRequestBtn" style="width:100%;">Request code</button>
+        <button class="btn btn-primary" id="verifyEmailSendBtn" style="width:100%;">Send link</button>
       </div>
     </div>
-    <div id="otpVerifyStep" style="display:none;">
-      <div class="hint" id="otpVerifyHint">Code requested. Ask your admin for the 6-digit code, then enter it below.</div>
-      <div class="field"><label>Enter code</label><input type="text" id="otpCodeInput" inputmode="numeric" maxlength="6" placeholder="6-digit code" /></div>
-      <div class="error-text" id="otpError"></div>
+    <div id="verifyEmailSentStep" style="display:none;">
+      <div class="hint">Link sent to <b id="verifyEmailSentTo"></b>. Open your email and tap the link — if you open it on this device you'll come right back here verified. Opened it on another device? Come back to this tab afterward and refresh.</div>
       <div class="modal-actions">
-        <button class="btn btn-primary" id="otpVerifyBtn" style="width:100%;">Verify</button>
+        <button class="btn btn-light" id="verifyEmailResendBtn" style="width:100%;">Resend link</button>
       </div>
-      <button class="btn btn-light" id="otpRequestAgainBtn" style="width:100%;margin-top:8px;">Request a new code</button>
     </div>
   </div>
 </div>
 
-<!-- OTP ADMIN PANEL (admin only) -->
-<div class="modal-overlay" id="otpAdminModal">
+<!-- STAFF ACCESS ADMIN PANEL (admin only) -->
+<div class="modal-overlay" id="staffAccessModal">
   <div class="modal">
-    <button class="close-x" data-close="otpAdminModal">&times;</button>
-    <h2>OTP requests (admin)</h2>
-    <div class="hint">Give the displayed code to the requester. Project creation and snag creation use separate OTP approvals.</div>
-    <div id="otpAdminList"></div>
+    <button class="close-x" data-close="staffAccessModal">&times;</button>
+    <h2>Staff Access</h2>
+    <div class="section-label">Authorized staff emails</div>
+    <div class="hint">Only these emails can verify themselves on the user page to open snags/projects and manage tasks (approve/reject/assign/export). They still can't edit or delete anything.</div>
+    <div style="display:flex;gap:8px;margin:8px 0;">
+      <input type="email" id="newStaffEmailInput" placeholder="staff@example.com" style="flex:1;" />
+      <button class="btn btn-primary" id="addStaffEmailBtn">Add</button>
+    </div>
+    <div class="error-text" id="staffEmailError"></div>
+    <div id="staffEmailList"></div>
+
+    <div class="section-label" style="margin-top:18px;">Recent staff logins</div>
+    <div id="staffLoginLogList"></div>
   </div>
 </div>
 
@@ -562,7 +568,8 @@
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
-  getAuth, signInAnonymously, signInWithEmailAndPassword, onAuthStateChanged, signOut
+  getAuth, signInAnonymously, signInWithEmailAndPassword, onAuthStateChanged, signOut,
+  sendSignInLinkToEmail, isSignInWithEmailLink, signInWithEmailLink
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDoc, getDocs, setDoc, onSnapshot, query, orderBy, serverTimestamp
@@ -589,6 +596,8 @@ const db = getFirestore(app);
 // ---------- STATE ----------
 let currentUser = null;
 let isAdmin = false;
+let isVerifiedStaff = false; // signed in with a real, admin-authorized email (not anonymous, not admin) via the email-link flow
+let loggedThisSession = false; // guards against recording more than one staffLogins entry per page load
 let allSnags = [];
 let listenerStarted = false;
 let filters = { status: "all", site: "", search: "" };
@@ -623,7 +632,6 @@ let projectColumns = [
   {key:"staffName", label:"Staff Name", required:true, filledBy:"admin"},
   {key:"task", label:"Job Details", required:false, filledBy:"staff"}
 ];
-let otpPendingPurpose = "snag";
 
 let activeStream = null;
 let currentSnagForClose = null;
@@ -696,13 +704,60 @@ function escapeHtml(str){
 }
 
 // ---------- AUTH ----------
+// If this page load is the result of tapping the sign-in link from an email
+// verification, complete it. Returns true once handled (whether it
+// succeeded or failed) so the caller knows not to also sign in anonymously.
+async function completeEmailLinkSignInIfNeeded(){
+  if(!isSignInWithEmailLink(auth, window.location.href)) return false;
+  let email = window.localStorage.getItem("emailForSignIn");
+  if(!email){
+    email = window.prompt("Please confirm the email you used to request this verification link:");
+  }
+  // Always clean the sign-in params out of the URL so a refresh doesn't
+  // try to replay this link.
+  const cleanUrl = ()=> window.history.replaceState({}, document.title, window.location.pathname);
+  if(!email){ cleanUrl(); return false; }
+  try{
+    await signInWithEmailLink(auth, email, window.location.href);
+    window.localStorage.removeItem("emailForSignIn");
+    cleanUrl();
+    return true;
+  }catch(err){
+    console.error("Email link sign-in failed", err);
+    alert("This verification link is invalid or has expired. Please request a new one.");
+    cleanUrl();
+    return false;
+  }
+}
+
 onAuthStateChanged(auth, async (user)=>{
   if(!user){
-    signInAnonymously(auth).catch(err=> console.error("Anon sign-in failed", err));
+    const handledLink = await completeEmailLinkSignInIfNeeded();
+    if(!handledLink){
+      signInAnonymously(auth).catch(err=> console.error("Anon sign-in failed", err));
+    }
     return;
   }
   currentUser = user;
   isAdmin = !!user.email && ADMIN_EMAILS.includes(user.email);
+  // A "verified staff" session: signed in with a real (non-anonymous),
+  // Firebase-confirmed email that isn't the admin's — i.e. they completed
+  // the email-link verification flow. Server-side, Firestore rules also
+  // separately require that email to be on the authorizedStaff list before
+  // granting any elevated write, so this client-side flag is purely for
+  // deciding what UI to show.
+  isVerifiedStaff = !isAdmin && !user.isAnonymous && !!user.email && !!user.emailVerified;
+
+  // Record a login event the first time we see a verified-staff session
+  // this page load, so the admin has a reference of who signed in when.
+  if(isVerifiedStaff && !loggedThisSession){
+    loggedThisSession = true;
+    try{
+      await addDoc(collection(db, "staffLogins"), {
+        email: user.email, uid: user.uid, verifiedAt: serverTimestamp()
+      });
+    }catch(e){ console.error("Could not record staff login", e); }
+  }
 
   // Admins who sign in directly (email + password) always bypass the app
   // password gate — their own credentials are the stronger check.
@@ -776,7 +831,7 @@ document.querySelectorAll("#mainTabs .tab-btn").forEach(btn=>{
     $("snagsView").style.display = activeTab === "snags" ? "block" : "none";
     $("workView").style.display = activeTab === "work" ? "block" : "none";
     $("projectsView").style.display = activeTab === "projects" ? "block" : "none";
-    $("newProjectBtn").style.display = (activeTab === "projects" && isAdmin) ? "inline-block" : "none";
+    $("newProjectBtn").style.display = (activeTab === "projects" && (isAdmin || isVerifiedStaff)) ? "inline-block" : "none";
     renderProjectList();
     updateFabVisibility();
   });
@@ -785,23 +840,27 @@ document.querySelectorAll("#mainTabs .tab-btn").forEach(btn=>{
 function renderAuthBox(){
   const box = $("authBox");
   if(isAdmin){
-    box.innerHTML = `<span class="user-email">${escapeHtml(currentUser.email)}</span><button class="btn btn-outline" id="otpRequestsBtn">Snag OTPs</button><button class="btn btn-outline" id="appSettingsBtn">App settings</button><button class="btn btn-outline" id="logoutBtn">Sign out</button>`;
+    box.innerHTML = `<span class="user-email">${escapeHtml(currentUser.email)}</span><button class="btn btn-outline" id="staffAccessBtn">Staff Access</button><button class="btn btn-outline" id="appSettingsBtn">App settings</button><button class="btn btn-outline" id="logoutBtn">Sign out</button>`;
     $("logoutBtn").addEventListener("click", ()=> signOut(auth));
-    $("otpRequestsBtn").addEventListener("click", openOtpAdminModal);
+    $("staffAccessBtn").addEventListener("click", openStaffAccessAdminModal);
     $("appSettingsBtn").addEventListener("click", ()=>{
       $("appSettingsPassword").value = appPassword || "";
       renderProjectColumnsSettings();
       $("appSettingsError").textContent = "";
       showModal("appSettingsModal");
     });
+  } else if(isVerifiedStaff){
+    box.innerHTML = `<span class="user-email">${escapeHtml(currentUser.email)}</span><button class="btn btn-outline" id="staffLogoutBtn">Sign out</button>`;
+    $("staffLogoutBtn").addEventListener("click", ()=> signOut(auth));
   } else {
-    box.innerHTML = `<button class="btn btn-outline" id="adminLoginBtn">Admin sign in</button>`;
+    box.innerHTML = `<button class="btn btn-outline" id="verifyEmailHeaderBtn">Verify email</button><button class="btn btn-outline" id="adminLoginBtn">Admin sign in</button>`;
+    $("verifyEmailHeaderBtn").addEventListener("click", openVerifyEmailModal);
     $("adminLoginBtn").addEventListener("click", ()=>{
       $("loginError").textContent = "";
       showModal("loginModal");
     });
   }
-  $("newProjectBtn").style.display = (activeTab === "projects" && isAdmin) ? "inline-block" : "none";
+  $("newProjectBtn").style.display = (activeTab === "projects" && (isAdmin || isVerifiedStaff)) ? "inline-block" : "none";
 }
 
 function normalizeProjectColumns(raw){
@@ -942,39 +1001,90 @@ $("saveAppSettingsBtn").addEventListener("click", async ()=>{
   $("saveAppSettingsBtn").disabled = false;
 });
 
-// ---------- OTP ADMIN PANEL (admin only) ----------
-async function openOtpAdminModal(){
-  showModal("otpAdminModal");
-  $("otpAdminList").innerHTML = `<div class="hint">Loading…</div>`;
+// ---------- STAFF ACCESS ADMIN PANEL (admin only) ----------
+async function openStaffAccessAdminModal(){
+  if(!isAdmin) return;
+  $("newStaffEmailInput").value = "";
+  $("staffEmailError").textContent = "";
+  showModal("staffAccessModal");
+  renderStaffEmailList();
+  renderStaffLoginLog();
+}
+
+async function renderStaffEmailList(){
+  const box = $("staffEmailList");
+  box.innerHTML = `<div class="hint">Loading…</div>`;
   try{
-    const snap = await getDocs(query(collection(db, "otpRequests"), orderBy("createdAt", "desc")));
+    const snap = await getDocs(collection(db, "authorizedStaff"));
     if(snap.empty){
-      $("otpAdminList").innerHTML = `<div class="hint">No OTP requests yet.</div>`;
+      box.innerHTML = `<div class="hint">No staff emails added yet.</div>`;
       return;
     }
-    const now = new Date();
-    $("otpAdminList").innerHTML = snap.docs.map(d=>{
-      const r = d.data();
-      const purpose = r.purpose === "project" ? "Project Report" : "Snag";
-      const expiresDate = r.verifiedExpiresAt && r.verifiedExpiresAt.toDate ? r.verifiedExpiresAt.toDate() : null;
-      const activeNow = r.status === "verified" && expiresDate && expiresDate > now;
-      const badge = activeNow
-        ? `<span class="badge badge-complete">Verified — active</span>`
-        : (r.status === "verified"
-            ? `<span class="badge badge-incomplete">Verified — expired</span>`
-            : `<span class="badge badge-open">Pending</span>`);
-      return `
-        <div class="card" style="cursor:default;">
-          <div class="card-body">
-            <p class="card-title">${escapeHtml(r.requestedBy || "Unknown")} <span class="badge badge-open">${purpose}</span> ${badge}</p>
-            <p class="card-desc" style="font-size:22px;font-weight:700;letter-spacing:3px;color:var(--navy);white-space:normal;">${escapeHtml(r.code || "")}</p>
-            <div class="meta">Requested ${fmtDate(r.createdAt)}${expiresDate ? ` &middot; Access ${activeNow ? "expires" : "expired"} ${expiresDate.toLocaleString("en-GB", { day:"2-digit", month:"short", hour:"2-digit", minute:"2-digit" })}` : ""}</div>
-          </div>
-        </div>`;
-    }).join("");
+    const docs = [];
+    snap.forEach(d=> docs.push({ id:d.id, ...d.data() }));
+    docs.sort((a,b)=> String(a.email||a.id).localeCompare(String(b.email||b.id)));
+    box.innerHTML = docs.map(d=>`
+      <div class="detail-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+        <span>${escapeHtml(d.email||d.id)}</span>
+        <button class="btn btn-red remove-staff-email" data-email-id="${escapeHtml(d.id)}" style="padding:4px 10px;font-size:12px;flex-shrink:0;">Remove</button>
+      </div>
+    `).join("");
+    box.querySelectorAll(".remove-staff-email").forEach(btn=>btn.addEventListener("click", async ()=>{
+      if(!confirm("Remove this email? They'll need to be re-added before they can verify again.")) return;
+      btn.disabled = true;
+      try{
+        await deleteDoc(doc(db, "authorizedStaff", btn.getAttribute("data-email-id")));
+        renderStaffEmailList();
+      }catch(err){
+        console.error(err);
+        alert("Could not remove this email. Check your connection and try again.");
+        btn.disabled = false;
+      }
+    }));
   }catch(err){
     console.error(err);
-    $("otpAdminList").innerHTML = `<div class="error-text">Could not load OTP requests. Check your connection and try again.</div>`;
+    box.innerHTML = `<div class="error-text">Could not load staff emails. Check your connection and try again.</div>`;
+  }
+}
+
+$("addStaffEmailBtn").addEventListener("click", async ()=>{
+  const email = $("newStaffEmailInput").value.trim().toLowerCase();
+  $("staffEmailError").textContent = "";
+  if(!email || !email.includes("@") || !email.includes(".")){
+    $("staffEmailError").textContent = "Enter a valid email address.";
+    return;
+  }
+  $("addStaffEmailBtn").disabled = true;
+  try{
+    await setDoc(doc(db, "authorizedStaff", email), {
+      email, addedBy: currentUser.email || null, addedAt: serverTimestamp()
+    });
+    $("newStaffEmailInput").value = "";
+    renderStaffEmailList();
+  }catch(err){
+    console.error(err);
+    $("staffEmailError").textContent = "Could not add this email. Check your connection and try again.";
+  }
+  $("addStaffEmailBtn").disabled = false;
+});
+
+async function renderStaffLoginLog(){
+  const box = $("staffLoginLogList");
+  box.innerHTML = `<div class="hint">Loading…</div>`;
+  try{
+    const snap = await getDocs(query(collection(db, "staffLogins"), orderBy("verifiedAt", "desc")));
+    if(snap.empty){
+      box.innerHTML = `<div class="hint">No staff logins recorded yet.</div>`;
+      return;
+    }
+    const rows = [];
+    snap.forEach(d=> rows.push(d.data()));
+    box.innerHTML = rows.slice(0, 50).map(r=>
+      `<div class="detail-row">${escapeHtml(r.email||"Unknown")} — ${escapeHtml(fmtDate(r.verifiedAt))}</div>`
+    ).join("");
+  }catch(err){
+    console.error(err);
+    box.innerHTML = `<div class="error-text">Could not load login history. Check your connection and try again.</div>`;
   }
 }
 
@@ -2103,7 +2213,7 @@ function openNewSnagFlow(prefillName){
 }
 
 function downloadProjectPdf(projectId, taskIdsFilter){
-  if(!isAdmin) return;
+  if(!isAdmin && !isVerifiedStaff) return;
   const p=allProjects.find(x=>x.id===projectId);
   if(!p) return;
   let tasks=allProjectTasks.filter(t=>t.projectId===projectId);
@@ -2246,9 +2356,10 @@ function renderProjectList(){
   const list = $("projectList");
   if(!list) return;
   const empty = $("projectEmptyState");
+  const canManageProjects = isAdmin || isVerifiedStaff;
 
   const projects = allProjects.filter(p=>{
-    if(isAdmin) return true;
+    if(canManageProjects) return true;
     const tasks = allProjectTasks.filter(t=>t.projectId===p.id);
     // A project remains visible to staff while it has at least one task that
     // has not yet been approved. Once every task is approved, it disappears.
@@ -2265,18 +2376,20 @@ function renderProjectList(){
 
   list.innerHTML = projects.map(p=>{
     const allTasksForProject = allProjectTasks.filter(t=>t.projectId===p.id);
-    const tasks = isAdmin ? allTasksForProject : allTasksForProject.filter(t=>t.status !== "approved");
-    const adminActions = isAdmin ? `
-      <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">
-        <button class="btn btn-light edit-project" data-project-id="${p.id}">Edit</button>
-        <button class="btn btn-red delete-project" data-project-id="${p.id}">Delete</button>
-        <button class="btn btn-navy pdf-project" data-project-id="${p.id}">Download PDF</button>
-      </div>` : "";
+    const tasks = canManageProjects ? allTasksForProject : allTasksForProject.filter(t=>t.status !== "approved");
+    let projectCardButtons = "";
+    if(isAdmin){
+      projectCardButtons += `<button class="btn btn-light edit-project" data-project-id="${p.id}">Edit</button><button class="btn btn-red delete-project" data-project-id="${p.id}">Delete</button>`;
+    }
+    if(canManageProjects){
+      projectCardButtons += `<button class="btn btn-navy pdf-project" data-project-id="${p.id}">Download PDF</button>`;
+    }
+    const adminActions = projectCardButtons ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">${projectCardButtons}</div>` : "";
     return `<div class="card" data-project-id="${p.id}">
       <div class="thumb-placeholder">📁</div>
       <div class="card-body">
         <p class="card-title">${escapeHtml(p.name||"")}</p>
-        <p class="card-desc">${tasks.length} task(s)${!isAdmin && allTasksForProject.some(t=>t.status === "approved") ? " · approved tasks hidden" : ""} &middot; Created by ${escapeHtml(p.createdByName || p.createdBy || "User")}</p>
+        <p class="card-desc">${tasks.length} task(s)${!canManageProjects && allTasksForProject.some(t=>t.status === "approved") ? " · approved tasks hidden" : ""} &middot; Created by ${escapeHtml(p.createdByName || p.createdBy || "User")}</p>
         <div class="meta">Created ${fmtDate(p.createdAt)}</div>
         ${adminActions}
       </div>
@@ -2315,7 +2428,7 @@ function openProject(id){
   $("taskSelectModeBtn").textContent = "Select";
   $("taskSelectModeBtn").classList.remove("btn-navy");
   $("taskSelectAllRow").style.display = "none";
-  $("taskSelectToolbar").style.display = isAdmin ? "flex" : "none";
+  $("taskSelectToolbar").style.display = (isAdmin || isVerifiedStaff) ? "flex" : "none";
   renderCurrentProjectTasks();
   updateTaskSelectionLabel();
   // Admin assigns tasks with the Task/Location/Unit Number/Staff Name
@@ -2334,8 +2447,9 @@ function getProjectTaskValue(task,col){
 function renderCurrentProjectTasks(){
   const list = $("projectTasksList");
   if(!list || !currentProjectId) return;
+  const canManageTasks = isAdmin || isVerifiedStaff;
   const allTasks = allProjectTasks.filter(t=>t.projectId===currentProjectId);
-  const tasks = isAdmin ? allTasks : allTasks.filter(t=>t.status !== "approved");
+  const tasks = canManageTasks ? allTasks : allTasks.filter(t=>t.status !== "approved");
   if(tasks.length===0){
     list.innerHTML = allTasks.length ? '<div class="meta" style="padding:15px 0;">All tasks in this project have been approved.</div>' : '<div class="meta" style="padding:15px 0;">No tasks added yet.</div>';
     return;
@@ -2356,6 +2470,8 @@ function renderCurrentProjectTasks(){
     // Any rejected task gets the resubmit button, whether admin assigned it
     // or staff created it themselves. Otherwise the "Add Job Details" button
     // only appears on a task the admin assigned that isn't filled in yet.
+    // This is about doing the WORK on a task, so it's shown to any non-admin
+    // (including a verified staff member) the same way.
     const assignedByAdmin=taskNameCol && String(getProjectTaskValue(t,taskNameCol)||"").trim();
     const showAddJobDetails=!isAdmin && staffCols.length && (t.status==="rejected" || (assignedByAdmin && !hasStaffValue));
     const staffNameCol=projectColumns.find(c=>c.key==="staffName");
@@ -2364,7 +2480,7 @@ function renderCurrentProjectTasks(){
     if(t.status === "approved"){
       statusBadge = '<span class="badge badge-closed">Approved</span>';
     } else if(t.status === "rejected"){
-      statusBadge = isAdmin
+      statusBadge = canManageTasks
         ? '<span class="badge badge-rejected">Rejected</span>'
         : '<span class="badge badge-rejected-alert">Rejected — please review &amp; resubmit</span>';
     } else if(showAddJobDetails){
@@ -2378,18 +2494,23 @@ function renderCurrentProjectTasks(){
     // time mislabeled as a completion time.
     const completedTs = hasStaffValue ? (t.completedAt || t.createdAt) : null;
     const completedLine = completedTs ? `<div class="detail-row"><b>Job completed:</b> ${escapeHtml(fmtDate(completedTs))}</div>` : "";
-    let adminActionButtons = "";
-    if(isAdmin){
+    // Approve / Reject / Revert are available to admin AND a verified staff
+    // member (email-verified against the admin's authorized list). Edit and
+    // Delete stay admin-only, always.
+    let taskActionButtons = "";
+    if(canManageTasks){
       if(t.status === "approved"){
-        adminActionButtons = `<button class="btn btn-light revert-project-task" data-task-id="${t.id}">Revert to Pending</button>`;
+        taskActionButtons = `<button class="btn btn-light revert-project-task" data-task-id="${t.id}">Revert to Pending</button>`;
       } else if(t.status === "rejected"){
-        adminActionButtons = `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button><button class="btn btn-light revert-project-task" data-task-id="${t.id}">Mark Pending</button>`;
+        taskActionButtons = `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button><button class="btn btn-light revert-project-task" data-task-id="${t.id}">Mark Pending</button>`;
       } else {
-        adminActionButtons = `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button><button class="btn btn-red reject-project-task" data-task-id="${t.id}">Reject</button>`;
+        taskActionButtons = `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button><button class="btn btn-red reject-project-task" data-task-id="${t.id}">Reject</button>`;
       }
-      adminActionButtons += `<button class="btn btn-light edit-project-task" data-task-id="${t.id}">Edit</button><button class="btn btn-red delete-project-task" data-task-id="${t.id}">Delete</button>`;
     }
-    const checkboxHtml = (isAdmin && taskSelectMode)
+    if(isAdmin){
+      taskActionButtons += `<button class="btn btn-light edit-project-task" data-task-id="${t.id}">Edit</button><button class="btn btn-red delete-project-task" data-task-id="${t.id}">Delete</button>`;
+    }
+    const checkboxHtml = (canManageTasks && taskSelectMode)
       ? `<input type="checkbox" class="task-check" data-task-id="${t.id}" ${selectedProjectTaskIds.has(t.id)?"checked":""} style="margin-top:2px;width:18px;height:18px;flex-shrink:0;" />`
       : "";
     return `<div class="card" style="cursor:default;align-items:flex-start;">
@@ -2401,14 +2522,14 @@ function renderCurrentProjectTasks(){
         <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           ${statusBadge}
           ${ratingBadge}
-          ${adminActionButtons}
+          ${taskActionButtons}
           ${showAddJobDetails ? `<button class="btn btn-light fill-job-details" data-task-id="${t.id}">${t.status==="rejected" ? "Resubmit Job Details" : (hasStaffValue ? "Update Job Details" : "Add Job Details")}</button>` : ""}
         </div>
       </div></div>`;
   }).join("");
 
   list.querySelectorAll(".approve-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
-    e.stopPropagation(); if(!isAdmin) return;
+    e.stopPropagation(); if(!isAdmin && !isVerifiedStaff) return;
     const id=btn.getAttribute("data-task-id"); btn.disabled=true;
     try{
       await updateDoc(doc(db,"projecttasks",id),{status:"approved",approvedBy:currentUser.email||null,approvedAt:serverTimestamp(),rejectedBy:null,rejectedAt:null});
@@ -2417,13 +2538,13 @@ function renderCurrentProjectTasks(){
     catch(err){ console.error(err); alert("Could not approve task. Check your connection and try again."); btn.disabled=false; }
   }));
   list.querySelectorAll(".reject-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
-    e.stopPropagation(); if(!isAdmin) return;
+    e.stopPropagation(); if(!isAdmin && !isVerifiedStaff) return;
     const id=btn.getAttribute("data-task-id"); btn.disabled=true;
     try{ await updateDoc(doc(db,"projecttasks",id),{status:"rejected",rejectedBy:currentUser.email||null,rejectedAt:serverTimestamp()}); }
     catch(err){ console.error(err); alert("Could not reject task. Check your connection and try again."); btn.disabled=false; }
   }));
   list.querySelectorAll(".revert-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
-    e.stopPropagation(); if(!isAdmin) return;
+    e.stopPropagation(); if(!isAdmin && !isVerifiedStaff) return;
     if(!confirm("Move this task back to Pending approval?")) return;
     const id=btn.getAttribute("data-task-id"); btn.disabled=true;
     try{ await updateDoc(doc(db,"projecttasks",id),{status:"pending",approvedBy:null,approvedAt:null,rejectedBy:null,rejectedAt:null,rating:null}); }
@@ -2432,7 +2553,8 @@ function renderCurrentProjectTasks(){
   list.querySelectorAll(".edit-project-task").forEach(btn=>btn.addEventListener("click",e=>{e.stopPropagation();openEditProjectTask(btn.getAttribute("data-task-id"));}));
   list.querySelectorAll(".fill-job-details").forEach(btn=>btn.addEventListener("click",e=>{e.stopPropagation();openFillJobDetails(btn.getAttribute("data-task-id"));}));
   list.querySelectorAll(".delete-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
-    e.stopPropagation(); const id=btn.getAttribute("data-task-id"); if(!confirm("Delete this project task?")) return;
+    e.stopPropagation(); if(!isAdmin) return;
+    const id=btn.getAttribute("data-task-id"); if(!confirm("Delete this project task?")) return;
     try{await deleteDoc(doc(db,"projecttasks",id));}catch(err){console.error(err);alert("Could not delete task.");}
   }));
   list.querySelectorAll(".task-check").forEach(cb=>cb.addEventListener("change",e=>{
@@ -2652,15 +2774,15 @@ $("saveProjectBtn").addEventListener("click",async()=>{
   const name=$("projectNameInput").value.trim(); $("projectError").textContent="";
   if(!name){$("projectError").textContent="Project name is required.";return;}
   $("saveProjectBtn").disabled=true;
-  try{await addDoc(collection(db,"projects"),{name,status:"active",createdBy:currentUser.email||null,createdByUid:currentUser.uid,createdByName:otpPendingName||null,createdAt:serverTimestamp()});hideModal("newProjectModal");}
-  catch(err){console.error(err);$("projectError").textContent="Could not save project. Your OTP may have expired.";}
+  try{await addDoc(collection(db,"projects"),{name,status:"active",createdBy:currentUser.email||null,createdByUid:currentUser.uid,createdAt:serverTimestamp()});hideModal("newProjectModal");}
+  catch(err){console.error(err);$("projectError").textContent = isAdmin ? "Could not save project. Check your connection and try again." : "Could not save project. Your verification may have expired — verify your email again and retry.";}
   $("saveProjectBtn").disabled=false;
 });
 
 $("addProjectTaskBtn").addEventListener("click",()=>{
   editingProjectTaskId=null;
   $("projectTaskError").textContent="";
-  if(isAdmin){
+  if(isAdmin || isVerifiedStaff){
     renderProjectTaskFields({}, "admin");
     $("newProjectTaskTitle").textContent="Assign Task";
   }else{
@@ -2696,40 +2818,22 @@ $("saveProjectTaskBtn").addEventListener("click",async()=>{
   $("saveProjectTaskBtn").disabled=false;
 });
 
-function openProjectOtpFlow(){
-  otpPendingPurpose="project";
-  $("otpModalTitle").textContent="Admin approval for new project";
-  $("otpModalHint").textContent="Creating a new Project Report requires a one-time code from your admin. Request the code below, then ask the admin for the 6-digit code.";
-  $("otpVerifyHint").textContent="Code requested. Ask your admin for the 6-digit code, then enter it below.";
-  $("otpStaffName").value="";
-  $("otpRequestError").textContent="";
-  $("otpRequestStep").style.display="block";
-  $("otpVerifyStep").style.display="none";
-  $("otpError").textContent="";
-  showModal("otpModal");
-}
-
-function openSnagOtpFlow(){
-  otpPendingPurpose="snag";
-  $("otpModalTitle").textContent="Verify to open a snag";
-  $("otpModalHint").textContent="Opening a new snag needs a one-time code from your admin.";
-  $("otpVerifyHint").textContent="Code requested. Ask your admin for the 6-digit code, then enter it below. Once verified, you can open snags for the next 24 hours.";
-  $("otpStaffName").value="";
-  $("otpRequestError").textContent="";
-  $("otpRequestStep").style.display="block";
-  $("otpVerifyStep").style.display="none";
-  $("otpError").textContent="";
-  showModal("otpModal");
+function openVerifyEmailModal(){
+  $("verifyEmailInput").value = window.localStorage.getItem("emailForSignIn") || "";
+  $("verifyEmailError").textContent = "";
+  $("verifyEmailRequestStep").style.display = "block";
+  $("verifyEmailSentStep").style.display = "none";
+  showModal("verifyEmailModal");
 }
 
 $("fab").addEventListener("click", async ()=>{
   if(activeTab === "projects"){
-    if(isAdmin){
+    if(isAdmin || isVerifiedStaff){
       $("projectNameInput").value="";
       $("projectError").textContent="";
       showModal("newProjectModal");
     }else{
-      openProjectOtpFlow();
+      openVerifyEmailModal();
     }
     return;
   }
@@ -2753,98 +2857,46 @@ $("fab").addEventListener("click", async ()=>{
   }
 
   // Snags tab
-  if(isAdmin){
+  if(isAdmin || isVerifiedStaff){
     openNewSnagFlow("");
     return;
   }
-
-  // Non-admin: an OTP verified within the last 24 hours skips straight to
-  // the snag form; otherwise they need to request/enter a fresh code.
-  try{
-    const snap = await getDoc(doc(db, "otpRequests", currentUser.uid));
-    if(snap.exists()){
-      const r = snap.data();
-      const expiresDate = r.verifiedExpiresAt && r.verifiedExpiresAt.toDate ? r.verifiedExpiresAt.toDate() : null;
-      if(r.purpose === "snag" && r.status === "verified" && expiresDate && expiresDate > new Date()){
-        openNewSnagFlow(r.requestedBy || "");
-        return;
-      }
-    }
-  }catch(err){
-    console.error(err);
-  }
-
-  openSnagOtpFlow();
+  openVerifyEmailModal();
 });
 
-// ---------- OTP FLOW (non-admin staff opening a new snag) ----------
-let otpPendingName = "";
-$("otpRequestBtn").addEventListener("click", async ()=>{
-  const name = $("otpStaffName").value.trim();
-  $("otpRequestError").textContent = "";
-  if(!name){ $("otpRequestError").textContent = "Please enter your name."; return; }
-  otpPendingName = name;
-  const code = String(Math.floor(100000 + Math.random() * 900000));
-  $("otpRequestBtn").disabled = true;
-  try{
-    await setDoc(doc(db, "otpRequests", currentUser.uid), {
-      code,
-      requestedBy: name,
-      purpose: otpPendingPurpose,
-      status: "pending",
-      createdAt: serverTimestamp(),
-      verifiedExpiresAt: null
-    });
-    $("otpRequestStep").style.display = "none";
-    $("otpVerifyStep").style.display = "block";
-    $("otpCodeInput").value = "";
-    $("otpError").textContent = "";
-  }catch(err){
-    console.error(err);
-    $("otpRequestError").textContent = "Could not request a code. Check your connection and try again.";
+// ---------- EMAIL VERIFICATION (non-admin staff unlocking elevated actions) ----------
+$("verifyEmailSendBtn").addEventListener("click", async ()=>{
+  const email = $("verifyEmailInput").value.trim().toLowerCase();
+  $("verifyEmailError").textContent = "";
+  if(!email || !email.includes("@") || !email.includes(".")){
+    $("verifyEmailError").textContent = "Enter a valid email address.";
+    return;
   }
-  $("otpRequestBtn").disabled = false;
-});
-
-$("otpRequestAgainBtn").addEventListener("click", ()=> $("otpRequestBtn").click());
-
-$("otpVerifyBtn").addEventListener("click", async ()=>{
-  const typed = $("otpCodeInput").value.trim();
-  $("otpError").textContent = "";
-  if(!typed){ $("otpError").textContent = "Enter the code your admin gave you."; return; }
-  $("otpVerifyBtn").disabled = true;
+  $("verifyEmailSendBtn").disabled = true;
   try{
-    const snap = await getDoc(doc(db, "otpRequests", currentUser.uid));
-    if(!snap.exists() || snap.data().code !== typed){
-      $("otpError").textContent = "Incorrect code. Please check with your admin.";
-      $("otpVerifyBtn").disabled = false;
+    const snap = await getDoc(doc(db, "authorizedStaff", email));
+    if(!snap.exists()){
+      $("verifyEmailError").textContent = "This email hasn't been added by your admin yet. Ask them to add it first.";
+      $("verifyEmailSendBtn").disabled = false;
       return;
     }
-    const r = snap.data();
-    if(r.purpose !== otpPendingPurpose){
-      $("otpError").textContent = "This code is for a different request. Please request a new code.";
-      $("otpVerifyBtn").disabled = false;
-      return;
-    }
-    const expires = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    await updateDoc(doc(db, "otpRequests", currentUser.uid), {
-      status: "verified",
-      verifiedExpiresAt: expires
-    });
-    hideModal("otpModal");
-    if(otpPendingPurpose === "project"){
-      $("projectNameInput").value="";
-      $("projectError").textContent="";
-      showModal("newProjectModal");
-    }else{
-      openNewSnagFlow(otpPendingName);
-    }
+    const actionCodeSettings = {
+      url: window.location.origin + window.location.pathname,
+      handleCodeInApp: true
+    };
+    await sendSignInLinkToEmail(auth, email, actionCodeSettings);
+    window.localStorage.setItem("emailForSignIn", email);
+    $("verifyEmailSentTo").textContent = email;
+    $("verifyEmailRequestStep").style.display = "none";
+    $("verifyEmailSentStep").style.display = "block";
   }catch(err){
     console.error(err);
-    $("otpError").textContent = "Could not verify. Check your connection and try again.";
+    $("verifyEmailError").textContent = "Could not send the link. Check your connection and try again.";
   }
-  $("otpVerifyBtn").disabled = false;
+  $("verifyEmailSendBtn").disabled = false;
 });
+
+$("verifyEmailResendBtn").addEventListener("click", ()=> $("verifyEmailSendBtn").click());
 
 ["newStaffName","newSite","newLocation","newDescription"].forEach(id=>{
   $(id).addEventListener("input", updateSaveSnagBtn);
@@ -2876,7 +2928,7 @@ $("saveSnagBtn").addEventListener("click", async ()=>{
     console.error(err);
     $("newSnagError").textContent = isAdmin
       ? "Could not save. Check your connection and try again."
-      : "Could not save. Your OTP may have expired — tap + again to request a new one.";
+      : "Could not save. Your verification may have expired — verify your email again and retry.";
     $("saveSnagBtn").disabled = false;
   }
 });
