@@ -477,10 +477,11 @@
   <div class="modal">
     <button class="close-x" data-close="verifyEmailModal">&times;</button>
     <h2>Verify your email</h2>
-    <div class="hint">Enter the email address you already gave your admin. We'll email you a one-time sign-in link — tap it to verify. Once verified you can open snags/projects and approve, reject, assign and export tasks (editing and deleting still need an admin).</div>
+    <div class="hint">Enter your email. If your admin has already approved it, we'll email you a one-time sign-in link — tap it to verify. Once verified you can open snags/projects and approve, reject, assign and export tasks (editing and deleting still need an admin). Not approved yet? You can send your admin a request from here.</div>
     <div id="verifyEmailRequestStep">
       <div class="field"><label>Email</label><input type="email" id="verifyEmailInput" placeholder="you@example.com" /></div>
       <div class="error-text" id="verifyEmailError"></div>
+      <button class="btn btn-outline" id="verifyEmailRequestAccessBtn" style="width:100%;margin-top:4px;display:none;">Request access from admin</button>
       <div class="modal-actions">
         <button class="btn btn-primary" id="verifyEmailSendBtn" style="width:100%;">Send link</button>
       </div>
@@ -491,6 +492,12 @@
         <button class="btn btn-light" id="verifyEmailResendBtn" style="width:100%;">Resend link</button>
       </div>
     </div>
+    <div id="verifyEmailRequestedStep" style="display:none;">
+      <div class="hint">Request sent for <b id="verifyEmailRequestedTo"></b>. Ask your admin to check Staff Access and add you, then come back here and verify again.</div>
+      <div class="modal-actions">
+        <button class="btn btn-light" data-close="verifyEmailModal" style="width:100%;">Close</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -499,7 +506,11 @@
   <div class="modal">
     <button class="close-x" data-close="staffAccessModal">&times;</button>
     <h2>Staff Access</h2>
-    <div class="section-label">Authorized staff emails</div>
+    <div class="section-label">Pending access requests</div>
+    <div class="hint">Staff who tried to verify with an email you haven't added yet show up here. Tap Add to approve and let them verify, or Dismiss to ignore.</div>
+    <div id="staffAccessRequestList"></div>
+
+    <div class="section-label" style="margin-top:18px;">Authorized staff emails</div>
     <div class="hint">Only these emails can verify themselves on the user page to open snags/projects and manage tasks (approve/reject/assign/export). They still can't edit or delete anything.</div>
     <div style="display:flex;gap:8px;margin:8px 0;">
       <input type="email" id="newStaffEmailInput" placeholder="staff@example.com" style="flex:1;" />
@@ -1007,8 +1018,68 @@ async function openStaffAccessAdminModal(){
   $("newStaffEmailInput").value = "";
   $("staffEmailError").textContent = "";
   showModal("staffAccessModal");
+  renderStaffAccessRequests();
   renderStaffEmailList();
   renderStaffLoginLog();
+}
+
+async function renderStaffAccessRequests(){
+  const box = $("staffAccessRequestList");
+  box.innerHTML = `<div class="hint">Loading…</div>`;
+  try{
+    const snap = await getDocs(collection(db, "staffAccessRequests"));
+    if(snap.empty){
+      box.innerHTML = `<div class="hint">No pending requests.</div>`;
+      return;
+    }
+    const docs = [];
+    snap.forEach(d=> docs.push({ id:d.id, ...d.data() }));
+    docs.sort((a,b)=>{
+      const at = a.requestedAt && a.requestedAt.toMillis ? a.requestedAt.toMillis() : 0;
+      const bt = b.requestedAt && b.requestedAt.toMillis ? b.requestedAt.toMillis() : 0;
+      return bt - at;
+    });
+    box.innerHTML = docs.map(d=>`
+      <div class="detail-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span>${escapeHtml(d.email||d.id)} <span class="meta">— requested ${escapeHtml(fmtDate(d.requestedAt))}</span></span>
+        <span style="display:flex;gap:6px;flex-shrink:0;">
+          <button class="btn btn-green approve-staff-request" data-email-id="${escapeHtml(d.id)}" style="padding:4px 10px;font-size:12px;">Add</button>
+          <button class="btn btn-light dismiss-staff-request" data-email-id="${escapeHtml(d.id)}" style="padding:4px 10px;font-size:12px;">Dismiss</button>
+        </span>
+      </div>
+    `).join("");
+    box.querySelectorAll(".approve-staff-request").forEach(btn=>btn.addEventListener("click", async ()=>{
+      const emailId = btn.getAttribute("data-email-id");
+      btn.disabled = true;
+      try{
+        await setDoc(doc(db, "authorizedStaff", emailId), {
+          email: emailId, addedBy: currentUser.email || null, addedAt: serverTimestamp()
+        });
+        await deleteDoc(doc(db, "staffAccessRequests", emailId));
+        renderStaffAccessRequests();
+        renderStaffEmailList();
+      }catch(err){
+        console.error(err);
+        alert("Could not add this email. Check your connection and try again.");
+        btn.disabled = false;
+      }
+    }));
+    box.querySelectorAll(".dismiss-staff-request").forEach(btn=>btn.addEventListener("click", async ()=>{
+      if(!confirm("Dismiss this request without adding the email?")) return;
+      btn.disabled = true;
+      try{
+        await deleteDoc(doc(db, "staffAccessRequests", btn.getAttribute("data-email-id")));
+        renderStaffAccessRequests();
+      }catch(err){
+        console.error(err);
+        alert("Could not dismiss this request. Check your connection and try again.");
+        btn.disabled = false;
+      }
+    }));
+  }catch(err){
+    console.error(err);
+    box.innerHTML = `<div class="error-text">Could not load access requests. Check your connection and try again.</div>`;
+  }
 }
 
 async function renderStaffEmailList(){
@@ -2821,8 +2892,10 @@ $("saveProjectTaskBtn").addEventListener("click",async()=>{
 function openVerifyEmailModal(){
   $("verifyEmailInput").value = window.localStorage.getItem("emailForSignIn") || "";
   $("verifyEmailError").textContent = "";
+  $("verifyEmailRequestAccessBtn").style.display = "none";
   $("verifyEmailRequestStep").style.display = "block";
   $("verifyEmailSentStep").style.display = "none";
+  $("verifyEmailRequestedStep").style.display = "none";
   showModal("verifyEmailModal");
 }
 
@@ -2868,6 +2941,7 @@ $("fab").addEventListener("click", async ()=>{
 $("verifyEmailSendBtn").addEventListener("click", async ()=>{
   const email = $("verifyEmailInput").value.trim().toLowerCase();
   $("verifyEmailError").textContent = "";
+  $("verifyEmailRequestAccessBtn").style.display = "none";
   if(!email || !email.includes("@") || !email.includes(".")){
     $("verifyEmailError").textContent = "Enter a valid email address.";
     return;
@@ -2876,7 +2950,9 @@ $("verifyEmailSendBtn").addEventListener("click", async ()=>{
   try{
     const snap = await getDoc(doc(db, "authorizedStaff", email));
     if(!snap.exists()){
-      $("verifyEmailError").textContent = "This email hasn't been added by your admin yet. Ask them to add it first.";
+      $("verifyEmailError").textContent = "This email hasn't been added by your admin yet.";
+      $("verifyEmailRequestAccessBtn").setAttribute("data-email", email);
+      $("verifyEmailRequestAccessBtn").style.display = "block";
       $("verifyEmailSendBtn").disabled = false;
       return;
     }
@@ -2897,6 +2973,28 @@ $("verifyEmailSendBtn").addEventListener("click", async ()=>{
 });
 
 $("verifyEmailResendBtn").addEventListener("click", ()=> $("verifyEmailSendBtn").click());
+
+// A staff member whose email isn't on the whitelist yet can send the admin a
+// request instead of hitting a dead end — it shows up in the admin's Staff
+// Access panel under "Pending access requests" for a one-tap approval.
+$("verifyEmailRequestAccessBtn").addEventListener("click", async ()=>{
+  const email = $("verifyEmailRequestAccessBtn").getAttribute("data-email") || $("verifyEmailInput").value.trim().toLowerCase();
+  if(!email) return;
+  $("verifyEmailRequestAccessBtn").disabled = true;
+  try{
+    await setDoc(doc(db, "staffAccessRequests", email), {
+      email, requestedAt: serverTimestamp()
+    });
+    $("verifyEmailRequestedTo").textContent = email;
+    $("verifyEmailRequestStep").style.display = "none";
+    $("verifyEmailSentStep").style.display = "none";
+    $("verifyEmailRequestedStep").style.display = "block";
+  }catch(err){
+    console.error(err);
+    $("verifyEmailError").textContent = "Could not send the request. Check your connection and try again.";
+  }
+  $("verifyEmailRequestAccessBtn").disabled = false;
+});
 
 ["newStaffName","newSite","newLocation","newDescription"].forEach(id=>{
   $(id).addEventListener("input", updateSaveSnagBtn);
