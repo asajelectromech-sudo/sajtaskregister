@@ -501,6 +501,23 @@
   </div>
 </div>
 
+<!-- Shown when a verification link is opened somewhere that doesn't already
+     know the email it was sent to — e.g. tapped inside the Gmail/Outlook
+     app's own in-app browser rather than the browser "Send link" was tapped
+     in, which doesn't share storage with it. -->
+<div class="modal-overlay" id="confirmEmailLinkModal">
+  <div class="modal">
+    <h2>Confirm your email</h2>
+    <div class="hint">To finish verifying, confirm the email address you requested this link for.</div>
+    <div class="field"><label>Email</label><input type="email" id="confirmEmailLinkInput" placeholder="you@example.com" /></div>
+    <div class="error-text" id="confirmEmailLinkError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" id="confirmEmailLinkCancelBtn">Cancel</button>
+      <button class="btn btn-primary" id="confirmEmailLinkBtn">Continue</button>
+    </div>
+  </div>
+</div>
+
 <!-- STAFF ACCESS ADMIN PANEL (admin only) -->
 <div class="modal-overlay" id="staffAccessModal">
   <div class="modal">
@@ -715,6 +732,41 @@ function escapeHtml(str){
 }
 
 // ---------- AUTH ----------
+// Shows a real in-app modal to ask for the email, instead of window.prompt()
+// — many mobile mail apps open links in their own in-app browser, which
+// blocks or silently no-ops window.prompt(), so relying on it made the whole
+// verification fail invisibly (falling back to anonymous access) whenever
+// the link wasn't opened in the same browser "Send link" was tapped in.
+// Resolves with the typed email, or null if the person cancels.
+function askForEmailToCompleteLink(){
+  return new Promise((resolve)=>{
+    $("confirmEmailLinkInput").value = "";
+    $("confirmEmailLinkError").textContent = "";
+    showModal("confirmEmailLinkModal");
+    const cleanup = ()=>{
+      $("confirmEmailLinkBtn").removeEventListener("click", onContinue);
+      $("confirmEmailLinkCancelBtn").removeEventListener("click", onCancel);
+    };
+    const onContinue = ()=>{
+      const email = $("confirmEmailLinkInput").value.trim().toLowerCase();
+      if(!email || !email.includes("@") || !email.includes(".")){
+        $("confirmEmailLinkError").textContent = "Enter a valid email address.";
+        return;
+      }
+      cleanup();
+      hideModal("confirmEmailLinkModal");
+      resolve(email);
+    };
+    const onCancel = ()=>{
+      cleanup();
+      hideModal("confirmEmailLinkModal");
+      resolve(null);
+    };
+    $("confirmEmailLinkBtn").addEventListener("click", onContinue);
+    $("confirmEmailLinkCancelBtn").addEventListener("click", onCancel);
+  });
+}
+
 // If this page load is the result of tapping the sign-in link from an email
 // verification, complete it. Returns true once handled (whether it
 // succeeded or failed) so the caller knows not to also sign in anonymously.
@@ -722,7 +774,7 @@ async function completeEmailLinkSignInIfNeeded(){
   if(!isSignInWithEmailLink(auth, window.location.href)) return false;
   let email = window.localStorage.getItem("emailForSignIn");
   if(!email){
-    email = window.prompt("Please confirm the email you used to request this verification link:");
+    email = await askForEmailToCompleteLink();
   }
   // Always clean the sign-in params out of the URL so a refresh doesn't
   // try to replay this link.
@@ -735,7 +787,7 @@ async function completeEmailLinkSignInIfNeeded(){
     return true;
   }catch(err){
     console.error("Email link sign-in failed", err);
-    alert("This verification link is invalid or has expired. Please request a new one.");
+    alert("This verification link is invalid or has expired (each link can only be used once, and only for the email it was sent to). Please request a new one.");
     cleanUrl();
     return false;
   }
