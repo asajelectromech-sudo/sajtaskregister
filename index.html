@@ -732,6 +732,37 @@ function escapeHtml(str){
 }
 
 // ---------- AUTH ----------
+// Temporary diagnostic banner so we can see exactly what happened when an
+// email sign-in link is opened, including the real Firebase error code —
+// this is much more reliable than trying to reproduce a mobile mail-app
+// environment. Screenshot this if verification fails again.
+function showEmailLinkDebugBanner(text, isError){
+  let banner = document.getElementById("emailLinkDebugBanner");
+  if(!banner){
+    banner = document.createElement("div");
+    banner.id = "emailLinkDebugBanner";
+    banner.style.cssText = "position:fixed;top:0;left:0;right:0;z-index:9999;padding:10px 14px;font-size:13px;text-align:center;box-shadow:0 2px 6px rgba(0,0,0,.15);";
+    document.body.appendChild(banner);
+  }
+  banner.style.background = isError ? "#fdecec" : "#e7f7ec";
+  banner.style.color = isError ? "#b91c1c" : "#15803d";
+  banner.textContent = text;
+}
+
+// Runs once at load: if the URL looks like it came from a sign-in link at
+// all (even judged by a raw substring match) but Firebase's own check
+// disagrees, that's a strong sign the link got rewritten by an email
+// provider's link-safety/"Safe Links" scanner before it ever reached the
+// browser — which can also silently burn the single-use code server-side.
+(function debugEmailLinkDetection(){
+  const href = window.location.href;
+  const looksLikeSignInLink = href.includes("mode=signIn") || href.includes("oobCode=");
+  const recognized = isSignInWithEmailLink(auth, href);
+  if(looksLikeSignInLink && !recognized){
+    showEmailLinkDebugBanner("This link looked like a sign-in link, but Firebase didn't recognize it — it may have been rewritten by your email provider's link-safety scanner. Try copying the link text and pasting it directly into the address bar instead of tapping it.", true);
+  }
+})();
+
 // Shows a real in-app modal to ask for the email, instead of window.prompt()
 // — many mobile mail apps open links in their own in-app browser, which
 // blocks or silently no-ops window.prompt(), so relying on it made the whole
@@ -773,21 +804,27 @@ function askForEmailToCompleteLink(){
 async function completeEmailLinkSignInIfNeeded(){
   if(!isSignInWithEmailLink(auth, window.location.href)) return false;
   let email = window.localStorage.getItem("emailForSignIn");
+  const gotFromStorage = !!email;
   if(!email){
     email = await askForEmailToCompleteLink();
   }
   // Always clean the sign-in params out of the URL so a refresh doesn't
   // try to replay this link.
   const cleanUrl = ()=> window.history.replaceState({}, document.title, window.location.pathname);
-  if(!email){ cleanUrl(); return false; }
+  if(!email){
+    showEmailLinkDebugBanner("Verification cancelled — no email was confirmed.", true);
+    cleanUrl();
+    return false;
+  }
   try{
     await signInWithEmailLink(auth, email, window.location.href);
     window.localStorage.removeItem("emailForSignIn");
     cleanUrl();
+    showEmailLinkDebugBanner(`Verified as ${email} (email was ${gotFromStorage ? "found automatically" : "typed in"}).`, false);
     return true;
   }catch(err){
     console.error("Email link sign-in failed", err);
-    alert("This verification link is invalid or has expired (each link can only be used once, and only for the email it was sent to). Please request a new one.");
+    showEmailLinkDebugBanner(`Could not verify ${email}: ${err.code || err.message || "unknown error"} (email was ${gotFromStorage ? "found automatically" : "typed in"}).`, true);
     cleanUrl();
     return false;
   }
@@ -1239,7 +1276,7 @@ function startSnagListener(){
   }, (err)=>{
     console.error(err);
     $("syncDot").classList.add("off");
-    $("syncText").textContent = "Offline / permission error";
+    $("syncText").textContent = `Offline (${err.code || err.message || "unknown error"})`;
   });
 }
 
