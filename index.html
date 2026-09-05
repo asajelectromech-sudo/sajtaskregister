@@ -264,6 +264,16 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="taskDecisionNoteModal">
+  <div class="modal">
+    <h2 id="taskDecisionNoteTitle">Approve task</h2>
+    <p class="hint" id="taskDecisionNoteHint">Add an optional note — the staff member will see it on this task.</p>
+    <div class="field"><label>Note (optional)</label><textarea id="taskDecisionNoteInput" placeholder="e.g. Looks good, thanks!"></textarea></div>
+    <div class="error-text" id="taskDecisionNoteError"></div>
+    <div class="modal-actions"><button class="btn btn-light" data-close="taskDecisionNoteModal">Cancel</button><button class="btn btn-primary" id="taskDecisionNoteConfirmBtn">Confirm</button></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="editProjectModal">
   <div class="modal">
     <button class="close-x" data-close="editProjectModal">&times;</button>
@@ -2531,6 +2541,13 @@ function renderCurrentProjectTasks(){
     // time mislabeled as a completion time.
     const completedTs = hasStaffValue ? (t.completedAt || t.createdAt) : null;
     const completedLine = completedTs ? `<div class="detail-row"><b>Job completed:</b> ${escapeHtml(fmtDate(completedTs))}</div>` : "";
+    // A rejection note is the admin/reviewer's message telling the staff
+    // member what to fix — shown prominently since it's actionable. An
+    // approval note is just a friendly comment, shown more quietly.
+    const rejectionNoteLine = (t.status==="rejected" && t.rejectionNote)
+      ? `<div class="detail-row" style="color:#b91c1c;"><b>Note from admin:</b> ${escapeHtml(t.rejectionNote)}</div>` : "";
+    const approvalNoteLine = (t.status==="approved" && t.approvalNote)
+      ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(t.approvalNote)}</div>` : "";
     // Approve / Reject / Revert are available to admin AND a verified staff
     // member (email-verified against the admin's authorized list). Edit and
     // Delete stay admin-only, always.
@@ -2556,6 +2573,8 @@ function renderCurrentProjectTasks(){
         <p class="card-title">${escapeHtml(String(title||"Untitled task"))}</p>
         ${rows}
         ${completedLine}
+        ${rejectionNoteLine}
+        ${approvalNoteLine}
         <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
           ${statusBadge}
           ${ratingBadge}
@@ -2565,26 +2584,19 @@ function renderCurrentProjectTasks(){
       </div></div>`;
   }).join("");
 
-  list.querySelectorAll(".approve-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
+  list.querySelectorAll(".approve-project-task").forEach(btn=>btn.addEventListener("click",e=>{
     e.stopPropagation(); if(!isAdmin && !isVerifiedStaff) return;
-    const id=btn.getAttribute("data-task-id"); btn.disabled=true;
-    try{
-      await updateDoc(doc(db,"projecttasks",id),{status:"approved",approvedBy:currentUser.email||null,approvedAt:serverTimestamp(),rejectedBy:null,rejectedAt:null});
-      openTaskRatingModal(id);
-    }
-    catch(err){ console.error(err); alert("Could not approve task. Check your connection and try again."); btn.disabled=false; }
+    openTaskDecisionNoteModal(btn.getAttribute("data-task-id"), "approve");
   }));
-  list.querySelectorAll(".reject-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
+  list.querySelectorAll(".reject-project-task").forEach(btn=>btn.addEventListener("click",e=>{
     e.stopPropagation(); if(!isAdmin && !isVerifiedStaff) return;
-    const id=btn.getAttribute("data-task-id"); btn.disabled=true;
-    try{ await updateDoc(doc(db,"projecttasks",id),{status:"rejected",rejectedBy:currentUser.email||null,rejectedAt:serverTimestamp()}); }
-    catch(err){ console.error(err); alert("Could not reject task. Check your connection and try again."); btn.disabled=false; }
+    openTaskDecisionNoteModal(btn.getAttribute("data-task-id"), "reject");
   }));
   list.querySelectorAll(".revert-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
     e.stopPropagation(); if(!isAdmin && !isVerifiedStaff) return;
     if(!confirm("Move this task back to Pending approval?")) return;
     const id=btn.getAttribute("data-task-id"); btn.disabled=true;
-    try{ await updateDoc(doc(db,"projecttasks",id),{status:"pending",approvedBy:null,approvedAt:null,rejectedBy:null,rejectedAt:null,rating:null}); }
+    try{ await updateDoc(doc(db,"projecttasks",id),{status:"pending",approvedBy:null,approvedAt:null,rejectedBy:null,rejectedAt:null,rating:null,approvalNote:null,rejectionNote:null}); }
     catch(err){ console.error(err); alert("Could not update task. Check your connection and try again."); btn.disabled=false; }
   }));
   list.querySelectorAll(".edit-project-task").forEach(btn=>btn.addEventListener("click",e=>{e.stopPropagation();openEditProjectTask(btn.getAttribute("data-task-id"));}));
@@ -2650,6 +2662,62 @@ $("taskExportBtn").addEventListener("click", ()=>{
   }
 });
 
+// ---------- APPROVE / REJECT NOTE (optional, shown to staff on rejection) ----------
+let pendingDecisionTaskId = null;
+let pendingDecisionType = null; // "approve" | "reject"
+
+function openTaskDecisionNoteModal(id, type){
+  pendingDecisionTaskId = id;
+  pendingDecisionType = type;
+  $("taskDecisionNoteInput").value = "";
+  $("taskDecisionNoteError").textContent = "";
+  if(type === "reject"){
+    $("taskDecisionNoteTitle").textContent = "Reject task";
+    $("taskDecisionNoteHint").textContent = "Add an optional note explaining why — the staff member will see this on the task so they know what to fix before resubmitting.";
+    $("taskDecisionNoteConfirmBtn").textContent = "Reject";
+    $("taskDecisionNoteConfirmBtn").classList.remove("btn-primary");
+    $("taskDecisionNoteConfirmBtn").classList.add("btn-red");
+  } else {
+    $("taskDecisionNoteTitle").textContent = "Approve task";
+    $("taskDecisionNoteHint").textContent = "Add an optional note — the staff member will see it on this task.";
+    $("taskDecisionNoteConfirmBtn").textContent = "Approve";
+    $("taskDecisionNoteConfirmBtn").classList.remove("btn-red");
+    $("taskDecisionNoteConfirmBtn").classList.add("btn-primary");
+  }
+  showModal("taskDecisionNoteModal");
+}
+
+$("taskDecisionNoteConfirmBtn").addEventListener("click", async ()=>{
+  if(!pendingDecisionTaskId || !pendingDecisionType) { hideModal("taskDecisionNoteModal"); return; }
+  const id = pendingDecisionTaskId;
+  const type = pendingDecisionType;
+  const note = $("taskDecisionNoteInput").value.trim();
+  $("taskDecisionNoteConfirmBtn").disabled = true;
+  try{
+    if(type === "approve"){
+      await updateDoc(doc(db,"projecttasks",id),{
+        status:"approved", approvedBy:currentUser.email||null, approvedAt:serverTimestamp(),
+        rejectedBy:null, rejectedAt:null, rejectionNote:null,
+        approvalNote: note || null
+      });
+      hideModal("taskDecisionNoteModal");
+      pendingDecisionTaskId = null; pendingDecisionType = null;
+      openTaskRatingModal(id);
+    } else {
+      await updateDoc(doc(db,"projecttasks",id),{
+        status:"rejected", rejectedBy:currentUser.email||null, rejectedAt:serverTimestamp(),
+        rejectionNote: note || null
+      });
+      hideModal("taskDecisionNoteModal");
+      pendingDecisionTaskId = null; pendingDecisionType = null;
+    }
+  }catch(err){
+    console.error(err);
+    $("taskDecisionNoteError").textContent = `Could not ${type} the task. Check your connection and try again.`;
+  }
+  $("taskDecisionNoteConfirmBtn").disabled = false;
+});
+
 // ---------- TASK RATING (shown right after Approve) ----------
 function renderTaskRatingStars(){
   const box=$("taskRatingStars"); if(!box) return;
@@ -2692,7 +2760,7 @@ function renderProjectTaskFields(values={}, mode="admin"){
   // "staffCreate" is used when staff add a brand-new task themselves — same
   // fields as before this admin/staff split existed, minus the admin-only
   // "Task" (taskName) field, which staff don't need to set.
-  currentTaskFormColumns = mode==="staffCreate"
+  currentTaskFormColumns = (mode==="staffCreate" || mode==="adminEditFull")
     ? projectColumns.filter(c=>c.key!=="taskName")
     : projectColumns.filter(c => mode==="staff" ? c.filledBy==="staff" : c.filledBy!=="staff");
   if(!currentTaskFormColumns.length){
@@ -2762,12 +2830,22 @@ async function deleteProject(id){
 function openEditProjectTask(id){
   if(!isAdmin) return;
   const t=allProjectTasks.find(x=>x.id===id); if(!t) return;
-  const cols=projectColumns.filter(c=>c.filledBy!=="staff");
+  // If this task was assigned by admin (has a Task name), edit the admin
+  // fields as before — staff fill in Job Details separately. If it was
+  // created by staff themselves (no Task name was ever set), there's no
+  // point showing an empty "Task" field to edit — show every field staff
+  // actually filled in instead, including Job Details.
+  const taskNameCol=projectColumns.find(c=>c.key==="taskName");
+  const wasAssignedByAdmin = taskNameCol && String(getProjectTaskValue(t,taskNameCol)||"").trim();
+  const mode = wasAssignedByAdmin ? "admin" : "adminEditFull";
+  const cols = wasAssignedByAdmin
+    ? projectColumns.filter(c=>c.filledBy!=="staff")
+    : projectColumns.filter(c=>c.key!=="taskName");
   const values={};
   cols.forEach(c=>values[c.key]=getProjectTaskValue(t,c));
   editingProjectTaskId=id;
   $("projectTaskError").textContent="";
-  renderProjectTaskFields(values, "admin");
+  renderProjectTaskFields(values, mode);
   $("newProjectTaskTitle").textContent="Edit Task";
   $("saveProjectTaskBtn").textContent="Save changes";
   showModal("newProjectTaskModal");
