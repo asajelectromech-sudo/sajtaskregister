@@ -831,11 +831,21 @@ async function completeEmailLinkSignInIfNeeded(){
 }
 
 onAuthStateChanged(auth, async (user)=>{
-  if(!user){
+  // Check for a sign-in link FIRST, regardless of whether a session
+  // (even an anonymous one left over from a previous visit) already
+  // exists. Without this, an old anonymous session silently blocks
+  // email-link verification from ever running.
+  if(isSignInWithEmailLink(auth, window.location.href)){
     const handledLink = await completeEmailLinkSignInIfNeeded();
-    if(!handledLink){
+    if(handledLink) return; // onAuthStateChanged fires again with the newly verified user
+    if(!user){
       signInAnonymously(auth).catch(err=> console.error("Anon sign-in failed", err));
+      return;
     }
+    // link failed to verify — fall through and render with whatever
+    // session we already had (likely still anonymous)
+  } else if(!user){
+    signInAnonymously(auth).catch(err=> console.error("Anon sign-in failed", err));
     return;
   }
   currentUser = user;
