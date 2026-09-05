@@ -3036,15 +3036,26 @@ $("verifyEmailSendBtn").addEventListener("click", async ()=>{
     return;
   }
   $("verifyEmailSendBtn").disabled = true;
+
+  let snap;
   try{
-    const snap = await getDoc(doc(db, "authorizedStaff", email));
-    if(!snap.exists()){
-      $("verifyEmailError").textContent = "This email hasn't been added by your admin yet.";
-      $("verifyEmailRequestAccessBtn").setAttribute("data-email", email);
-      $("verifyEmailRequestAccessBtn").style.display = "block";
-      $("verifyEmailSendBtn").disabled = false;
-      return;
-    }
+    snap = await getDoc(doc(db, "authorizedStaff", email));
+  }catch(err){
+    console.error("authorizedStaff lookup failed", err);
+    $("verifyEmailError").textContent = `Could not check your email (${err.code || err.message || "unknown error"}).`;
+    $("verifyEmailSendBtn").disabled = false;
+    return;
+  }
+
+  if(!snap.exists()){
+    $("verifyEmailError").textContent = "This email hasn't been added by your admin yet.";
+    $("verifyEmailRequestAccessBtn").setAttribute("data-email", email);
+    $("verifyEmailRequestAccessBtn").style.display = "block";
+    $("verifyEmailSendBtn").disabled = false;
+    return;
+  }
+
+  try{
     const actionCodeSettings = {
       url: window.location.origin + window.location.pathname,
       handleCodeInApp: true
@@ -3055,8 +3066,8 @@ $("verifyEmailSendBtn").addEventListener("click", async ()=>{
     $("verifyEmailRequestStep").style.display = "none";
     $("verifyEmailSentStep").style.display = "block";
   }catch(err){
-    console.error(err);
-    $("verifyEmailError").textContent = "Could not send the link. Check your connection and try again.";
+    console.error("sendSignInLinkToEmail failed", err);
+    $("verifyEmailError").textContent = `Could not send the link (${err.code || err.message || "unknown error"}).`;
   }
   $("verifyEmailSendBtn").disabled = false;
 });
