@@ -154,7 +154,7 @@
 <main>
   <div class="tabs" id="mainTabs">
     <button class="tab-btn active" data-tab="snags">Snag Reports</button>
-    <button class="tab-btn" data-tab="work">Work Reports</button>
+    <button class="tab-btn" data-tab="work">Service Action Reports</button>
     <button class="tab-btn" data-tab="projects">Project Reports</button>
   </div>
 
@@ -203,7 +203,7 @@
     </div>
 
     <div id="workList"></div>
-    <div id="workEmptyState" style="display:none;">No work reports match your filters.</div>
+    <div id="workEmptyState" style="display:none;">No service action reports match your filters.</div>
   </div>
 
   <div id="projectsView" style="display:none;">
@@ -231,6 +231,10 @@
 <div class="modal-overlay" id="projectTasksModal">
   <div class="modal">
     <h2 id="projectTasksTitle">Project</h2>
+    <div class="chips" id="projectTaskViewChips" style="display:none;">
+      <button class="chip active" data-task-view="active">Active</button>
+      <button class="chip" data-task-view="archived">Archived</button>
+    </div>
     <div class="toolbar" id="taskSelectToolbar" style="display:none;">
       <button class="btn btn-light" id="taskSelectModeBtn">Select</button>
       <button class="btn btn-light" id="taskExportBtn">Export PDF</button>
@@ -248,6 +252,10 @@
 <div class="modal-overlay" id="newProjectTaskModal">
   <div class="modal">
     <h2 id="newProjectTaskTitle">Add Task</h2>
+    <div class="field" id="projectTaskAdminNameField" style="display:none;">
+      <label>Your name</label>
+      <input type="text" id="projectTaskAdminName" placeholder="e.g. Ahmed" />
+    </div>
     <div id="projectTaskDynamicFields"></div>
     <div class="error-text" id="projectTaskError"></div>
     <div class="modal-actions"><button class="btn btn-light" data-close="newProjectTaskModal">Cancel</button><button class="btn btn-primary" id="saveProjectTaskBtn">Save</button></div>
@@ -268,6 +276,7 @@
   <div class="modal">
     <h2 id="taskDecisionNoteTitle">Approve task</h2>
     <p class="hint" id="taskDecisionNoteHint">Add an optional note — the staff member will see it on this task.</p>
+    <div class="field"><label>Your name</label><input type="text" id="taskDecisionNoteName" placeholder="e.g. Ahmed" /></div>
     <div class="field"><label>Note (optional)</label><textarea id="taskDecisionNoteInput" placeholder="e.g. Looks good, thanks!"></textarea></div>
     <div class="error-text" id="taskDecisionNoteError"></div>
     <div class="modal-actions"><button class="btn btn-light" data-close="taskDecisionNoteModal">Cancel</button><button class="btn btn-primary" id="taskDecisionNoteConfirmBtn">Confirm</button></div>
@@ -373,7 +382,7 @@
 <div class="modal-overlay" id="workExportModal">
   <div class="modal">
     <button class="close-x" data-close="workExportModal">&times;</button>
-    <h2>Export work reports PDF</h2>
+    <h2>Export service action reports PDF</h2>
     <div class="field">
       <label>Site</label>
       <select id="workPdfSite"><option value="">All sites</option></select>
@@ -397,7 +406,7 @@
 <div class="modal-overlay" id="newWorkModal">
   <div class="modal">
     <button class="close-x" data-close="newWorkModal">&times;</button>
-    <h2 id="workModalTitle">New work report</h2>
+    <h2 id="workModalTitle">New service action report</h2>
     <div id="workEditSummary" style="display:none;"></div>
     <div id="workNewFieldsSection">
       <div class="field"><label>Site</label><input type="text" id="workSite" placeholder="e.g. M9" /></div>
@@ -426,7 +435,7 @@
     <div class="hint" id="workCompletenessHint"></div>
     <div class="error-text" id="newWorkError"></div>
     <div class="modal-actions">
-      <button class="btn btn-primary" id="saveWorkBtn" disabled>Save work report</button>
+      <button class="btn btn-primary" id="saveWorkBtn" disabled>Save service action report</button>
     </div>
   </div>
 </div>
@@ -531,7 +540,7 @@
 <div class="modal-overlay" id="editWorkModal">
   <div class="modal">
     <button class="close-x" data-close="editWorkModal">&times;</button>
-    <h2>Edit work report (admin)</h2>
+    <h2>Edit service action report (admin)</h2>
     <div class="field"><label>Site</label><input type="text" id="editWorkSite" /></div>
     <div class="field"><label>Location</label><input type="text" id="editWorkLocation" /></div>
     <div class="field"><label>Reporting staff</label><input type="text" id="editWorkReportedBy" /></div>
@@ -632,6 +641,7 @@ let currentTaskFormColumns = []; // columns rendered in the currently-open task 
 let currentTaskFormMode = "admin"; // which form is currently open: "admin" | "staff" | "staffCreate"
 let taskSelectMode = false;
 let selectedProjectTaskIds = new Set();
+let projectTaskViewMode = "active"; // "active" | "archived" (approved tasks)
 let ratingTaskId = null;
 let selectedTaskRating = 0;
 // Each column has a "filledBy" of "admin" or "staff". Admin fills in the
@@ -1358,7 +1368,7 @@ $("clearWorkBtn").addEventListener("click", ()=>{
 });
 $("deleteSelectedWorkBtn").addEventListener("click", async ()=>{
   if(!isAdmin || selectedWorkIds.size === 0) return;
-  if(!confirm(`Delete ${selectedWorkIds.size} selected work report(s)? This cannot be undone.`)) return;
+  if(!confirm(`Delete ${selectedWorkIds.size} selected service action report(s)? This cannot be undone.`)) return;
   $("deleteSelectedWorkBtn").disabled = true;
   try{
     await Promise.all(Array.from(selectedWorkIds).map(id=> deleteDoc(doc(db, "workreports", id))));
@@ -1499,7 +1509,7 @@ function openWorkDetail(id){
     const delBtn = document.getElementById("deleteWorkBtn");
     if(delBtn){
       delBtn.addEventListener("click", async ()=>{
-        if(!confirm(`Delete this work report (${s.site} — ${s.location})? This cannot be undone.`)) return;
+        if(!confirm(`Delete this service action report (${s.site} — ${s.location})? This cannot be undone.`)) return;
         delBtn.disabled = true;
         delBtn.textContent = "Deleting…";
         try{
@@ -1580,7 +1590,7 @@ $("saveEditWorkBtn").addEventListener("click", async ()=>{
   $("saveEditWorkBtn").disabled = false;
 });
 
-// New work report form wiring
+// New service action report form wiring
 let workBeforePhotos = [];
 let workAfterPhotos = [];
 
@@ -1615,13 +1625,13 @@ function updateSaveWorkBtn(){
 });
 $("workClientChecked").addEventListener("change", updateSaveWorkBtn);
 
-// Opens the modal in "complete an incomplete work report" mode. The original
+// Opens the modal in "complete an incomplete service action report" mode. The original
 // site/location/reporting-staff/problem/before-photos are locked (shown as a
 // summary instead of editable fields) — only the completion fields can change,
 // matching what the Firestore security rules allow to be updated.
 function openCompleteWorkModal(s){
   editingWorkId = s.id;
-  $("workModalTitle").textContent = "Close work report";
+  $("workModalTitle").textContent = "Close service action report";
   $("workNewFieldsSection").style.display = "none";
   const summary = $("workEditSummary");
   summary.style.display = "block";
@@ -1714,7 +1724,7 @@ $("saveWorkBtn").addEventListener("click", async ()=>{
   $("saveWorkBtn").disabled = false;
 });
 
-// ---------- MULTI-PHOTO CAPTURE (shared by new-snag, close-snag, and work reports) ----------
+// ---------- MULTI-PHOTO CAPTURE (shared by new-snag, close-snag, and service action reports) ----------
 function multiPhotoMarkup(areaId){
   return `
     <div class="photo-thumbs" id="${areaId}_thumbs"></div>
@@ -1760,7 +1770,7 @@ const workAfterCamHandle = wireMultiPhoto("workAfterCamArea",
 );
 
 // ---------- EDIT (admin) photo arrays — let an admin add/remove photos
-// on an existing snag or work report, same capture flow as everywhere else ----------
+// on an existing snag or service action report, same capture flow as everywhere else ----------
 let editSnagOpenPhotos = [];
 let editSnagClosePhotos = [];
 const editSnagOpenCamHandle = wireMultiPhoto("editSnagOpenCamArea",
@@ -2093,7 +2103,7 @@ async function getAreaName(geo){
   }
 }
 
-// ---------- SIGNATURE PAD (client sign-off on work reports) ----------
+// ---------- SIGNATURE PAD (client sign-off on service action reports) ----------
 // Stroke-based canvas signature capture: each pen-down/up is tracked as its
 // own stroke, so a single accidental touch can be undone without wiping the
 // whole signature. resize() must be called after the containing modal
@@ -2476,6 +2486,13 @@ function openProject(id){
   $("taskSelectModeBtn").classList.remove("btn-navy");
   $("taskSelectAllRow").style.display = "none";
   $("taskSelectToolbar").style.display = (isAdmin || isVerifiedStaff) ? "flex" : "none";
+  // Always reopen on the Active view — Archived (approved) tasks are a
+  // deliberate extra step to reach, not the default landing view.
+  projectTaskViewMode = "active";
+  $("projectTaskViewChips").style.display = (isAdmin || isVerifiedStaff) ? "flex" : "none";
+  $("projectTaskViewChips").querySelectorAll(".chip").forEach(c=>{
+    c.classList.toggle("active", c.getAttribute("data-task-view")==="active");
+  });
   renderCurrentProjectTasks();
   updateTaskSelectionLabel();
   // Admin assigns tasks with the Task/Location/Unit Number/Staff Name
@@ -2484,6 +2501,17 @@ function openProject(id){
   $("addProjectTaskBtn").style.display = "inline-block";
   showModal("projectTasksModal");
 }
+
+$("projectTaskViewChips").querySelectorAll(".chip").forEach(chip=>{
+  chip.addEventListener("click", ()=>{
+    projectTaskViewMode = chip.getAttribute("data-task-view");
+    $("projectTaskViewChips").querySelectorAll(".chip").forEach(c=>c.classList.toggle("active", c===chip));
+    // Selection state doesn't carry meaning across views.
+    selectedProjectTaskIds.clear();
+    updateTaskSelectionLabel();
+    renderCurrentProjectTasks();
+  });
+});
 
 function getProjectTaskValue(task,col){
   if(Object.prototype.hasOwnProperty.call(task,col.key)) return task[col.key] ?? "";
@@ -2496,9 +2524,28 @@ function renderCurrentProjectTasks(){
   if(!list || !currentProjectId) return;
   const canManageTasks = isAdmin || isVerifiedStaff;
   const allTasks = allProjectTasks.filter(t=>t.projectId===currentProjectId);
-  const tasks = canManageTasks ? allTasks : allTasks.filter(t=>t.status !== "approved");
+  // Approved tasks move to a separate "Archived" view for admin/verified
+  // staff, out of the way of the day-to-day pending/rejected list, with a
+  // "Call back" button there to pull one back to Pending if needed. Staff
+  // without manage rights never see approved tasks at all (unchanged).
+  let tasks;
+  if(canManageTasks){
+    tasks = projectTaskViewMode === "archived"
+      ? allTasks.filter(t=>t.status==="approved")
+      : allTasks.filter(t=>t.status!=="approved");
+  } else {
+    tasks = allTasks.filter(t=>t.status !== "approved");
+  }
   if(tasks.length===0){
-    list.innerHTML = allTasks.length ? '<div class="meta" style="padding:15px 0;">All tasks in this project have been approved.</div>' : '<div class="meta" style="padding:15px 0;">No tasks added yet.</div>';
+    let emptyMsg;
+    if(!allTasks.length){
+      emptyMsg = "No tasks added yet.";
+    } else if(canManageTasks && projectTaskViewMode === "archived"){
+      emptyMsg = "No archived (approved) tasks yet.";
+    } else {
+      emptyMsg = "All tasks in this project have been approved.";
+    }
+    list.innerHTML = `<div class="meta" style="padding:15px 0;">${emptyMsg}</div>`;
     return;
   }
   list.innerHTML = tasks.map(t=>{
@@ -2521,6 +2568,9 @@ function renderCurrentProjectTasks(){
     // (including a verified staff member) the same way.
     const assignedByAdmin=taskNameCol && String(getProjectTaskValue(t,taskNameCol)||"").trim();
     const showAddJobDetails=!isAdmin && staffCols.length && (t.status==="rejected" || (assignedByAdmin && !hasStaffValue));
+    // A task admin assigned isn't ready for review until staff has actually
+    // filled in Job Details — until then there's nothing to Approve/Reject.
+    const awaitingJobDetails = assignedByAdmin && !hasStaffValue && t.status!=="rejected" && t.status!=="approved";
     const staffNameCol=projectColumns.find(c=>c.key==="staffName");
     const assignedStaffName=staffNameCol ? String(getProjectTaskValue(t,staffNameCol)||"").trim() : "";
     let statusBadge;
@@ -2541,22 +2591,33 @@ function renderCurrentProjectTasks(){
     // time mislabeled as a completion time.
     const completedTs = hasStaffValue ? (t.completedAt || t.createdAt) : null;
     const completedLine = completedTs ? `<div class="detail-row"><b>Job completed:</b> ${escapeHtml(fmtDate(completedTs))}</div>` : "";
-    // A rejection note is the admin/reviewer's message telling the staff
-    // member what to fix — shown prominently since it's actionable. An
-    // approval note is just a friendly comment, shown more quietly.
+    const assignedByLine = (assignedByAdmin && t.createdByName)
+      ? `<div class="detail-row"><b>Assigned by:</b> ${escapeHtml(t.createdByName)}</div>` : "";
+    // A rejection note is the reviewer's message telling the staff member
+    // what to fix — shown prominently since it's actionable. An approval
+    // note is just a friendly comment, shown more quietly. Each is
+    // attributed to whoever actually made the call, not just the shared
+    // admin login.
+    const approvedByLine = (t.status==="approved" && t.approvedByName)
+      ? `<div class="detail-row"><b>Approved by:</b> ${escapeHtml(t.approvedByName)}</div>` : "";
+    const rejectedByLine = (t.status==="rejected" && t.rejectedByName)
+      ? `<div class="detail-row" style="color:#b91c1c;"><b>Rejected by:</b> ${escapeHtml(t.rejectedByName)}</div>` : "";
     const rejectionNoteLine = (t.status==="rejected" && t.rejectionNote)
-      ? `<div class="detail-row" style="color:#b91c1c;"><b>Note from admin:</b> ${escapeHtml(t.rejectionNote)}</div>` : "";
+      ? `<div class="detail-row" style="color:#b91c1c;"><b>Note:</b> ${escapeHtml(t.rejectionNote)}</div>` : "";
     const approvalNoteLine = (t.status==="approved" && t.approvalNote)
       ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(t.approvalNote)}</div>` : "";
-    // Approve / Reject / Revert are available to admin AND a verified staff
-    // member (email-verified against the admin's authorized list). Edit and
-    // Delete stay admin-only, always.
+    // Approve / Reject / Call back are available to admin AND a verified
+    // staff member (email-verified against the admin's authorized list).
+    // Edit and Delete stay admin-only, always.
     let taskActionButtons = "";
     if(canManageTasks){
       if(t.status === "approved"){
-        taskActionButtons = `<button class="btn btn-light revert-project-task" data-task-id="${t.id}">Revert to Pending</button>`;
+        taskActionButtons = `<button class="btn btn-light revert-project-task" data-task-id="${t.id}">Call back</button>`;
       } else if(t.status === "rejected"){
         taskActionButtons = `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button><button class="btn btn-light revert-project-task" data-task-id="${t.id}">Mark Pending</button>`;
+      } else if(awaitingJobDetails){
+        // Nothing to review yet — staff hasn't filled in Job Details.
+        taskActionButtons = "";
       } else {
         taskActionButtons = `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button><button class="btn btn-red reject-project-task" data-task-id="${t.id}">Reject</button>`;
       }
@@ -2573,6 +2634,9 @@ function renderCurrentProjectTasks(){
         <p class="card-title">${escapeHtml(String(title||"Untitled task"))}</p>
         ${rows}
         ${completedLine}
+        ${assignedByLine}
+        ${approvedByLine}
+        ${rejectedByLine}
         ${rejectionNoteLine}
         ${approvalNoteLine}
         <div style="margin-top:8px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
@@ -2596,7 +2660,7 @@ function renderCurrentProjectTasks(){
     e.stopPropagation(); if(!isAdmin && !isVerifiedStaff) return;
     if(!confirm("Move this task back to Pending approval?")) return;
     const id=btn.getAttribute("data-task-id"); btn.disabled=true;
-    try{ await updateDoc(doc(db,"projecttasks",id),{status:"pending",approvedBy:null,approvedAt:null,rejectedBy:null,rejectedAt:null,rating:null,approvalNote:null,rejectionNote:null}); }
+    try{ await updateDoc(doc(db,"projecttasks",id),{status:"pending",approvedBy:null,approvedAt:null,approvedByName:null,rejectedBy:null,rejectedAt:null,rejectedByName:null,rating:null,approvalNote:null,rejectionNote:null}); }
     catch(err){ console.error(err); alert("Could not update task. Check your connection and try again."); btn.disabled=false; }
   }));
   list.querySelectorAll(".edit-project-task").forEach(btn=>btn.addEventListener("click",e=>{e.stopPropagation();openEditProjectTask(btn.getAttribute("data-task-id"));}));
@@ -2669,6 +2733,7 @@ let pendingDecisionType = null; // "approve" | "reject"
 function openTaskDecisionNoteModal(id, type){
   pendingDecisionTaskId = id;
   pendingDecisionType = type;
+  $("taskDecisionNoteName").value = "";
   $("taskDecisionNoteInput").value = "";
   $("taskDecisionNoteError").textContent = "";
   if(type === "reject"){
@@ -2691,13 +2756,20 @@ $("taskDecisionNoteConfirmBtn").addEventListener("click", async ()=>{
   if(!pendingDecisionTaskId || !pendingDecisionType) { hideModal("taskDecisionNoteModal"); return; }
   const id = pendingDecisionTaskId;
   const type = pendingDecisionType;
+  const reviewerName = $("taskDecisionNoteName").value.trim();
   const note = $("taskDecisionNoteInput").value.trim();
+  $("taskDecisionNoteError").textContent = "";
+  if(!reviewerName){
+    $("taskDecisionNoteError").textContent = "Please enter your name.";
+    return;
+  }
   $("taskDecisionNoteConfirmBtn").disabled = true;
   try{
     if(type === "approve"){
       await updateDoc(doc(db,"projecttasks",id),{
         status:"approved", approvedBy:currentUser.email||null, approvedAt:serverTimestamp(),
-        rejectedBy:null, rejectedAt:null, rejectionNote:null,
+        approvedByName: reviewerName,
+        rejectedBy:null, rejectedAt:null, rejectionNote:null, rejectedByName:null,
         approvalNote: note || null
       });
       hideModal("taskDecisionNoteModal");
@@ -2706,6 +2778,7 @@ $("taskDecisionNoteConfirmBtn").addEventListener("click", async ()=>{
     } else {
       await updateDoc(doc(db,"projecttasks",id),{
         status:"rejected", rejectedBy:currentUser.email||null, rejectedAt:serverTimestamp(),
+        rejectedByName: reviewerName,
         rejectionNote: note || null
       });
       hideModal("taskDecisionNoteModal");
@@ -2757,6 +2830,17 @@ $("saveTaskRatingBtn").addEventListener("click", async ()=>{
 function renderProjectTaskFields(values={}, mode="admin"){
   const box=$("projectTaskDynamicFields"); if(!box) return;
   currentTaskFormMode = mode;
+  // Admin (or a verified staff member) assigning/editing a task via this
+  // form is asked to confirm their own name, since the login itself is a
+  // single shared account and doesn't identify who actually took the
+  // action. Not asked when staff are just filling in their own Job
+  // Details or creating their own task — that's already attributed to
+  // their own Staff Name field.
+  const showAdminName = (mode === "admin" || mode === "adminEditFull");
+  $("projectTaskAdminNameField").style.display = showAdminName ? "block" : "none";
+  if(showAdminName){
+    $("projectTaskAdminName").value = "";
+  }
   // "staffCreate" is used when staff add a brand-new task themselves — same
   // fields as before this admin/staff split existed, minus the admin-only
   // "Task" (taskName) field, which staff don't need to set.
@@ -2913,15 +2997,30 @@ $("saveProjectTaskBtn").addEventListener("click",async()=>{
   const values=collectProjectTaskValues();
   const missing=currentTaskFormColumns.filter(c=>c.required && !String(values[c.key]||"").trim());
   $("projectTaskError").textContent="";
+  const needsAdminName = (currentTaskFormMode === "admin" || currentTaskFormMode === "adminEditFull");
+  const adminName = needsAdminName ? $("projectTaskAdminName").value.trim() : "";
+  if(needsAdminName && !adminName){$("projectTaskError").textContent="Please enter your name.";return;}
   if(missing.length){$("projectTaskError").textContent=`Please fill: ${missing.map(c=>c.label).join(", ")}.`;return;}
   $("saveProjectTaskBtn").disabled=true;
   try{
-    const payload={projectId:currentProjectId,projectName:currentProjectName,status:"pending",updatedAt:serverTimestamp()};
+    const payload={projectId:currentProjectId,projectName:currentProjectName,updatedAt:serverTimestamp()};
     currentTaskFormColumns.forEach(c=>payload[c.key]=values[c.key]||null);
+    if(!editingProjectTaskId || currentTaskFormMode==="staff"){
+      // New tasks always start at Pending. Staff filling in / resubmitting
+      // Job Details also always goes back to Pending for review (and the
+      // Firestore rule requires this). Only an admin editing the
+      // assignment fields on an already-reviewed task should NOT have its
+      // review status silently reset.
+      payload.status="pending";
+    }
     if(currentTaskFormMode==="staff"){
       // Staff just filled in / resubmitted Job Details — record this as the
       // job completion time, taken from the staff's save, not admin review.
       payload.completedAt=serverTimestamp();
+    }
+    if(needsAdminName){
+      payload.updatedByName = adminName;
+      if(!editingProjectTaskId) payload.createdByName = adminName;
     }
     if(editingProjectTaskId){
       await updateDoc(doc(db,"projecttasks",editingProjectTaskId),{...payload,updatedBy:currentUser.email||null});
@@ -2954,7 +3053,7 @@ $("fab").addEventListener("click", async ()=>{
   }
   if(activeTab === "work"){
     editingWorkId = null;
-    $("workModalTitle").textContent = "New work report";
+    $("workModalTitle").textContent = "New service action report";
     $("workNewFieldsSection").style.display = "block";
     $("workEditSummary").style.display = "none";
     ["workSite","workLocation","workReportedBy","workProblem","workRectification","workMaterial","workClosedBy","workClientName"].forEach(id=> $(id).value = "");
@@ -3421,7 +3520,7 @@ function generateSnagPdf(items, siteFilterValue, fromValue, toValue){
 $("workExportBtn").addEventListener("click", ()=>{
   if(workSelectMode && selectedWorkIds.size > 0){
     const items = allWorkReports.filter(s=> selectedWorkIds.has(s.id));
-    if(items.length === 0){ alert("No work reports selected."); return; }
+    if(items.length === 0){ alert("No service action reports selected."); return; }
     generateWorkPdf(items);
     return;
   }
@@ -3463,7 +3562,7 @@ function updateWorkPdfCount(){
 
 $("workPdfGenerateBtn").addEventListener("click", ()=>{
   const items = getWorkPdfFiltered();
-  if(items.length === 0){ alert("No work reports match this filter."); return; }
+  if(items.length === 0){ alert("No service action reports match this filter."); return; }
   generateWorkPdf(items, $("workPdfSite").value, $("workPdfFrom").value, $("workPdfTo").value);
   hideModal("workExportModal");
 });
@@ -3475,7 +3574,7 @@ function generateWorkPdf(items, siteFilterValue, fromValue, toValue){
   let y = 50;
 
   pdf.setFontSize(16);
-  pdf.text("SAJ Work Report", marginL, y); y += 18;
+  pdf.text("SAJ Service Action Report", marginL, y); y += 18;
   pdf.setFontSize(9);
   pdf.setTextColor(120);
   pdf.text(`Generated ${new Date().toLocaleString("en-GB")} — ${items.length} record(s)`, marginL, y);
@@ -3552,7 +3651,7 @@ function generateWorkPdf(items, siteFilterValue, fromValue, toValue){
     pdf.line(marginL, y - 8, marginR, y - 8);
   });
 
-  pdf.save(buildPdfFilename("SAJ_Work_Report", items, siteFilterValue, fromValue, toValue, "createdAt"));
+  pdf.save(buildPdfFilename("SAJ_Service_Action_Report", items, siteFilterValue, fromValue, toValue, "createdAt"));
 }
 </script>
 </body>
