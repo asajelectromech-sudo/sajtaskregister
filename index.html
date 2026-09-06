@@ -489,9 +489,35 @@
       <button class="btn btn-light" id="addProjectColumnBtn" style="width:100%;">+ Add Column</button>
     </div>
     <div class="hint">Add, rename, reorder, or delete Project Report columns. Required columns are checked when a task is saved.</div>
+    <div class="section-label">Data Backup</div>
+    <div class="hint">Download a full snapshot of everything in the app (snags, service action reports, projects, tasks, staff list, settings) as one JSON file. It doesn't restore automatically — keep it somewhere safe (your computer, Google Drive) so you have something to rebuild from if data is ever lost.</div>
+    <div class="modal-actions" style="margin-top:4px;">
+      <button class="btn btn-light" id="downloadBackupBtn" style="width:100%;">Download backup (JSON)</button>
+    </div>
+    <div class="hint" style="margin-top:10px;">Restoring writes data from a backup file back into the live database. It adds back anything the file contains (overwriting the current version of any document with the same ID) — it does <b>not</b> delete anything that already exists but isn't in the file. Use this to recover lost items, not to fully reset the app to an old state.</div>
+    <input type="file" id="restoreBackupFileInput" accept="application/json" style="display:none;" />
+    <div class="modal-actions" style="margin-top:4px;">
+      <button class="btn btn-light" id="restoreBackupBtn" style="width:100%;">Restore from backup…</button>
+    </div>
+    <div class="error-text" id="backupError"></div>
     <div class="error-text" id="appSettingsError"></div>
     <div class="modal-actions">
       <button class="btn btn-primary" id="saveAppSettingsBtn" style="width:100%;">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="restoreConfirmModal">
+  <div class="modal">
+    <h2>Confirm restore</h2>
+    <div class="hint" id="restoreConfirmSummary"></div>
+    <div class="hint" style="color:#b91c1c;"><b>This will overwrite any current document that shares an ID with one in the file, and cannot be undone.</b> It will not delete anything that isn't in the file.</div>
+    <div class="field"><label>Type RESTORE to confirm</label><input type="text" id="restoreConfirmInput" placeholder="RESTORE" /></div>
+    <div class="error-text" id="restoreConfirmError"></div>
+    <div id="restoreProgress" class="hint" style="display:none;"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" id="restoreConfirmCancelBtn">Cancel</button>
+      <button class="btn btn-red" id="restoreConfirmBtn">Restore</button>
     </div>
   </div>
 </div>
@@ -600,7 +626,7 @@ import {
   GoogleAuthProvider, signInWithPopup
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDoc, getDocs, setDoc, onSnapshot, query, orderBy, serverTimestamp
+  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDoc, getDocs, setDoc, onSnapshot, query, orderBy, serverTimestamp, Timestamp
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 // ---------- CONFIG ----------
@@ -1003,6 +1029,155 @@ $("saveAppSettingsBtn").addEventListener("click", async ()=>{
     $("appSettingsError").textContent = "Could not save. Check your connection and try again.";
   }
   $("saveAppSettingsBtn").disabled = false;
+});
+
+// ---------- FULL DATA BACKUP (manual JSON export, admin only) ----------
+// Firestore Timestamp fields don't stringify to anything readable on their
+// own — convert every Timestamp (recursively, including inside arrays) to
+// a plain ISO date string first so the exported JSON is actually useful if
+// you ever need to read or rebuild from it by hand.
+function serializeForBackup(value){
+  if(value === null || value === undefined) return value;
+  if(typeof value === "object" && typeof value.toDate === "function"){
+    try{ return value.toDate().toISOString(); }catch(e){ return value; }
+  }
+  if(Array.isArray(value)) return value.map(serializeForBackup);
+  if(typeof value === "object"){
+    const out = {};
+    Object.keys(value).forEach(k=>{ out[k] = serializeForBackup(value[k]); });
+    return out;
+  }
+  return value;
+}
+
+$("downloadBackupBtn").addEventListener("click", async ()=>{
+  if(!isAdmin) return;
+  $("backupError").textContent = "";
+  $("downloadBackupBtn").disabled = true;
+  $("downloadBackupBtn").textContent = "Preparing backup…";
+  try{
+    const collectionNames = [
+      "snags","workreports","projects","projecttasks",
+      "authorizedStaff","staffAccessRequests","staffLogins","settings"
+    ];
+    const backup = {};
+    for(const name of collectionNames){
+      const snap = await getDocs(collection(db, name));
+      backup[name] = snap.docs.map(d => ({ id: d.id, ...serializeForBackup(d.data()) }));
+    }
+    const payload = { exportedAt: new Date().toISOString(), app: "SAJ Task Register", data: backup };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `SAJ_TaskRegister_Backup_${fmtDateOnly(new Date())}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }catch(err){
+    console.error(err);
+    $("backupError").textContent = `Could not create backup (${err.code || err.message || "unknown error"}).`;
+  }
+  $("downloadBackupBtn").disabled = false;
+  $("downloadBackupBtn").textContent = "Download backup (JSON)";
+});
+
+// ---------- RESTORE FROM BACKUP (admin only, guarded) ----------
+// Only these keys get converted back from the plain ISO strings the backup
+// stores into real Firestore Timestamps — an explicit allow-list rather
+// than guessing from string shape, so an ordinary text field that happens
+// to look date-like is never misinterpreted.
+const BACKUP_TIMESTAMP_FIELDS = new Set([
+  "createdAt","updatedAt","closedAt","completedAt","approvedAt","rejectedAt",
+  "ratedAt","requestedAt","verifiedAt"
+]);
+function deserializeForRestore(value, key){
+  if(value === null || value === undefined) return value;
+  if(Array.isArray(value)) return value.map(v=>deserializeForRestore(v));
+  if(typeof value === "object") return value; // Timestamp-like fields are plain ISO strings, not nested objects, in our backups
+  if(BACKUP_TIMESTAMP_FIELDS.has(key) && typeof value === "string"){
+    const d = new Date(value);
+    if(!isNaN(d.getTime())) return Timestamp.fromDate(d);
+  }
+  return value;
+}
+
+let pendingRestoreData = null;
+
+$("restoreBackupBtn").addEventListener("click", ()=>{
+  if(!isAdmin) return;
+  $("restoreBackupFileInput").value = "";
+  $("restoreBackupFileInput").click();
+});
+
+$("restoreBackupFileInput").addEventListener("change", async (e)=>{
+  const file = e.target.files && e.target.files[0];
+  if(!file) return;
+  $("backupError").textContent = "";
+  try{
+    const text = await file.text();
+    const parsed = JSON.parse(text);
+    if(!parsed || typeof parsed.data !== "object"){
+      $("backupError").textContent = "This doesn't look like a valid backup file.";
+      return;
+    }
+    pendingRestoreData = parsed.data;
+    const counts = Object.entries(pendingRestoreData)
+      .map(([name, docs]) => `${Array.isArray(docs) ? docs.length : 0} ${name}`)
+      .join(", ");
+    $("restoreConfirmSummary").textContent =
+      `This file was exported ${parsed.exportedAt ? fmtDate(new Date(parsed.exportedAt)) : "at an unknown time"} and contains: ${counts || "no data"}.`;
+    $("restoreConfirmInput").value = "";
+    $("restoreConfirmError").textContent = "";
+    $("restoreProgress").style.display = "none";
+    $("restoreConfirmBtn").disabled = false;
+    showModal("restoreConfirmModal");
+  }catch(err){
+    console.error(err);
+    $("backupError").textContent = "Could not read that file — make sure it's a backup JSON file downloaded from this app.";
+  }
+});
+
+$("restoreConfirmCancelBtn").addEventListener("click", ()=>{
+  pendingRestoreData = null;
+  hideModal("restoreConfirmModal");
+});
+
+$("restoreConfirmBtn").addEventListener("click", async ()=>{
+  if(!isAdmin || !pendingRestoreData) { hideModal("restoreConfirmModal"); return; }
+  $("restoreConfirmError").textContent = "";
+  if($("restoreConfirmInput").value.trim() !== "RESTORE"){
+    $("restoreConfirmError").textContent = 'Type RESTORE (all caps) exactly to confirm.';
+    return;
+  }
+  $("restoreConfirmBtn").disabled = true;
+  $("restoreProgress").style.display = "block";
+  try{
+    const collectionNames = Object.keys(pendingRestoreData);
+    let done = 0;
+    const total = collectionNames.reduce((sum, name) => sum + (Array.isArray(pendingRestoreData[name]) ? pendingRestoreData[name].length : 0), 0);
+    for(const name of collectionNames){
+      const docs = pendingRestoreData[name];
+      if(!Array.isArray(docs)) continue;
+      for(const d of docs){
+        if(!d || !d.id) continue;
+        const { id, ...fields } = d;
+        const restored = {};
+        Object.keys(fields).forEach(k => { restored[k] = deserializeForRestore(fields[k], k); });
+        await setDoc(doc(db, name, id), restored);
+        done++;
+        $("restoreProgress").textContent = `Restoring… ${done}/${total}`;
+      }
+    }
+    $("restoreProgress").textContent = `Done — restored ${done} document(s).`;
+    pendingRestoreData = null;
+    setTimeout(()=> hideModal("restoreConfirmModal"), 1200);
+  }catch(err){
+    console.error(err);
+    $("restoreConfirmError").textContent = `Restore stopped partway through (${err.code || err.message || "unknown error"}). Some documents may already be restored — check your data before retrying.`;
+  }
+  $("restoreConfirmBtn").disabled = false;
 });
 
 // ---------- STAFF ACCESS ADMIN PANEL (admin only) ----------
