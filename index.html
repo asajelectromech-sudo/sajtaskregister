@@ -82,6 +82,15 @@
   #fab{position:fixed;right:18px;bottom:18px;width:56px;height:56px;border-radius:50%;background:var(--amber);color:#fff;font-size:28px;border:none;box-shadow:0 4px 12px rgba(0,0,0,.25);cursor:pointer;z-index:15;display:none;align-items:center;justify-content:center;}
   .modal-overlay{position:fixed;inset:0;background:rgba(10,20,30,.55);display:none;align-items:flex-end;justify-content:center;z-index:150;}
   .modal-overlay.show{display:flex;}
+  /* Confirmation-style modals (delete confirm, restore confirm, approve/reject
+     note, rating) can be triggered from within another already-open modal
+     (Staff Access, Project Tasks, App Settings, etc). All modal-overlays
+     share the same z-index, so with equal stacking, later DOM order wins —
+     which made these render BEHIND whichever modal opened them, depending
+     on their position in the file. Giving them a dedicated higher tier
+     means they always land on top regardless of DOM order or which modal
+     triggered them. */
+  .modal-overlay.modal-overlay-top{z-index:250;}
   .modal{background:#fff;width:100%;max-width:520px;max-height:92vh;overflow-y:auto;border-radius:16px 16px 0 0;padding:18px;}
   @media(min-width:600px){ .modal-overlay{align-items:center;} .modal{border-radius:16px;} }
   .modal h2{font-size:16px;margin:0 0 14px;}
@@ -267,7 +276,7 @@
   </div>
 </div>
 
-<div class="modal-overlay" id="taskRatingModal">
+<div class="modal-overlay modal-overlay-top" id="taskRatingModal">
   <div class="modal">
     <h2>Rate this task</h2>
     <p class="hint" id="taskRatingHint"></p>
@@ -277,7 +286,7 @@
   </div>
 </div>
 
-<div class="modal-overlay" id="taskDecisionNoteModal">
+<div class="modal-overlay modal-overlay-top" id="taskDecisionNoteModal">
   <div class="modal">
     <h2 id="taskDecisionNoteTitle">Approve task</h2>
     <p class="hint" id="taskDecisionNoteHint">Add an optional note — the staff member will see it on this task.</p>
@@ -515,7 +524,7 @@
   </div>
 </div>
 
-<div class="modal-overlay" id="deleteConfirmModal">
+<div class="modal-overlay modal-overlay-top" id="deleteConfirmModal">
   <div class="modal">
     <h2>Confirm delete</h2>
     <div class="hint" id="deleteConfirmMessage"></div>
@@ -528,7 +537,7 @@
   </div>
 </div>
 
-<div class="modal-overlay" id="restoreConfirmModal">
+<div class="modal-overlay modal-overlay-top" id="restoreConfirmModal">
   <div class="modal">
     <h2>Confirm restore</h2>
     <div class="hint" id="restoreConfirmSummary"></div>
@@ -544,6 +553,23 @@
 </div>
 
 <!-- VERIFY EMAIL MODAL (non-admin staff verifying to unlock elevated actions) -->
+<!-- Lightweight Google verification before creating a Service Action Report.
+     Unlike the staff "Verify email" flow, this does NOT check an approval
+     list and does NOT grant any elevated permissions — it only confirms a
+     real Google account so the report can be attributed to someone, rather
+     than any anonymous visitor being able to submit as any typed name. -->
+<div class="modal-overlay" id="workVerifyModal">
+  <div class="modal">
+    <button class="close-x" data-close="workVerifyModal">&times;</button>
+    <h2>Verify your Google account</h2>
+    <div class="hint">Quickly sign in with Google before creating a Service Action Report — this just confirms who's submitting it. No admin approval is needed, and this doesn't change what you can do in the app.</div>
+    <div class="error-text" id="workVerifyError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="workVerifyGoogleBtn" style="width:100%;">Continue with Google</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="verifyEmailModal">
   <div class="modal">
     <button class="close-x" data-close="verifyEmailModal">&times;</button>
@@ -647,7 +673,7 @@ import {
   GoogleAuthProvider, signInWithPopup, EmailAuthProvider, linkWithCredential, updatePassword
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDoc, getDocs, setDoc, onSnapshot, query, orderBy, serverTimestamp, Timestamp
+  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDoc, getDocs, setDoc, onSnapshot, query, orderBy, serverTimestamp, Timestamp, arrayUnion
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 // ---------- CONFIG ----------
@@ -719,6 +745,12 @@ let selectedSnagIds = new Set();
 let workSelectMode = false;
 let selectedWorkIds = new Set();
 let editingWorkId = null;
+// Set right after a successful Google verification for a NEW Service Action
+// Report (see workVerifyGoogleBtn below); stamped onto the report at save
+// time. Not the same as currentUser.email — verification signs back out to
+// anonymous immediately after, so currentUser.email is no longer available
+// by the time the form is actually submitted.
+let verifiedWorkReportEmail = null;
 
 let appPassword = "";
 let appUnlocked = false;
@@ -834,14 +866,18 @@ onAuthStateChanged(auth, async (user)=>{
   isVerifiedStaff = !isAdmin && !user.isAnonymous && !!user.email && !!user.emailVerified;
 
   // Record a login event the first time we see a verified-staff session
-  // this page load, so the admin has a reference of who signed in when.
+  // this page load, so the admin has a reference of who signed in when —
+  // and for what (Snag Report / Project Report), so the log isn't just an
+  // undifferentiated list of emails.
   if(isVerifiedStaff && !loggedThisSession){
     loggedThisSession = true;
     try{
       await addDoc(collection(db, "staffLogins"), {
-        email: user.email, uid: user.uid, verifiedAt: serverTimestamp()
+        email: user.email, uid: user.uid, verifiedAt: serverTimestamp(),
+        action: pendingVerifyAction || "Verified Staff"
       });
     }catch(e){ console.error("Could not record staff login", e); }
+    pendingVerifyAction = null;
   }
 
   // Admins who sign in directly (email + password) always bypass the app
@@ -1415,7 +1451,7 @@ async function renderStaffLoginLog(){
     const rows = [];
     snap.forEach(d=> rows.push(d.data()));
     box.innerHTML = rows.slice(0, 50).map(r=>
-      `<div class="detail-row">${escapeHtml(r.email||"Unknown")} — ${escapeHtml(fmtDate(r.verifiedAt))}</div>`
+      `<div class="detail-row">${escapeHtml(r.email||"Unknown")} — <b>${escapeHtml(r.action||"Verified Staff")}</b> — ${escapeHtml(fmtDate(r.verifiedAt))}</div>`
     ).join("");
   }catch(err){
     console.error(err);
@@ -1729,6 +1765,7 @@ function openWorkDetail(id){
     <h2>${escapeHtml(s.site)} &middot; ${escapeHtml(s.location)} ${badge}</h2>
     <div class="detail-row"><b>Problem / task:</b> ${escapeHtml(s.problemTask||"")}</div>
     <div class="detail-row"><b>Reported by:</b> ${escapeHtml(s.reportedBy||"")}</div>
+    ${s.reportedByEmail ? `<div class="detail-row"><b>Verified:</b> ${escapeHtml(s.reportedByEmail)}</div>` : ""}
     <div class="detail-row"><b>Reported at:</b> ${fmtDate(s.createdAt)}</div>
     <div class="section-label">Before photos</div>
     ${photoGalleryHtml(s.beforePhotos)}
@@ -1918,6 +1955,7 @@ function openCompleteWorkModal(s){
     <div class="detail-row"><b>Site:</b> ${escapeHtml(s.site)}</div>
     <div class="detail-row"><b>Location:</b> ${escapeHtml(s.location)}</div>
     <div class="detail-row"><b>Reported by:</b> ${escapeHtml(s.reportedBy||"")}</div>
+    ${s.reportedByEmail ? `<div class="detail-row"><b>Verified:</b> ${escapeHtml(s.reportedByEmail)}</div>` : ""}
     <div class="detail-row"><b>Problem / task:</b> ${escapeHtml(s.problemTask||"")}</div>
   `;
   $("workRectification").value = s.rectification || "";
@@ -1981,7 +2019,7 @@ $("saveWorkBtn").addEventListener("click", async ()=>{
       await addDoc(collection(db, "workreports"), {
         site, location,
         reportedBy,
-        reportedByEmail: currentUser.email || null,
+        reportedByEmail: verifiedWorkReportEmail || null,
         problemTask,
         beforePhotos: workBeforePhotos.slice(),
         rectification: rectification || null,
@@ -1994,6 +2032,7 @@ $("saveWorkBtn").addEventListener("click", async ()=>{
         status: isComplete ? "complete" : "incomplete",
         createdAt: serverTimestamp()
       });
+      verifiedWorkReportEmail = null;
     }
     hideModal("newWorkModal");
   }catch(err){
@@ -2595,7 +2634,11 @@ function downloadProjectPdf(projectId, taskIdsFilter){
       const staffColsPdf = projectColumns.filter(c=>c.filledBy==="staff");
       const hasStaffValuePdf = staffColsPdf.some(c=>String(getProjectTaskValue(t,c)||"").trim());
       const completedTs = hasStaffValuePdf ? (t.completedAt || t.createdAt) : null;
-      if(completedTs) rows.push(`Job completed: ${fmtDate(completedTs)}`);
+      if(t.firstCompletedAt) rows.push(`First completed: ${fmtDate(t.firstCompletedAt)}`);
+      else if(completedTs) rows.push(`Job completed: ${fmtDate(completedTs)}`);
+      if(Array.isArray(t.resubmissions)){
+        t.resubmissions.forEach((ts,idx)=> rows.push(`Resubmitted${t.resubmissions.length>1?` (${idx+1})`:""}: ${fmtDate(ts)}`));
+      }
       if(t.status === "approved" && t.rating) rows.push(`Rating: ${t.rating}/5`);
       rows.forEach(row=>{
         const wrapped=pdf.splitTextToSize(row, 515);
@@ -2847,6 +2890,22 @@ function taskMatchesArchiveSearch(t){
   return true;
 }
 
+// Returns exactly the tasks currently visible in the Project Tasks list —
+// respecting the Active/Archived toggle and, within Archived, the keyword/
+// date search. Used both for rendering and for "Select all", so selecting
+// all only ever selects what's actually on screen, not the whole project.
+function getVisibleProjectTasks(){
+  const canManageTasks = isAdmin || isVerifiedStaff;
+  const allTasks = allProjectTasks.filter(t=>t.projectId===currentProjectId);
+  if(canManageTasks){
+    if(projectTaskViewMode === "archived"){
+      return allTasks.filter(t=>t.status==="approved").filter(taskMatchesArchiveSearch);
+    }
+    return allTasks.filter(t=>t.status!=="approved");
+  }
+  return allTasks.filter(t=>t.status !== "approved");
+}
+
 function renderCurrentProjectTasks(){
   const list = $("projectTasksList");
   if(!list || !currentProjectId) return;
@@ -2856,19 +2915,9 @@ function renderCurrentProjectTasks(){
   // staff, out of the way of the day-to-day pending/rejected list, with a
   // "Call back" button there to pull one back to Pending if needed. Staff
   // without manage rights never see approved tasks at all (unchanged).
-  let tasks;
-  let archivedTotal = 0;
-  if(canManageTasks){
-    if(projectTaskViewMode === "archived"){
-      const archived = allTasks.filter(t=>t.status==="approved");
-      archivedTotal = archived.length;
-      tasks = archived.filter(taskMatchesArchiveSearch);
-    } else {
-      tasks = allTasks.filter(t=>t.status!=="approved");
-    }
-  } else {
-    tasks = allTasks.filter(t=>t.status !== "approved");
-  }
+  const tasks = getVisibleProjectTasks();
+  const archivedTotal = (canManageTasks && projectTaskViewMode === "archived")
+    ? allTasks.filter(t=>t.status==="approved").length : 0;
   if(tasks.length===0){
     let emptyMsg;
     if(!allTasks.length){
@@ -2921,11 +2970,20 @@ function renderCurrentProjectTasks(){
       statusBadge = '<span class="badge badge-open">Pending approval</span>';
     }
     const ratingBadge = t.rating ? `<span class="badge badge-closed">${"★".repeat(t.rating)}${"☆".repeat(5-t.rating)} (${t.rating}/5)</span>` : "";
-    // Only show "Job completed" once Job Details has actually been filled
+    // Only show a completion time once Job Details has actually been filled
     // in — otherwise this would just be showing the assignment/creation
-    // time mislabeled as a completion time.
+    // time mislabeled as a completion time. firstCompletedAt/resubmissions
+    // are never overwritten or removed, so the full history stays visible
+    // across however many reject/resubmit cycles a task goes through.
+    // Older tasks saved before this existed fall back to the plain "Job
+    // completed" line so nothing already recorded appears to disappear.
     const completedTs = hasStaffValue ? (t.completedAt || t.createdAt) : null;
-    const completedLine = completedTs ? `<div class="detail-row"><b>Job completed:</b> ${escapeHtml(fmtDate(completedTs))}</div>` : "";
+    const completedLine = t.firstCompletedAt
+      ? `<div class="detail-row"><b>First completed:</b> ${escapeHtml(fmtDate(t.firstCompletedAt))}</div>`
+      : (completedTs ? `<div class="detail-row"><b>Job completed:</b> ${escapeHtml(fmtDate(completedTs))}</div>` : "");
+    const resubmissionLines = Array.isArray(t.resubmissions) && t.resubmissions.length
+      ? t.resubmissions.map((ts,i)=>`<div class="detail-row"><b>Resubmitted${t.resubmissions.length>1?` (${i+1})`:""}:</b> ${escapeHtml(fmtDate(ts))}</div>`).join("")
+      : "";
     const assignedByLine = (assignedByAdmin && t.createdByName)
       ? `<div class="detail-row"><b>Assigned by:</b> ${escapeHtml(t.createdByName)}</div>` : "";
     // A rejection note is the reviewer's message telling the staff member
@@ -2969,6 +3027,7 @@ function renderCurrentProjectTasks(){
         <p class="card-title">${escapeHtml(String(title||"Untitled task"))}</p>
         ${rows}
         ${completedLine}
+        ${resubmissionLines}
         ${assignedByLine}
         ${approvedByLine}
         ${rejectedByLine}
@@ -2978,7 +3037,7 @@ function renderCurrentProjectTasks(){
           ${statusBadge}
           ${ratingBadge}
           ${taskActionButtons}
-          ${showAddJobDetails ? `<button class="btn btn-light fill-job-details" data-task-id="${t.id}">${t.status==="rejected" ? "Resubmit Job Details" : (hasStaffValue ? "Update Job Details" : "Add Job Details")}</button>` : ""}
+          ${showAddJobDetails ? `<button class="btn btn-light fill-job-details" data-task-id="${t.id}">${t.status==="rejected" ? "Resubmit / Edit Task" : (hasStaffValue ? "Update Job Details" : "Add Job Details")}</button>` : ""}
         </div>
       </div></div>`;
   }).join("");
@@ -3028,7 +3087,7 @@ $("taskSelectModeBtn").addEventListener("click", ()=>{
   updateTaskSelectionLabel();
 });
 $("selectAllTasksBtn").addEventListener("click", ()=>{
-  allProjectTasks.filter(t=>t.projectId===currentProjectId).forEach(t=> selectedProjectTaskIds.add(t.id));
+  getVisibleProjectTasks().forEach(t=> selectedProjectTaskIds.add(t.id));
   renderCurrentProjectTasks();
   updateTaskSelectionLabel();
 });
@@ -3179,9 +3238,14 @@ function renderProjectTaskFields(values={}, mode="admin"){
   // "staffCreate" is used when staff add a brand-new task themselves — same
   // fields as before this admin/staff split existed, minus the admin-only
   // "Task" (taskName) field, which staff don't need to set.
+  // "staffResubmit" is used when correcting a REJECTED task — every column
+  // is editable, since the mistake causing rejection might be in
+  // Location/Unit Number/Staff Name, not just Job Details.
   currentTaskFormColumns = (mode==="staffCreate" || mode==="adminEditFull")
     ? projectColumns.filter(c=>c.key!=="taskName")
-    : projectColumns.filter(c => mode==="staff" ? c.filledBy==="staff" : c.filledBy!=="staff");
+    : mode==="staffResubmit"
+      ? projectColumns
+      : projectColumns.filter(c => mode==="staff" ? c.filledBy==="staff" : c.filledBy!=="staff");
   if(!currentTaskFormColumns.length){
     box.innerHTML='<div class="hint" style="padding:8px 0;">No fields configured for this form.</div>';
     return;
@@ -3289,12 +3353,17 @@ function openFillJobDetails(id){
   if(!isRejected){
     if(!assignedByAdmin || hasStaffValue) return;
   }
+  // A rejected task might have been rejected because of a mistake in
+  // Location/Unit Number/Staff Name, not just Job Details — so resubmitting
+  // opens every column for editing, not just the Job Details field.
+  const formCols = isRejected ? projectColumns : cols;
+  const mode = isRejected ? "staffResubmit" : "staff";
   const values={};
-  cols.forEach(c=>values[c.key]=getProjectTaskValue(t,c));
+  formCols.forEach(c=>values[c.key]=getProjectTaskValue(t,c));
   editingProjectTaskId=id;
   $("projectTaskError").textContent="";
-  renderProjectTaskFields(values, "staff");
-  $("newProjectTaskTitle").textContent=isRejected ? "Resubmit Job Details" : "Job Details";
+  renderProjectTaskFields(values, mode);
+  $("newProjectTaskTitle").textContent=isRejected ? "Resubmit / Edit Task" : "Job Details";
   $("saveProjectTaskBtn").textContent="Save";
   showModal("newProjectTaskModal");
 }
@@ -3340,7 +3409,7 @@ $("saveProjectTaskBtn").addEventListener("click",async()=>{
   try{
     const payload={projectId:currentProjectId,projectName:currentProjectName,updatedAt:serverTimestamp()};
     currentTaskFormColumns.forEach(c=>payload[c.key]=values[c.key]||null);
-    if(!editingProjectTaskId || currentTaskFormMode==="staff"){
+    if(!editingProjectTaskId || currentTaskFormMode==="staff" || currentTaskFormMode==="staffResubmit"){
       // New tasks always start at Pending. Staff filling in / resubmitting
       // Job Details also always goes back to Pending for review (and the
       // Firestore rule requires this). Only an admin editing the
@@ -3348,10 +3417,24 @@ $("saveProjectTaskBtn").addEventListener("click",async()=>{
       // review status silently reset.
       payload.status="pending";
     }
-    if(currentTaskFormMode==="staff"){
+    if(currentTaskFormMode==="staff" || currentTaskFormMode==="staffResubmit"){
       // Staff just filled in / resubmitted Job Details — record this as the
       // job completion time, taken from the staff's save, not admin review.
       payload.completedAt=serverTimestamp();
+      // Keep a permanent record of the very first completion time (set
+      // once, never overwritten) plus every subsequent resubmission time
+      // after a rejection — nothing here is ever deleted, so the full
+      // history stays available for later reference even after several
+      // reject/resubmit cycles.
+      const existingTask = editingProjectTaskId ? allProjectTasks.find(t=>t.id===editingProjectTaskId) : null;
+      if(!existingTask || !existingTask.firstCompletedAt){
+        payload.firstCompletedAt=serverTimestamp();
+      }
+      if(currentTaskFormMode==="staffResubmit"){
+        // serverTimestamp() sentinels aren't allowed inside arrayUnion — use
+        // a client-generated Timestamp instead for history entries.
+        payload.resubmissions=arrayUnion(Timestamp.fromDate(new Date()));
+      }
     }
     if(needsAdminName){
       payload.updatedByName = adminName;
@@ -3367,13 +3450,78 @@ $("saveProjectTaskBtn").addEventListener("click",async()=>{
   $("saveProjectTaskBtn").disabled=false;
 });
 
+// Which section prompted the staff to verify — recorded on the login log
+// entry so the admin's Staff Access history shows e.g. "Snag Report" or
+// "Project Report" rather than just an undifferentiated login.
+let pendingVerifyAction = null;
+
 function openVerifyEmailModal(){
+  pendingVerifyAction = activeTab === "projects" ? "Project Report"
+    : activeTab === "snags" ? "Snag Report" : "Verified Staff";
   $("verifyEmailError").textContent = "";
   $("verifyEmailRequestAccessBtn").style.display = "none";
   $("verifyEmailRequestStep").style.display = "block";
   $("verifyEmailRequestedStep").style.display = "none";
   showModal("verifyEmailModal");
 }
+
+function openNewWorkReportForm(){
+  editingWorkId = null;
+  $("workModalTitle").textContent = "New service action report";
+  $("workNewFieldsSection").style.display = "block";
+  $("workEditSummary").style.display = "none";
+  ["workSite","workLocation","workReportedBy","workProblem","workRectification","workMaterial","workClosedBy","workClientName"].forEach(id=> $(id).value = "");
+  $("workClientChecked").checked = false;
+  $("newWorkError").textContent = "";
+  workBeforePhotos.length = 0;
+  workAfterPhotos.length = 0;
+  workBeforeCamHandle.reset();
+  workAfterCamHandle.reset();
+  workClientSignatureUrl = null;
+  renderSignaturePreview("work");
+  updateSaveWorkBtn();
+  showModal("newWorkModal");
+}
+
+// Unlike the staff "Verify email" flow, this never checks an approval list
+// and never grants elevated permissions — it exists purely so a Service
+// Action Report can be attributed to a real Google account rather than
+// letting any anonymous visitor submit one under any typed name. Signs
+// back out to anonymous immediately after, so it can't accidentally leave
+// someone with staff-level UI showing.
+$("workVerifyGoogleBtn").addEventListener("click", async ()=>{
+  $("workVerifyError").textContent = "";
+  $("workVerifyGoogleBtn").disabled = true;
+  try{
+    const result = await signInWithPopup(auth, googleProvider);
+    const email = (result.user.email || "").toLowerCase();
+    if(!email){
+      $("workVerifyError").textContent = "Could not read an email address from that Google account.";
+      await signOut(auth);
+      $("workVerifyGoogleBtn").disabled = false;
+      return;
+    }
+    // Log this for the admin's Staff Access reference before signing back
+    // out — the staffLogins create rule requires the write to happen while
+    // still signed in as that exact account.
+    try{
+      await addDoc(collection(db, "staffLogins"), {
+        email, uid: result.user.uid, verifiedAt: serverTimestamp(),
+        action: "Service Action Report"
+      });
+    }catch(e){ console.error("Could not record service action report verification", e); }
+    await signOut(auth);
+    verifiedWorkReportEmail = email;
+    hideModal("workVerifyModal");
+    openNewWorkReportForm();
+  }catch(err){
+    console.error("Google verification failed", err);
+    if(err.code !== "auth/popup-closed-by-user" && err.code !== "auth/cancelled-popup-request"){
+      $("workVerifyError").textContent = `Could not verify (${err.code || err.message || "unknown error"}).`;
+    }
+  }
+  $("workVerifyGoogleBtn").disabled = false;
+});
 
 $("fab").addEventListener("click", async ()=>{
   if(activeTab === "projects"){
@@ -3387,21 +3535,8 @@ $("fab").addEventListener("click", async ()=>{
     return;
   }
   if(activeTab === "work"){
-    editingWorkId = null;
-    $("workModalTitle").textContent = "New service action report";
-    $("workNewFieldsSection").style.display = "block";
-    $("workEditSummary").style.display = "none";
-    ["workSite","workLocation","workReportedBy","workProblem","workRectification","workMaterial","workClosedBy","workClientName"].forEach(id=> $(id).value = "");
-    $("workClientChecked").checked = false;
-    $("newWorkError").textContent = "";
-    workBeforePhotos.length = 0;
-    workAfterPhotos.length = 0;
-    workBeforeCamHandle.reset();
-    workAfterCamHandle.reset();
-    workClientSignatureUrl = null;
-    renderSignaturePreview("work");
-    updateSaveWorkBtn();
-    showModal("newWorkModal");
+    $("workVerifyError").textContent = "";
+    showModal("workVerifyModal");
     return;
   }
 
