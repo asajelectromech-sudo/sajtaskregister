@@ -235,6 +235,11 @@
       <button class="chip active" data-task-view="active">Active</button>
       <button class="chip" data-task-view="archived">Archived</button>
     </div>
+    <div class="toolbar" id="archiveSearchRow" style="display:none;">
+      <input type="text" id="archiveSearchInput" placeholder="Search any keyword…" style="flex:1;min-width:140px;" />
+      <input type="date" id="archiveSearchDate" title="Filter to a specific date (leave blank for any date)" />
+      <button class="btn btn-light" id="archiveSearchClearBtn">Clear</button>
+    </div>
     <div class="toolbar" id="taskSelectToolbar" style="display:none;">
       <button class="btn btn-light" id="taskSelectModeBtn">Select</button>
       <button class="btn btn-light" id="taskExportBtn">Export PDF</button>
@@ -642,6 +647,8 @@ let currentTaskFormMode = "admin"; // which form is currently open: "admin" | "s
 let taskSelectMode = false;
 let selectedProjectTaskIds = new Set();
 let projectTaskViewMode = "active"; // "active" | "archived" (approved tasks)
+let archiveSearchQuery = ""; // keyword filter, Archived view only
+let archiveSearchDate = ""; // "yyyy-mm-dd" or "" for any date, Archived view only
 let ratingTaskId = null;
 let selectedTaskRating = 0;
 // Each column has a "filledBy" of "admin" or "staff". Admin fills in the
@@ -2489,6 +2496,11 @@ function openProject(id){
   // Always reopen on the Active view — Archived (approved) tasks are a
   // deliberate extra step to reach, not the default landing view.
   projectTaskViewMode = "active";
+  archiveSearchQuery = "";
+  archiveSearchDate = "";
+  $("archiveSearchInput").value = "";
+  $("archiveSearchDate").value = "";
+  $("archiveSearchRow").style.display = "none";
   $("projectTaskViewChips").style.display = (isAdmin || isVerifiedStaff) ? "flex" : "none";
   $("projectTaskViewChips").querySelectorAll(".chip").forEach(c=>{
     c.classList.toggle("active", c.getAttribute("data-task-view")==="active");
@@ -2506,6 +2518,13 @@ $("projectTaskViewChips").querySelectorAll(".chip").forEach(chip=>{
   chip.addEventListener("click", ()=>{
     projectTaskViewMode = chip.getAttribute("data-task-view");
     $("projectTaskViewChips").querySelectorAll(".chip").forEach(c=>c.classList.toggle("active", c===chip));
+    // The search box only applies within Archived — reset it whenever
+    // switching views so a stale filter doesn't silently hide Active tasks.
+    archiveSearchQuery = "";
+    archiveSearchDate = "";
+    $("archiveSearchInput").value = "";
+    $("archiveSearchDate").value = "";
+    $("archiveSearchRow").style.display = projectTaskViewMode === "archived" ? "flex" : "none";
     // Selection state doesn't carry meaning across views.
     selectedProjectTaskIds.clear();
     updateTaskSelectionLabel();
@@ -2513,10 +2532,47 @@ $("projectTaskViewChips").querySelectorAll(".chip").forEach(chip=>{
   });
 });
 
+$("archiveSearchInput").addEventListener("input", ()=>{
+  archiveSearchQuery = $("archiveSearchInput").value.trim().toLowerCase();
+  renderCurrentProjectTasks();
+});
+$("archiveSearchDate").addEventListener("change", ()=>{
+  archiveSearchDate = $("archiveSearchDate").value;
+  renderCurrentProjectTasks();
+});
+$("archiveSearchClearBtn").addEventListener("click", ()=>{
+  archiveSearchQuery = "";
+  archiveSearchDate = "";
+  $("archiveSearchInput").value = "";
+  $("archiveSearchDate").value = "";
+  renderCurrentProjectTasks();
+});
+
 function getProjectTaskValue(task,col){
   if(Object.prototype.hasOwnProperty.call(task,col.key)) return task[col.key] ?? "";
   if(task.customFields && Object.prototype.hasOwnProperty.call(task.customFields,col.key)) return task.customFields[col.key] ?? "";
   return "";
+}
+
+// Keyword matches any field value on the task (all column values, plus any
+// admin/staff names and notes) — not just the visible title. Date matches
+// the day the task was approved; leaving the date blank means "any date".
+function taskMatchesArchiveSearch(t){
+  if(archiveSearchQuery){
+    const parts=[];
+    projectColumns.forEach(c=>{
+      const v=getProjectTaskValue(t,c);
+      if(v) parts.push(String(v));
+    });
+    [t.approvalNote,t.approvedByName,t.createdByName,t.updatedByName].forEach(v=>{ if(v) parts.push(String(v)); });
+    const haystack = parts.join(" ").toLowerCase();
+    if(!haystack.includes(archiveSearchQuery)) return false;
+  }
+  if(archiveSearchDate){
+    const relevantTs = t.approvedAt || t.completedAt || t.createdAt;
+    if(!relevantTs || fmtDateOnly(relevantTs) !== archiveSearchDate) return false;
+  }
+  return true;
 }
 
 function renderCurrentProjectTasks(){
@@ -2529,10 +2585,15 @@ function renderCurrentProjectTasks(){
   // "Call back" button there to pull one back to Pending if needed. Staff
   // without manage rights never see approved tasks at all (unchanged).
   let tasks;
+  let archivedTotal = 0;
   if(canManageTasks){
-    tasks = projectTaskViewMode === "archived"
-      ? allTasks.filter(t=>t.status==="approved")
-      : allTasks.filter(t=>t.status!=="approved");
+    if(projectTaskViewMode === "archived"){
+      const archived = allTasks.filter(t=>t.status==="approved");
+      archivedTotal = archived.length;
+      tasks = archived.filter(taskMatchesArchiveSearch);
+    } else {
+      tasks = allTasks.filter(t=>t.status!=="approved");
+    }
   } else {
     tasks = allTasks.filter(t=>t.status !== "approved");
   }
@@ -2541,7 +2602,9 @@ function renderCurrentProjectTasks(){
     if(!allTasks.length){
       emptyMsg = "No tasks added yet.";
     } else if(canManageTasks && projectTaskViewMode === "archived"){
-      emptyMsg = "No archived (approved) tasks yet.";
+      emptyMsg = archivedTotal > 0
+        ? "No archived tasks match your search."
+        : "No archived (approved) tasks yet.";
     } else {
       emptyMsg = "All tasks in this project have been approved.";
     }
