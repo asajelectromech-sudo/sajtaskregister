@@ -489,6 +489,14 @@
       <button class="btn btn-light" id="addProjectColumnBtn" style="width:100%;">+ Add Column</button>
     </div>
     <div class="hint">Add, rename, reorder, or delete Project Report columns. Required columns are checked when a task is saved.</div>
+    <div class="section-label">Admin Password</div>
+    <div class="hint">Set or update a password for your admin account (<b id="adminPasswordForEmail"></b>) so "Admin sign in" works as a backup alongside Google Sign-In. If you've never set one (or aren't sure), just set one here now.</div>
+    <div class="field"><label>New password</label><input type="password" id="adminNewPassword" placeholder="At least 6 characters" /></div>
+    <div class="field"><label>Confirm password</label><input type="password" id="adminNewPasswordConfirm" placeholder="Retype password" /></div>
+    <div class="error-text" id="adminPasswordError"></div>
+    <div class="modal-actions" style="margin-top:4px;">
+      <button class="btn btn-light" id="setAdminPasswordBtn" style="width:100%;">Set / update password</button>
+    </div>
     <div class="section-label">Data Backup</div>
     <div class="hint">Download a full snapshot of everything in the app (snags, service action reports, projects, tasks, staff list, settings) as one JSON file. It doesn't restore automatically — keep it somewhere safe (your computer, Google Drive) so you have something to rebuild from if data is ever lost.</div>
     <div class="modal-actions" style="margin-top:4px;">
@@ -636,7 +644,7 @@
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
   getAuth, signInAnonymously, signInWithEmailAndPassword, onAuthStateChanged, signOut,
-  GoogleAuthProvider, signInWithPopup
+  GoogleAuthProvider, signInWithPopup, EmailAuthProvider, linkWithCredential, updatePassword
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
   getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDoc, getDocs, setDoc, onSnapshot, query, orderBy, serverTimestamp, Timestamp
@@ -924,6 +932,11 @@ function renderAuthBox(){
       $("appSettingsPassword").value = appPassword || "";
       renderProjectColumnsSettings();
       $("appSettingsError").textContent = "";
+      $("adminPasswordForEmail").textContent = currentUser.email || "";
+      $("adminNewPassword").value = "";
+      $("adminNewPasswordConfirm").value = "";
+      $("adminPasswordError").textContent = "";
+      $("adminPasswordError").style.color = "";
       showModal("appSettingsModal");
     });
   } else if(isVerifiedStaff){
@@ -1076,6 +1089,42 @@ $("saveAppSettingsBtn").addEventListener("click", async ()=>{
     $("appSettingsError").textContent = "Could not save. Check your connection and try again.";
   }
   $("saveAppSettingsBtn").disabled = false;
+});
+
+// ---------- ADMIN PASSWORD (backup sign-in alongside Google) ----------
+// Some admin accounts only ever have a Google credential attached (e.g. if
+// "Admin sign in" was never actually used, or the account was created via
+// Google first) — attempting email/password sign-in on such an account
+// fails with auth/invalid-credential because there's simply no password to
+// check against, not because the typed password is wrong. This lets the
+// currently signed-in admin attach (or change) a password credential on
+// their own account, whichever provider(s) it already has.
+$("setAdminPasswordBtn").addEventListener("click", async ()=>{
+  if(!isAdmin || !currentUser) return;
+  const pw1 = $("adminNewPassword").value;
+  const pw2 = $("adminNewPasswordConfirm").value;
+  $("adminPasswordError").style.color = "";
+  $("adminPasswordError").textContent = "";
+  if(pw1.length < 6){ $("adminPasswordError").textContent = "Password must be at least 6 characters."; return; }
+  if(pw1 !== pw2){ $("adminPasswordError").textContent = "Passwords don't match."; return; }
+  $("setAdminPasswordBtn").disabled = true;
+  try{
+    const hasPasswordProvider = currentUser.providerData.some(p => p.providerId === "password");
+    if(hasPasswordProvider){
+      await updatePassword(currentUser, pw1);
+    } else {
+      await linkWithCredential(currentUser, EmailAuthProvider.credential(currentUser.email, pw1));
+    }
+    $("adminNewPassword").value = "";
+    $("adminNewPasswordConfirm").value = "";
+    $("adminPasswordError").style.color = "#15803d";
+    $("adminPasswordError").textContent = `Password saved. "Admin sign in" now works with ${currentUser.email} and this password.`;
+  }catch(err){
+    console.error(err);
+    $("adminPasswordError").style.color = "";
+    $("adminPasswordError").textContent = `Could not save password (${err.code || err.message || "unknown error"}).`;
+  }
+  $("setAdminPasswordBtn").disabled = false;
 });
 
 // ---------- FULL DATA BACKUP (manual JSON export, admin only) ----------
