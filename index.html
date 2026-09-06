@@ -507,6 +507,19 @@
   </div>
 </div>
 
+<div class="modal-overlay" id="deleteConfirmModal">
+  <div class="modal">
+    <h2>Confirm delete</h2>
+    <div class="hint" id="deleteConfirmMessage"></div>
+    <div class="field"><label>Type delete to confirm</label><input type="text" id="deleteConfirmInput" placeholder="delete" /></div>
+    <div class="error-text" id="deleteConfirmError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" id="deleteConfirmCancelBtn">Cancel</button>
+      <button class="btn btn-red" id="deleteConfirmBtn">Delete</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="restoreConfirmModal">
   <div class="modal">
     <h2>Confirm restore</h2>
@@ -712,6 +725,40 @@ function hideModal(id){
 document.querySelectorAll("[data-close]").forEach(btn=>{
   btn.addEventListener("click", ()=> hideModal(btn.getAttribute("data-close")));
 });
+
+// Every delete anywhere in the app routes through this — a plain OK/Cancel
+// confirm() is too easy to click through by habit. Typing the word "delete"
+// forces a deliberate pause. Returns a Promise<boolean>: true only if the
+// person actually typed it and pressed Delete; false for Cancel or a wrong
+// word (after showing an inline error so they can just try again).
+function confirmDelete(message){
+  return new Promise((resolve)=>{
+    $("deleteConfirmMessage").textContent = message;
+    $("deleteConfirmInput").value = "";
+    $("deleteConfirmError").textContent = "";
+    showModal("deleteConfirmModal");
+    const cleanup = ()=>{
+      $("deleteConfirmBtn").removeEventListener("click", onConfirm);
+      $("deleteConfirmCancelBtn").removeEventListener("click", onCancel);
+    };
+    const onConfirm = ()=>{
+      if($("deleteConfirmInput").value.trim().toLowerCase() !== "delete"){
+        $("deleteConfirmError").textContent = 'Type "delete" to confirm.';
+        return;
+      }
+      cleanup();
+      hideModal("deleteConfirmModal");
+      resolve(true);
+    };
+    const onCancel = ()=>{
+      cleanup();
+      hideModal("deleteConfirmModal");
+      resolve(false);
+    };
+    $("deleteConfirmBtn").addEventListener("click", onConfirm);
+    $("deleteConfirmCancelBtn").addEventListener("click", onCancel);
+  });
+}
 
 function fmtDate(ts){
   if(!ts) return "just now";
@@ -990,10 +1037,10 @@ function moveProjectColumn(key,delta){
   renderProjectColumnsSettings();
 }
 
-function deleteProjectColumn(key){
+async function deleteProjectColumn(key){
   const col=projectColumns.find(c=>c.key===key);
   if(!col) return;
-  if(!confirm(`Delete the column "${col.label}"? Existing values in this column will remain in old task records but the column will no longer be shown.`)) return;
+  if(!(await confirmDelete(`Delete the column "${col.label}"? Existing values in this column will remain in old task records but the column will no longer be shown.`))) return;
   projectColumns=projectColumns.filter(c=>c.key!==key);
   renderProjectColumnsSettings();
 }
@@ -1233,7 +1280,7 @@ async function renderStaffAccessRequests(){
       }
     }));
     box.querySelectorAll(".dismiss-staff-request").forEach(btn=>btn.addEventListener("click", async ()=>{
-      if(!confirm("Dismiss this request without adding the email?")) return;
+      if(!(await confirmDelete("Dismiss this request without adding the email?"))) return;
       btn.disabled = true;
       try{
         await deleteDoc(doc(db, "staffAccessRequests", btn.getAttribute("data-email-id")));
@@ -1269,7 +1316,7 @@ async function renderStaffEmailList(){
       </div>
     `).join("");
     box.querySelectorAll(".remove-staff-email").forEach(btn=>btn.addEventListener("click", async ()=>{
-      if(!confirm("Remove this email? They'll need to be re-added before they can verify again.")) return;
+      if(!(await confirmDelete("Remove this email? They'll need to be re-added before they can verify again."))) return;
       btn.disabled = true;
       try{
         await deleteDoc(doc(db, "authorizedStaff", btn.getAttribute("data-email-id")));
@@ -1412,7 +1459,7 @@ $("clearSnagsBtn").addEventListener("click", ()=>{
 });
 $("deleteSelectedSnagsBtn").addEventListener("click", async ()=>{
   if(!isAdmin || selectedSnagIds.size === 0) return;
-  if(!confirm(`Delete ${selectedSnagIds.size} selected snag(s)? This cannot be undone.`)) return;
+  if(!(await confirmDelete(`Delete ${selectedSnagIds.size} selected snag(s)? This cannot be undone.`))) return;
   $("deleteSelectedSnagsBtn").disabled = true;
   try{
     await Promise.all(Array.from(selectedSnagIds).map(id=> deleteDoc(doc(db, "snags", id))));
@@ -1550,7 +1597,7 @@ $("clearWorkBtn").addEventListener("click", ()=>{
 });
 $("deleteSelectedWorkBtn").addEventListener("click", async ()=>{
   if(!isAdmin || selectedWorkIds.size === 0) return;
-  if(!confirm(`Delete ${selectedWorkIds.size} selected service action report(s)? This cannot be undone.`)) return;
+  if(!(await confirmDelete(`Delete ${selectedWorkIds.size} selected service action report(s)? This cannot be undone.`))) return;
   $("deleteSelectedWorkBtn").disabled = true;
   try{
     await Promise.all(Array.from(selectedWorkIds).map(id=> deleteDoc(doc(db, "workreports", id))));
@@ -1691,7 +1738,7 @@ function openWorkDetail(id){
     const delBtn = document.getElementById("deleteWorkBtn");
     if(delBtn){
       delBtn.addEventListener("click", async ()=>{
-        if(!confirm(`Delete this service action report (${s.site} — ${s.location})? This cannot be undone.`)) return;
+        if(!(await confirmDelete(`Delete this service action report (${s.site} — ${s.location})? This cannot be undone.`))) return;
         delBtn.disabled = true;
         delBtn.textContent = "Deleting…";
         try{
@@ -2905,7 +2952,7 @@ function renderCurrentProjectTasks(){
   list.querySelectorAll(".fill-job-details").forEach(btn=>btn.addEventListener("click",e=>{e.stopPropagation();openFillJobDetails(btn.getAttribute("data-task-id"));}));
   list.querySelectorAll(".delete-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
     e.stopPropagation(); if(!isAdmin) return;
-    const id=btn.getAttribute("data-task-id"); if(!confirm("Delete this project task?")) return;
+    const id=btn.getAttribute("data-task-id"); if(!(await confirmDelete("Delete this project task?"))) return;
     try{await deleteDoc(doc(db,"projecttasks",id));}catch(err){console.error(err);alert("Could not delete task.");}
   }));
   list.querySelectorAll(".task-check").forEach(cb=>cb.addEventListener("change",e=>{
@@ -2942,7 +2989,7 @@ $("clearTasksBtn").addEventListener("click", ()=>{
 });
 $("deleteSelectedTasksBtn").addEventListener("click", async ()=>{
   if(!isAdmin || selectedProjectTaskIds.size === 0) return;
-  if(!confirm(`Delete ${selectedProjectTaskIds.size} selected task(s)? This cannot be undone.`)) return;
+  if(!(await confirmDelete(`Delete ${selectedProjectTaskIds.size} selected task(s)? This cannot be undone.`))) return;
   $("deleteSelectedTasksBtn").disabled = true;
   try{
     await Promise.all(Array.from(selectedProjectTaskIds).map(id=> deleteDoc(doc(db,"projecttasks",id))));
@@ -3137,7 +3184,7 @@ $("saveEditProjectBtn").addEventListener("click",async()=>{
 async function deleteProject(id){
   if(!isAdmin) return;
   const p=allProjects.find(x=>x.id===id);
-  if(!p || !confirm(`Delete project "${p.name||"Project"}" and all of its tasks? This cannot be undone.`)) return;
+  if(!p || !(await confirmDelete(`Delete project "${p.name||"Project"}" and all of its tasks? This cannot be undone.`))) return;
   try{
     const tasks=allProjectTasks.filter(t=>t.projectId===id);
     await Promise.all(tasks.map(t=>deleteDoc(doc(db,"projecttasks",t.id))));
@@ -3515,7 +3562,7 @@ function openDetail(id){
     const delBtn = document.getElementById("deleteSnagBtn");
     if(delBtn){
       delBtn.addEventListener("click", async ()=>{
-        if(!confirm(`Delete this snag record (${s.site} — ${s.location})? This cannot be undone.`)) return;
+        if(!(await confirmDelete(`Delete this snag record (${s.site} — ${s.location})? This cannot be undone.`))) return;
         delBtn.disabled = true;
         delBtn.textContent = "Deleting…";
         try{
