@@ -1384,7 +1384,8 @@ $("loginSubmit").addEventListener("click", async ()=>{
     hideModal("loginModal");
     $("loginEmail").value = ""; $("loginPassword").value = "";
   }catch(err){
-    $("loginError").textContent = "Sign in failed. Check email/password.";
+    console.error("Admin sign-in failed", err);
+    $("loginError").textContent = `Sign in failed (${err.code || err.message || "unknown error"}).`;
   }
 });
 
