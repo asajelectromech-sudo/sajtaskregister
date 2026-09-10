@@ -275,7 +275,7 @@
       <button class="btn btn-red" id="deleteSelectedTasksBtn" style="display:none;">Delete selected</button>
     </div>
     <div id="projectTasksList"></div>
-    <div class="modal-actions"><button class="btn btn-light" data-close="projectTasksModal">Close</button><button class="btn btn-primary" id="addProjectTaskBtn">+ Add Task</button></div>
+    <div class="modal-actions"><button class="btn btn-light" data-close="projectTasksModal">Close</button></div>
   </div>
 </div>
 
@@ -2854,10 +2854,8 @@ function openProject(id){
   });
   renderCurrentProjectTasks();
   updateTaskSelectionLabel();
-  // Admin assigns tasks with the Task/Location/Unit Number/Staff Name
-  // fields. Staff can also add a task themselves from here (all fields),
-  // and separately fill in Job Details on any task via its own button.
-  $("addProjectTaskBtn").style.display = "inline-block";
+  // Task creation from Project Reports is handled only by the bottom-right
+  // + button. There is no separate + Add Task button inside this project modal.
   showModal("projectTasksModal");
 }
 
@@ -3477,20 +3475,6 @@ $("saveProjectBtn").addEventListener("click",async()=>{
   try{await addDoc(collection(db,"projects"),{name,status:"active",createdBy:currentUser.email||null,createdByUid:currentUser.uid,createdAt:serverTimestamp()});hideModal("newProjectModal");}
   catch(err){console.error(err);$("projectError").textContent = isAdmin ? "Could not save project. Check your connection and try again." : "Could not save project. Your verification may have expired — verify your email again and retry.";}
   $("saveProjectBtn").disabled=false;
-});
-
-$("addProjectTaskBtn").addEventListener("click",()=>{
-  editingProjectTaskId=null;
-  $("projectTaskError").textContent="";
-  if(isAdmin || isVerifiedStaff){
-    renderProjectTaskFields({}, "admin");
-    $("newProjectTaskTitle").textContent="Assign Task";
-  }else{
-    renderProjectTaskFields({}, "staffCreate");
-    $("newProjectTaskTitle").textContent="Add Task";
-  }
-  $("saveProjectTaskBtn").textContent="Save";
-  showModal("newProjectTaskModal");
 });
 
 $("saveProjectTaskBtn").addEventListener("click",async()=>{
