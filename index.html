@@ -225,7 +225,7 @@
   </div>
 </main>
 
-<button id="fab" title="Add new">+</button>
+<button id="fab" title="Add task to project" aria-label="Add task to project">+</button>
 
 <!-- PROJECT REPORT MODALS -->
 <div class="modal-overlay" id="newProjectModal">
@@ -237,8 +237,24 @@
   </div>
 </div>
 
+<!-- QUICK ADD TASK: opened by the Project Reports + button for every signed-in user,
+     including anonymous users. The user first chooses an available project. -->
+<div class="modal-overlay" id="projectTaskProjectSelectModal">
+  <div class="modal">
+    <button class="close-x" data-close="projectTaskProjectSelectModal">&times;</button>
+    <h2>Add Task to Project</h2>
+    <div class="hint">Select the project where you want to add the task.</div>
+    <div id="projectTaskProjectSelectList" style="margin-top:12px;"></div>
+    <div class="error-text" id="projectTaskProjectSelectError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" data-close="projectTaskProjectSelectModal">Cancel</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="projectTasksModal">
   <div class="modal">
+    <button class="close-x" data-close="projectTasksModal" aria-label="Close">&times;</button>
     <h2 id="projectTasksTitle">Project</h2>
     <div class="chips" id="projectTaskViewChips" style="display:none;">
       <button class="chip active" data-task-view="active">Active</button>
@@ -570,6 +586,23 @@
   </div>
 </div>
 
+<!-- GOOGLE VERIFICATION FOR USER PROJECT TASK ADD -->
+<!-- This is separate from elevated staff verification. It only confirms a
+     real Google account before the Project Reports + quick-add flow. It does
+     not check authorizedStaff, does not grant elevated permissions, and does
+     not require admin approval. The account is signed back out immediately. -->
+<div class="modal-overlay" id="projectTaskVerifyModal">
+  <div class="modal">
+    <button class="close-x" data-close="projectTaskVerifyModal">&times;</button>
+    <h2>Verify your Google account</h2>
+    <div class="hint">Sign in with Google before adding a task to a project. This only confirms that you are a real user. No admin approval is needed, and this does not give you admin or verified-staff access.</div>
+    <div class="error-text" id="projectTaskVerifyError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="projectTaskVerifyGoogleBtn" style="width:100%;">Continue with Google</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="verifyEmailModal">
   <div class="modal">
     <button class="close-x" data-close="verifyEmailModal">&times;</button>
@@ -751,7 +784,6 @@ let editingWorkId = null;
 // anonymous immediately after, so currentUser.email is no longer available
 // by the time the form is actually submitted.
 let verifiedWorkReportEmail = null;
-
 let appPassword = "";
 let appUnlocked = false;
 
@@ -2999,19 +3031,28 @@ function renderCurrentProjectTasks(){
       ? `<div class="detail-row" style="color:#b91c1c;"><b>Note:</b> ${escapeHtml(t.rejectionNote)}</div>` : "";
     const approvalNoteLine = (t.status==="approved" && t.approvalNote)
       ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(t.approvalNote)}</div>` : "";
-    // Approve / Reject / Call back are available to admin AND a verified
-    // staff member (email-verified against the admin's authorized list).
+    // ADMIN has final authority over EVERY project task, regardless of who
+    // created or assigned it. Admin must always be able to Approve / Reject
+    // a pending task (including tasks created by another verified user).
+    // The Job Details wait rule applies only to verified non-admin staff.
     // Edit and Delete stay admin-only, always.
     let taskActionButtons = "";
-    if(canManageTasks){
+    if(isAdmin){
       if(t.status === "approved"){
         taskActionButtons = `<button class="btn btn-light revert-project-task" data-task-id="${t.id}">Call back</button>`;
       } else if(t.status === "rejected"){
         taskActionButtons = `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button><button class="btn btn-light revert-project-task" data-task-id="${t.id}">Mark Pending</button>`;
-      } else if(awaitingJobDetails){
-        // Nothing to review yet — staff hasn't filled in Job Details.
-        taskActionButtons = "";
       } else {
+        // Admin can review ANY task immediately, even if another user
+        // created/assigned it and its staff fields are still incomplete.
+        taskActionButtons = `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button><button class="btn btn-red reject-project-task" data-task-id="${t.id}">Reject</button>`;
+      }
+    } else if(isVerifiedStaff){
+      if(t.status === "approved"){
+        taskActionButtons = `<button class="btn btn-light revert-project-task" data-task-id="${t.id}">Call back</button>`;
+      } else if(t.status === "rejected"){
+        taskActionButtons = `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button><button class="btn btn-light revert-project-task" data-task-id="${t.id}">Mark Pending</button>`;
+      } else if(!awaitingJobDetails){
         taskActionButtons = `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button><button class="btn btn-red reject-project-task" data-task-id="${t.id}">Reject</button>`;
       }
     }
@@ -3368,6 +3409,62 @@ function openFillJobDetails(id){
   showModal("newProjectTaskModal");
 }
 
+function openProjectTaskProjectSelector(){
+  if(!currentUser){
+    $("projectTaskProjectSelectError").textContent = "Please wait for the app to connect.";
+    showModal("projectTaskProjectSelectModal");
+    return;
+  }
+
+  const projects = visibleProjects();
+  const list = $("projectTaskProjectSelectList");
+  const error = $("projectTaskProjectSelectError");
+  error.textContent = "";
+
+  if(!projects.length){
+    list.innerHTML = `<div class="hint" style="padding:18px 4px;text-align:center;">No available projects yet.</div>`;
+    showModal("projectTaskProjectSelectModal");
+    return;
+  }
+
+  list.innerHTML = projects.map(p=>{
+    const taskCount = allProjectTasks.filter(t=>t.projectId===p.id && t.status!=="approved").length;
+    return `<button type="button" class="btn btn-light project-task-project-option"
+      data-project-id="${escapeHtml(p.id)}"
+      style="display:block;width:100%;text-align:left;margin-bottom:8px;padding:12px;">
+      <span style="display:block;font-weight:700;color:var(--text);">${escapeHtml(p.name||"Project")}</span>
+      <span style="display:block;font-size:11px;color:var(--text-muted);margin-top:3px;">${taskCount} active task(s)</span>
+    </button>`;
+  }).join("");
+
+  list.querySelectorAll(".project-task-project-option").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const id=btn.getAttribute("data-project-id");
+      const p=allProjects.find(x=>x.id===id);
+      if(!p) return;
+
+      currentProjectId=id;
+      currentProjectName=p.name||"Project";
+      $("projectTaskProjectSelectError").textContent="";
+      hideModal("projectTaskProjectSelectModal");
+
+      // This selector is reached only after the Project Reports + flow's
+      // Google identity check. The check is only for this USER Add Task action;
+      // it does not turn the user into verified staff or require admin approval.
+      // After verification the account was signed back out, so this continues
+      // through the normal anonymous user session.
+      editingProjectTaskId=null;
+      $("projectTaskError").textContent="";
+      renderProjectTaskFields({}, "staffCreate");
+      $("newProjectTaskTitle").textContent="Add Task";
+      $("saveProjectTaskBtn").textContent="Save";
+      showModal("newProjectTaskModal");
+    });
+  });
+
+  showModal("projectTaskProjectSelectModal");
+}
+
 $("newProjectBtn").addEventListener("click",()=>{
   $("projectNameInput").value=""; $("projectError").textContent=""; showModal("newProjectModal");
 });
@@ -3525,13 +3622,12 @@ $("workVerifyGoogleBtn").addEventListener("click", async ()=>{
 
 $("fab").addEventListener("click", async ()=>{
   if(activeTab === "projects"){
-    if(isAdmin || isVerifiedStaff){
-      $("projectNameInput").value="";
-      $("projectError").textContent="";
-      showModal("newProjectModal");
-    }else{
-      openVerifyEmailModal();
-    }
+    // Project Reports + is a USER quick "Add Task" action. It requires a
+    // one-time Google identity check like Service Action Reports, but this
+    // is NOT the elevated staff verification flow: no authorizedStaff check,
+    // no admin approval, and no admin/verified-staff permissions are granted.
+    $("projectTaskVerifyError").textContent = "";
+    showModal("projectTaskVerifyModal");
     return;
   }
   if(activeTab === "work"){
@@ -3555,6 +3651,40 @@ $("fab").addEventListener("click", async ()=>{
 // there's no daily quota to run into. Firebase already returns
 // emailVerified === true for Google accounts, so isVerifiedStaff (below)
 // and the isAuthorizedStaff() Firestore rule both work exactly as before.
+// Project Reports + quick-add Google check. This deliberately does NOT use
+authorizedStaff or isVerifiedStaff. After Google sign-in, immediately sign back
+out so the task remains a normal USER-created task, not an elevated/assigned
+staff task. No admin approval is involved.
+$("projectTaskVerifyGoogleBtn").addEventListener("click", async ()=>{
+  $("projectTaskVerifyError").textContent = "";
+  $("projectTaskVerifyGoogleBtn").disabled = true;
+  try{
+    const result = await signInWithPopup(auth, googleProvider);
+    const email = (result.user.email || "").toLowerCase();
+    if(!email){
+      $("projectTaskVerifyError").textContent = "Could not read an email address from that Google account.";
+      await signOut(auth);
+      $("projectTaskVerifyGoogleBtn").disabled = false;
+      return;
+    }
+    try{
+      await addDoc(collection(db, "staffLogins"), {
+        email, uid: result.user.uid, verifiedAt: serverTimestamp(),
+        action: "Project Add Task (user)"
+      });
+    }catch(e){ console.error("Could not record project add-task verification", e); }
+    await signOut(auth);
+    hideModal("projectTaskVerifyModal");
+    openProjectTaskProjectSelector();
+  }catch(err){
+    console.error("Project add-task Google verification failed", err);
+    if(err.code !== "auth/popup-closed-by-user" && err.code !== "auth/cancelled-popup-request"){
+      $("projectTaskVerifyError").textContent = `Could not verify (${err.code || err.message || "unknown error"}).`;
+    }
+  }
+  $("projectTaskVerifyGoogleBtn").disabled = false;
+});
+
 $("verifyGoogleBtn").addEventListener("click", async ()=>{
   $("verifyEmailError").textContent = "";
   $("verifyEmailRequestAccessBtn").style.display = "none";
