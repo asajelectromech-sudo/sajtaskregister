@@ -3652,9 +3652,9 @@ $("fab").addEventListener("click", async ()=>{
 // emailVerified === true for Google accounts, so isVerifiedStaff (below)
 // and the isAuthorizedStaff() Firestore rule both work exactly as before.
 // Project Reports + quick-add Google check. This deliberately does NOT use
-authorizedStaff or isVerifiedStaff. After Google sign-in, immediately sign back
-out so the task remains a normal USER-created task, not an elevated/assigned
-staff task. No admin approval is involved.
+// authorizedStaff or isVerifiedStaff. After Google sign-in, immediately sign back
+// out so the task remains a normal USER-created task, not an elevated/assigned
+// staff task. No admin approval is involved.
 $("projectTaskVerifyGoogleBtn").addEventListener("click", async ()=>{
   $("projectTaskVerifyError").textContent = "";
   $("projectTaskVerifyGoogleBtn").disabled = true;
