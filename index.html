@@ -3407,7 +3407,7 @@ function openFillJobDetails(id){
   showModal("newProjectTaskModal");
 }
 
-function openProjectTaskProjectSelector(){
+function openProjectTaskProjectSelector(createMode="staffCreate"){
   if(!currentUser){
     $("projectTaskProjectSelectError").textContent = "Please wait for the app to connect.";
     showModal("projectTaskProjectSelectModal");
@@ -3446,15 +3446,14 @@ function openProjectTaskProjectSelector(){
       $("projectTaskProjectSelectError").textContent="";
       hideModal("projectTaskProjectSelectModal");
 
-      // This selector is reached only after the Project Reports + flow's
-      // Google identity check. The check is only for this USER Add Task action;
-      // it does not turn the user into verified staff or require admin approval.
-      // After verification the account was signed back out, so this continues
-      // through the normal anonymous user session.
+      // Normal users arrive here after the Project Reports + Google identity
+      // check and use the ordinary USER-created task flow. Admins and
+      // admin-verified staff arrive here directly from the same + button and
+      // use the elevated assignment flow instead.
       editingProjectTaskId=null;
       $("projectTaskError").textContent="";
-      renderProjectTaskFields({}, "staffCreate");
-      $("newProjectTaskTitle").textContent="Add Task";
+      renderProjectTaskFields({}, createMode === "admin" ? "admin" : "staffCreate");
+      $("newProjectTaskTitle").textContent = createMode === "admin" ? "Assign Task" : "Add Task";
       $("saveProjectTaskBtn").textContent="Save";
       showModal("newProjectTaskModal");
     });
@@ -3606,12 +3605,18 @@ $("workVerifyGoogleBtn").addEventListener("click", async ()=>{
 
 $("fab").addEventListener("click", async ()=>{
   if(activeTab === "projects"){
-    // Project Reports + is a USER quick "Add Task" action. It requires a
-    // one-time Google identity check like Service Action Reports, but this
-    // is NOT the elevated staff verification flow: no authorizedStaff check,
-    // no admin approval, and no admin/verified-staff permissions are granted.
-    $("projectTaskVerifyError").textContent = "";
-    showModal("projectTaskVerifyModal");
+    // The same Project Reports + button serves two separate purposes:
+    // 1) Admin / admin-verified staff: assign a task directly, with no extra
+    //    Google verification because they already have elevated access.
+    // 2) Normal users: require the one-time Google identity check, then create
+    //    a normal USER task. This does NOT make them verified staff and does
+    //    NOT require admin approval.
+    if(isAdmin || isVerifiedStaff){
+      openProjectTaskProjectSelector("admin");
+    }else{
+      $("projectTaskVerifyError").textContent = "";
+      showModal("projectTaskVerifyModal");
+    }
     return;
   }
   if(activeTab === "work"){
@@ -3659,7 +3664,7 @@ $("projectTaskVerifyGoogleBtn").addEventListener("click", async ()=>{
     }catch(e){ console.error("Could not record project add-task verification", e); }
     await signOut(auth);
     hideModal("projectTaskVerifyModal");
-    openProjectTaskProjectSelector();
+    openProjectTaskProjectSelector("staffCreate");
   }catch(err){
     console.error("Project add-task Google verification failed", err);
     if(err.code !== "auth/popup-closed-by-user" && err.code !== "auth/cancelled-popup-request"){
