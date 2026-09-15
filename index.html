@@ -4380,6 +4380,45 @@ function prRenderPathSelectors(containerId,initial){
 $('prFillBtn').addEventListener('click',()=>{prRenderFill();$('prCompletionPanel').style.display='none';$('prCompletionBtn').textContent='Completion Report ▾';});$('prCompletionBtn').addEventListener('click',()=>{const panel=$('prCompletionPanel');const open=panel.style.display!=='none';if(open){panel.style.display='none';$('prCompletionBtn').textContent='Completion Report ▾';}else{prRenderCompletion();panel.style.display='block';$('prCompletionBtn').textContent='Completion Report ▴';}});
 $('prPdfBtn').addEventListener('click',()=>{const J=window.jspdf&&window.jspdf.jsPDF;if(!J){alert('PDF library is not loaded.');return;}const pdf=new J();let y=15;const line=t=>{if(y>280){pdf.addPage();y=15;}pdf.text(String(t),12,y);y+=6;};const c=prCounts();pdf.setFont('helvetica','bold');line(`Project Progress Report — ${prProjectName}`);pdf.setFont('helvetica','normal');line(`Completed: ${c.completed} | Progressing: ${c.progressing} | Pending: ${c.pending}`);function walk(nodes,path,depth){for(const n of(nodes||[])){const p=path.concat(n.id);line(' '.repeat(depth*3)+(prTree.levels[depth]?prTree.levels[depth].label+': ':'')+n.label);for(const j of prJobs.filter(j=>Array.isArray(j.pathIds)&&j.pathIds.length>=p.length&&p.every((v,i)=>j.pathIds[i]===v)))line(' '.repeat((depth+1)*3)+'JOB: '+j.jobLabel+' — '+(j.status||'pending')+(j.staffName?' — Staff: '+j.staffName:'')+(j.note?' — Note: '+j.note:''));walk(n.children||[],p,depth+1);}}walk(prTree.nodes,[],0);pdf.save('SAJ_Project_Progress_'+prProjectName.replace(/[^a-z0-9_-]+/gi,'_')+'.pdf');});
 
+
+// ---------- PROJECT PROGRESS CONFIGURATION WIRING ----------
+// This block restores the admin Customize button and the configuration
+// controls used by the current Progress Report markup.
+function prRefreshConfig(){
+  const levelBox=$('prLevelsEditor');
+  if(!levelBox) return;
+  const levels=prTree.levels||[];
+  levelBox.innerHTML=levels.map((lv,i)=>`<div class="card" style="margin:8px 0;"><div class="card-body" style="display:flex;gap:8px;align-items:center;"><input class="pr-level-name-edit" data-i="${i}" value="${prSafe(lv.label)}" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:8px"><button class="btn btn-light pr-level-up" data-i="${i}" ${i===0?'disabled':''}>↑</button><button class="btn btn-light pr-level-down" data-i="${i}" ${i===levels.length-1?'disabled':''}>↓</button>${levels.length>1?`<button class="btn btn-red pr-level-delete" data-i="${i}">Delete</button>`:''}</div></div>`).join('')||'<div class="hint">No levels configured.</div>';
+  levelBox.querySelectorAll('.pr-level-name-edit').forEach(el=>el.addEventListener('change',async()=>{const i=+el.dataset.i;const levels2=prTree.levels.slice();levels2[i]={...levels2[i],label:el.value.trim()||`Level ${i+1}`};await prSaveConfigTree({levels:levels2});}));
+  levelBox.querySelectorAll('.pr-level-delete').forEach(el=>el.addEventListener('click',async()=>{const i=+el.dataset.i;if(!confirm('Delete this level? Its options and related jobs may no longer be reachable.'))return;const levels2=prTree.levels.slice();levels2.splice(i,1);await prSaveConfigTree({levels:levels2});}));
+  levelBox.querySelectorAll('.pr-level-up').forEach(el=>el.addEventListener('click',async()=>{const i=+el.dataset.i;if(i<1)return;const a=prTree.levels.slice();[a[i-1],a[i]]=[a[i],a[i-1]];await prSaveConfigTree({levels:a});}));
+  levelBox.querySelectorAll('.pr-level-down').forEach(el=>el.addEventListener('click',async()=>{const i=+el.dataset.i;if(i>=prTree.levels.length-1)return;const a=prTree.levels.slice();[a[i],a[i+1]]=[a[i+1],a[i]];await prSaveConfigTree({levels:a});}));
+  prRenderPathSelectors('prOptionPathSelectors',[]);
+  prRenderPathSelectors('prJobPathSelectors',[]);
+}
+async function prSaveConfigTree(partial){
+  const next={...prTree,...partial};
+  try{await setDoc(doc(db,'progressTrees',prProjectId),{...next,projectId:prProjectId,updatedAt:serverTimestamp(),updatedBy:currentUser?.email||null},{merge:true});prTree=prNormalize(next);prRefreshConfig();prRenderFill();}
+  catch(e){console.error(e);$('prConfigError').textContent='Could not save configuration. Check Firebase rules and admin sign-in.';}
+}
+$('prCustomizeBtn').addEventListener('click',async()=>{
+  if(!isAdmin)return;
+  $('prConfigError').textContent='';
+  if(!prTree.levels.length){prTree={levels:[{id:'level_0',label:'Building'},{id:'level_1',label:'Floor'},{id:'level_2',label:'Unit Number'},{id:'level_3',label:'Unit Type'}],nodes:[]};await prSaveConfigTree(prTree);}
+  prRefreshConfig();showModal('prConfigModal');
+});
+$('prAddLevelBtn').addEventListener('click',async()=>{if(!isAdmin)return;const name=$('prNewLevelLabel').value.trim();if(!name){$('prConfigError').textContent='Enter a level name.';return;}const levels=(prTree.levels||[]).concat({id:prNewId(),label:name});$('prNewLevelLabel').value='';await prSaveConfigTree({levels});});
+function prFindParentForPath(path){let arr=prTree.nodes||[];let node=null;for(const id of (path||[])){node=arr.find(n=>n.id===id);if(!node)return null;arr=node.children||[];}return {node,arr};}
+$('prAddOptionBtn').addEventListener('click',async()=>{if(!isAdmin)return;const name=$('prNewOptionLabel').value.trim();if(!name){$('prConfigError').textContent='Enter an option name.';return;}const path=window._prOptionSelections||[];const nodes=JSON.parse(JSON.stringify(prTree.nodes||[]));let arr=nodes;for(const id of path){const n=arr.find(x=>x.id===id);if(!n)return; n.children=n.children||[];arr=n.children;}arr.push({id:prNewId(),label:name,children:[]});$('prNewOptionLabel').value='';await prSaveConfigTree({nodes});});
+$('prAddJobBtn').addEventListener('click',async()=>{if(!isAdmin)return;const name=$('prNewJobLabel').value.trim();if(!name){$('prConfigError').textContent='Enter job details.';return;}const path=window._prJobSelections||[];if(!path.length){$('prConfigError').textContent='Select at least one level/option for this job.';return;}const labels=prPathLabels(path);try{await addDoc(collection(db,'progressJobs'),{projectId:prProjectId,pathIds:path,pathLabels:labels,jobLabel:name,status:'pending',staffName:null,assignee:null,note:null,completedAt:null,createdAt:serverTimestamp(),createdBy:currentUser?.email||null});$('prNewJobLabel').value='';}catch(e){console.error(e);$('prConfigError').textContent='Could not add job. Check Firebase rules.';}});
+// Replace the path-selector renderer so selections are retained and are usable
+// by Add Option and Add Job. Multiple selection is still the collapsible box.
+prRenderPathSelectors=function(containerId,initial){
+  const box=$(containerId);let selections=prNormalizeSelection(initial);const key=containerId==='prOptionPathSelectors'?'_prOptionSelections':'_prJobSelections';
+  function render(){let h='';for(let i=0;i<prTree.levels.length;i++){const opts=prOptionsForSelections(selections,i),selected=selections[i]||[];h+=prMultiDropdown(prTree.levels[i].label,opts,selected,'config',i);}box.innerHTML=h;window[key]=selections.flat();box.querySelectorAll('input[data-config-choice]').forEach(el=>el.addEventListener('change',()=>{const i=+el.dataset.configLevel;const vals=[...box.querySelectorAll(`input[data-config-level="${i}"][data-config-choice]:checked`)].map(x=>x.dataset.configChoice);selections=selections.slice(0,i);selections[i]=vals;selections=selections.slice(0,i+1);window[key]=selections.flat();render();}));}
+  render();
+};
+
 </script>
 </body>
 </html>
