@@ -133,35 +133,6 @@
   #syncDot{width:8px;height:8px;border-radius:50%;background:#4ade80;display:inline-block;margin-right:5px;}
   #syncDot.off{background:#f87171;}
   .loading-screen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:100;font-size:13px;color:var(--text-muted);}
-
-/* PROJECT PROGRESS REPORT — mobile-safe additions */
-#prModal .modal, #prCustomizeModal .modal{
-  width:min(100%, 720px);
-  max-height:calc(100dvh - 20px);
-  overflow-y:auto;
-  -webkit-overflow-scrolling:touch;
-}
-#prModal .modal select, #prCustomizeModal .modal select,
-#prModal .modal input, #prCustomizeModal .modal input,
-#prModal .modal textarea, #prCustomizeModal .modal textarea{
-  width:100%;
-  max-width:100%;
-  min-width:0;
-}
-@media(max-width:600px){
-  #prModal .modal, #prCustomizeModal .modal{
-    width:100%;
-    max-height:calc(100dvh - 8px);
-    border-radius:12px 12px 0 0;
-    padding:16px 14px calc(18px + env(safe-area-inset-bottom));
-  }
-  #prModal .toolbar, #prCustomizeModal .toolbar{display:block;}
-  #prModal .btn, #prCustomizeModal .btn{min-height:42px;}
-  #prModal .field, #prCustomizeModal .field{margin-bottom:12px;}
-  #prModal h2, #prCustomizeModal h2{font-size:18px;line-height:1.25;padding-right:30px;}
-  #prModal .chips{gap:6px;overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px;}
-  #prModal .chips .chip{flex:0 0 auto;}
-}
 </style>
 </head>
 <body>
@@ -728,7 +699,7 @@
 </div>
 
 
-<!-- ============ BEGIN HTML (paste before </body>) ============ -->
+
 
 <!-- Opened either from a "Progress Report" button injected onto each
      project card, or from an "Open Progress Report" button injected into
@@ -767,7 +738,7 @@
   </div>
 </div>
 
-
+<!-- ============ END HTML ============ -->
 
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
@@ -4313,7 +4284,6 @@ function generateWorkPdf(items, siteFilterValue, fromValue, toValue){
   pdf.save(buildPdfFilename("SAJ_Service_Action_Report", items, siteFilterValue, fromValue, toValue, "createdAt"));
 }
 
-
 /* ============================================================================
    SAJ TASK REGISTER — PROJECT PROGRESS REPORT ADDITION (JS)
    Paste this entire block inside your existing <script type="module">,
@@ -4329,6 +4299,7 @@ function generateWorkPdf(items, siteFilterValue, fromValue, toValue){
 // `where` isn't imported by your existing Firestore import line, so it's
 // imported separately here. This is a new, additive import — your existing
 // import statement is untouched.
+
 
 // ---------- STATE ----------
 let prCurrentProjectId = null;
@@ -4854,6 +4825,7 @@ if(prTasksModalEl){
   }).observe(prTasksModalEl, { attributes:true });
 }
 /* ============ END PROGRESS REPORT ADDITION (JS) ============ */
+
 </script>
 </body>
 </html>
