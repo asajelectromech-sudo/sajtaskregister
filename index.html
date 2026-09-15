@@ -4,7 +4,212 @@
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>SAJ Task Register</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js">
+
+// ---------- PROJECT PROGRESS REPORT (separate from existing Project Tasks) ----------
+let allProjectProgress = [];
+let projectProgressListenerStarted = false;
+let currentProgressProjectId = null;
+let currentProgressConfig = {levels:[], jobs:[]};
+let currentProgressSelection = [];
+let currentProgressLockedRecord = null;
+let editingProgressConfig = null;
+
+function progressId(){ return `id_${Date.now()}_${Math.random().toString(36).slice(2,8)}`; }
+function progressDefaultConfig(){ return {levels:[{id:progressId(),label:"Level 1",options:[]}],jobs:[]}; }
+function normalizeProgressConfig(raw){
+  const cfg = raw && typeof raw === "object" ? raw : {};
+  const levels = Array.isArray(cfg.levels) ? cfg.levels.map((l,i)=>({
+    id:String(l.id||progressId()), label:String(l.label||`Level ${i+1}`),
+    options:Array.isArray(l.options) ? l.options.map(o=>({id:String(o.id||progressId()),label:String(o.label||""),parentId:o.parentId?String(o.parentId):null})) : []
+  })) : [];
+  const jobs = Array.isArray(cfg.jobs) ? cfg.jobs.map(j=>({id:String(j.id||progressId()),label:String(j.label||"")})) : [];
+  return {levels,jobs};
+}
+function getProgressConfig(projectId){
+  const p=allProjects.find(x=>x.id===projectId);
+  return normalizeProgressConfig(p && p.progressConfig);
+}
+function progressPathKey(ids){ return ids.join("__"); }
+function getProgressRecord(projectId, pathIds){
+  const key=progressPathKey(pathIds);
+  return allProjectProgress.find(r=>r.projectId===projectId && r.pathKey===key) || null;
+}
+function getChildProgressOptions(levelIndex,parentId){
+  const level=currentProgressConfig.levels[levelIndex];
+  if(!level) return [];
+  return level.options.filter(o=>levelIndex===0 || String(o.parentId||"")===String(parentId||""));
+}
+function renderProgressSelectors(){
+  const box=$("projectProgressSelectorArea"); if(!box) return;
+  if(!currentProgressConfig.levels.length){
+    box.innerHTML=`<div class="hint">No progress levels configured for this project yet.</div>`; return;
+  }
+  let html=`<div class="section-label">Select project location / hierarchy</div>`;
+  currentProgressConfig.levels.forEach((level,i)=>{
+    const selected=currentProgressSelection[i]||"";
+    const parent=i>0 ? currentProgressSelection[i-1] : null;
+    const opts=getChildProgressOptions(i,parent);
+    html+=`<div class="field"><label>${escapeHtml(level.label)}</label><select class="progress-level-select" data-level-index="${i}"><option value="">Select ${escapeHtml(level.label)}</option>${opts.map(o=>`<option value="${escapeHtml(o.id)}" ${o.id===selected?'selected':''}>${escapeHtml(o.label)}</option>`).join("")}</select></div>`;
+  });
+  const deepest=currentProgressSelection.length===currentProgressConfig.levels.length && currentProgressSelection.every(Boolean);
+  if(deepest){
+    const labels=currentProgressConfig.levels.map((l,i)=>{const o=l.options.find(x=>x.id===currentProgressSelection[i]);return o?o.label:"";}).filter(Boolean);
+    html+=`<div class="progress-path"><b>Selected:</b> ${labels.map(escapeHtml).join(" → ")}</div>`;
+  }
+  box.innerHTML=html;
+  box.querySelectorAll(".progress-level-select").forEach(sel=>sel.addEventListener("change",()=>{
+    const i=Number(sel.dataset.levelIndex); currentProgressSelection=currentProgressSelection.slice(0,i); if(sel.value) currentProgressSelection[i]=sel.value;
+    currentProgressLockedRecord=null; renderProgressSelectors(); renderProgressJobs();
+  }));
+}
+function renderProgressJobs(){
+  const box=$("projectProgressJobsArea"); if(!box) return;
+  const complete=currentProgressConfig.levels.length>0 && currentProgressSelection.length===currentProgressConfig.levels.length && currentProgressSelection.every(Boolean);
+  if(!complete){ box.innerHTML=""; $("saveProjectProgressBtn").disabled=true; return; }
+  const record=getProgressRecord(currentProgressProjectId,currentProgressSelection);
+  currentProgressLockedRecord=record;
+  const locked=!!record && record.locked !== false;
+  const existingJobs=new Map((record?.jobs||[]).map(j=>[j.jobId,j]));
+  box.innerHTML=`<div class="section-label">Job details</div>${locked ? `<div class="progress-lock">🔒 This unit has already been submitted. It is locked and cannot be edited unless an admin unlocks it.</div>` : ""}${currentProgressConfig.jobs.length ? currentProgressConfig.jobs.map(job=>{
+    const v=existingJobs.get(job.id)||{};
+    return `<div class="progress-job-card ${v.jobId?'selected':''}" data-job-id="${escapeHtml(job.id)}">
+      <label class="job-check"><input type="checkbox" class="progress-job-check" ${v.jobId?'checked':''} ${locked?'disabled':''}/> ${escapeHtml(job.label)}</label>
+      <div class="progress-job-detail">
+        <div class="field"><label>Who will do it?</label><input class="progress-job-person" type="text" value="${escapeHtml(v.person||"")}" ${locked?'disabled':''} placeholder="Name / staff" /></div>
+        <div class="field"><label>Note</label><textarea class="progress-job-note" ${locked?'disabled':''} placeholder="Optional note">${escapeHtml(v.note||"")}</textarea></div>
+      </div>
+    </div>`;
+  }).join("") : `<div class="hint">No jobs configured for this project.</div>`}`;
+  box.querySelectorAll(".progress-job-check").forEach(cb=>cb.addEventListener("change",()=>cb.closest(".progress-job-card").classList.toggle("selected",cb.checked)));
+  $("saveProjectProgressBtn").disabled=locked || !currentProgressConfig.jobs.length;
+}
+function openProjectProgress(id){
+  const p=allProjects.find(x=>x.id===id); if(!p) return;
+  currentProgressProjectId=id; currentProgressConfig=getProgressConfig(id); currentProgressSelection=[]; currentProgressLockedRecord=null;
+  $("projectProgressTitle").textContent=`${p.name||"Project"} — Progress Report`;
+  $("projectProgressConfigureBtn").style.display=isAdmin?"inline-block":"none";
+  $("projectProgressError").textContent="";
+  renderProgressSummary(); renderProgressSelectors(); renderProgressJobs(); showModal("projectProgressModal");
+}
+function renderProgressSummary(){
+  const box=$("projectProgressSummary"); if(!box) return;
+  const records=allProjectProgress.filter(r=>r.projectId===currentProgressProjectId);
+  let jobsTotal=0, jobsDone=0, unitsDone=0;
+  records.forEach(r=>{ const jobs=Array.isArray(r.jobs)?r.jobs:[]; jobsTotal+=jobs.length; jobsDone+=jobs.filter(j=>j.status==="approved").length; if(r.status==="approved") unitsDone++; });
+  const deepest=currentProgressConfig.levels[currentProgressConfig.levels.length-1];
+  const totalUnits=deepest ? deepest.options.length : 0;
+  const pendingUnits=Math.max(0,totalUnits-unitsDone);
+  const pendingJobs=Math.max(0,jobsTotal-jobsDone);
+  box.innerHTML=`<div class="progress-summary"><div class="progress-stat"><b>${totalUnits}</b><span>Configured units</span></div><div class="progress-stat"><b>${unitsDone}</b><span>Approved units</span></div><div class="progress-stat"><b>${pendingUnits}</b><span>Pending units</span></div><div class="progress-stat"><b>${pendingJobs}</b><span>Pending jobs</span></div></div>`;
+}
+function openProgressConfig(){
+  if(!isAdmin || !currentProgressProjectId) return;
+  editingProgressConfig=JSON.parse(JSON.stringify(currentProgressConfig)); renderProgressConfigSettings(); $("projectProgressConfigError").textContent=""; showModal("projectProgressConfigModal");
+}
+function renderProgressConfigSettings(){
+  const box=$("projectProgressLevelsSettings"); if(!box) return;
+  box.innerHTML=(editingProgressConfig.levels||[]).map((level,i)=>{
+    const prev=editingProgressConfig.levels[i-1];
+    return `<div class="progress-level-card"><div style="display:flex;gap:7px;align-items:end;"><div class="field" style="flex:1;margin:0;"><label>Level ${i+1} name</label><input class="progress-level-name" data-level="${i}" value="${escapeHtml(level.label)}" /></div><button class="btn btn-red progress-level-delete" data-level="${i}" ${editingProgressConfig.levels.length<=1?'disabled':''}>Delete</button></div><div class="hint" style="margin:8px 0 4px;">Options</div><div>${level.options.map((o,j)=>`<div class="progress-option-row"><input class="progress-option-name" data-level="${i}" data-option="${j}" value="${escapeHtml(o.label)}" placeholder="Option name" />${i>0?`<select class="progress-option-parent" data-level="${i}" data-option="${j}"><option value="">Select parent</option>${(prev?.options||[]).map(po=>`<option value="${escapeHtml(po.id)}" ${String(o.parentId||"")===String(po.id)?'selected':''}>${escapeHtml(po.label)}</option>`).join("")}</select>`:""}<button class="btn btn-light progress-option-delete" data-level="${i}" data-option="${j}">×</button></div>`).join("")}</div><button class="btn btn-light progress-option-add" data-level="${i}" style="width:100%;">+ Add option</button></div>`;
+  }).join("") || `<div class="hint">No levels. Add a level below.</div>`;
+  box.querySelectorAll(".progress-level-name").forEach(el=>el.addEventListener("input",()=>editingProgressConfig.levels[Number(el.dataset.level)].label=el.value));
+  box.querySelectorAll(".progress-option-name").forEach(el=>el.addEventListener("input",()=>editingProgressConfig.levels[Number(el.dataset.level)].options[Number(el.dataset.option)].label=el.value));
+  box.querySelectorAll(".progress-option-parent").forEach(el=>el.addEventListener("change",()=>editingProgressConfig.levels[Number(el.dataset.level)].options[Number(el.dataset.option)].parentId=el.value||null));
+  box.querySelectorAll(".progress-level-delete").forEach(el=>el.addEventListener("click",()=>{editingProgressConfig.levels.splice(Number(el.dataset.level),1);renderProgressConfigSettings();}));
+  box.querySelectorAll(".progress-option-add").forEach(el=>el.addEventListener("click",()=>{const i=Number(el.dataset.level);editingProgressConfig.levels[i].options.push({id:progressId(),label:"New option",parentId:null});renderProgressConfigSettings();}));
+  box.querySelectorAll(".progress-option-delete").forEach(el=>el.addEventListener("click",()=>{const i=Number(el.dataset.level),j=Number(el.dataset.option);editingProgressConfig.levels[i].options.splice(j,1);renderProgressConfigSettings();}));
+  const jobsBox=$("projectProgressJobsSettings");
+  jobsBox.innerHTML=(editingProgressConfig.jobs||[]).map((j,i)=>`<div class="progress-option-row"><input class="progress-job-config-name" data-job="${i}" value="${escapeHtml(j.label)}" placeholder="Job name" /><button class="btn btn-light progress-job-config-delete" data-job="${i}">×</button></div>`).join("");
+  jobsBox.querySelectorAll(".progress-job-config-name").forEach(el=>el.addEventListener("input",()=>editingProgressConfig.jobs[Number(el.dataset.job)].label=el.value));
+  jobsBox.querySelectorAll(".progress-job-config-delete").forEach(el=>el.addEventListener("click",()=>{editingProgressConfig.jobs.splice(Number(el.dataset.job),1);renderProgressConfigSettings();}));
+}
+$("projectProgressConfigureBtn").addEventListener("click",openProgressConfig);
+$("addProgressLevelBtn").addEventListener("click",()=>{if(!editingProgressConfig)return;editingProgressConfig.levels.push({id:progressId(),label:`Level ${editingProgressConfig.levels.length+1}`,options:[]});renderProgressConfigSettings();});
+$("addProgressJobBtn").addEventListener("click",()=>{if(!editingProgressConfig)return;editingProgressConfig.jobs.push({id:progressId(),label:"New Job"});renderProgressConfigSettings();});
+$("saveProjectProgressConfigBtn").addEventListener("click",async()=>{
+  if(!isAdmin||!currentProgressProjectId)return;
+  const cfg=normalizeProgressConfig(editingProgressConfig); $("projectProgressConfigError").textContent="";
+  if(!cfg.levels.length){$("projectProgressConfigError").textContent="Add at least one level.";return;}
+  if(cfg.levels.some(l=>!l.label.trim()||l.options.some(o=>!o.label.trim()))){$("projectProgressConfigError").textContent="Every level and option needs a name.";return;}
+  if(cfg.levels.slice(1).some((l,i)=>l.options.some(o=>!o.parentId || !cfg.levels[i].options.some(po=>po.id===o.parentId)))){$("projectProgressConfigError").textContent="Every lower-level option must have a valid parent option.";return;}
+  if(cfg.jobs.some(j=>!j.label.trim())){$("projectProgressConfigError").textContent="Every job needs a name.";return;}
+  $("saveProjectProgressConfigBtn").disabled=true;
+  try{await updateDoc(doc(db,"projects",currentProgressProjectId),{progressConfig:cfg,progressConfigUpdatedAt:serverTimestamp(),progressConfigUpdatedBy:currentUser.email||null});currentProgressConfig=cfg;hideModal("projectProgressConfigModal");renderProgressSummary();renderProgressSelectors();renderProgressJobs();}
+  catch(e){console.error(e);$("projectProgressConfigError").textContent="Could not save configuration.";}
+  $("saveProjectProgressConfigBtn").disabled=false;
+});
+$("saveProjectProgressBtn").addEventListener("click",async()=>{
+  if(!currentProgressProjectId||!currentUser)return;
+  const complete=currentProgressSelection.length===currentProgressConfig.levels.length&&currentProgressSelection.every(Boolean);
+  if(!complete){$("projectProgressError").textContent="Please select all levels first.";return;}
+  const existingProgressRecord=getProgressRecord(currentProgressProjectId,currentProgressSelection);
+  if(existingProgressRecord && existingProgressRecord.locked !== false){ $("projectProgressError").textContent="This unit is already locked. Only an admin can unlock it."; return; }
+  const cards=[...document.querySelectorAll("#projectProgressJobsArea .progress-job-card")].filter(c=>c.querySelector(".progress-job-check")?.checked);
+  if(!cards.length){$("projectProgressError").textContent="Select at least one job.";return;}
+  const jobs=cards.map(card=>({jobId:card.dataset.jobId,person:card.querySelector(".progress-job-person")?.value.trim()||"",note:card.querySelector(".progress-job-note")?.value.trim()||"",status:"pending"}));
+  if(jobs.some(j=>!j.person)){ $("projectProgressError").textContent="Please enter who will do each selected job.";return; }
+  $("saveProjectProgressBtn").disabled=true;
+  try{
+    if(existingProgressRecord && existingProgressRecord.locked === false){
+      await updateDoc(doc(db,"projectprogress",existingProgressRecord.id),{jobs,status:"pending",locked:true,updatedBy:currentUser.email||null,updatedAt:serverTimestamp()});
+    }else{
+      await addDoc(collection(db,"projectprogress"),{projectId:currentProgressProjectId,projectName:(allProjects.find(p=>p.id===currentProgressProjectId)?.name||currentProjectName),pathIds:currentProgressSelection,pathKey:progressPathKey(currentProgressSelection),jobs,status:"pending",locked:true,createdBy:currentUser.email||null,createdByUid:currentUser.uid,createdAt:serverTimestamp(),updatedAt:serverTimestamp()});
+    }
+    $("projectProgressError").textContent="Saved and submitted for approval.";
+  }
+  catch(e){console.error(e);$("projectProgressError").textContent="Could not save progress. Check your connection.";}
+  $("saveProjectProgressBtn").disabled=false;
+});
+$("projectProgressSummaryBtn").addEventListener("click",()=>{renderProgressSummary();});
+
+function renderProjectProgressAdminActions(projectId){
+  return isAdmin ? `<button class="btn btn-green open-progress" data-project-id="${projectId}">Progress Report</button>` : `<button class="btn btn-green open-progress" data-project-id="${projectId}">Progress Report</button>`;
+}
+
+// Add the Progress Report button to existing project cards without changing the current task workflow.
+const _originalRenderProjectList = renderProjectList;
+renderProjectList = function(){
+  _originalRenderProjectList();
+  const list=$("projectList"); if(!list)return;
+  list.querySelectorAll(".card[data-project-id]").forEach(card=>{
+    const id=card.getAttribute("data-project-id");
+    if(card.querySelector(".open-progress"))return;
+    const actions=card.querySelector(".card-body > div[style*='margin-top:8px']") || card.querySelector(".card-body");
+    const btn=document.createElement("button"); btn.className="btn btn-green open-progress"; btn.dataset.projectId=id; btn.textContent="Progress Report"; btn.style.marginTop="8px"; btn.addEventListener("click",e=>{e.stopPropagation();openProjectProgress(id);});
+    actions.appendChild(btn);
+  });
+};
+
+function startProjectProgressListener(){
+  if(projectProgressListenerStarted)return;
+  projectProgressListenerStarted=true;
+  onSnapshot(collection(db,"projectprogress"),snap=>{allProjectProgress=snap.docs.map(d=>({id:d.id,...d.data()}));if(currentProgressProjectId){renderProgressSummary();renderProgressJobs();}},err=>console.error("Project progress listener:",err));
+}
+// Start alongside the existing project listeners; this does not replace them.
+const _originalStartProjectListeners=startProjectListeners;
+startProjectListeners=function(){_originalStartProjectListeners();startProjectProgressListener();};
+
+// Admin can approve a submitted unit or unlock it for correction. The user-facing page
+// intentionally does not expose editing once a record exists.
+function renderProgressAdminRecords(){
+  if(!isAdmin||!currentProgressProjectId)return;
+  const records=allProjectProgress.filter(r=>r.projectId===currentProgressProjectId);
+  if(!records.length)return;
+  const box=$("projectProgressSummary");
+  const html=records.map(r=>{
+    const labels=(r.pathIds||[]).map((id,i)=>currentProgressConfig.levels[i]?.options.find(o=>o.id===id)?.label||id).join(" → ");
+    return `<div class="card" style="cursor:default;"><div class="card-body"><p class="card-title">${escapeHtml(labels)}</p><div class="detail-row"><b>Status:</b> ${escapeHtml(r.status||"pending")}</div><button class="btn btn-light progress-approve-record" data-id="${r.id}" ${r.status==="approved"?'disabled':''}>Approve</button> <button class="btn btn-light progress-unlock-record" data-id="${r.id}">Unlock for correction</button></div></div>`;
+  }).join("");
+  box.insertAdjacentHTML("beforeend",`<div class="section-label">Submitted units</div>${html}`);
+  box.querySelectorAll(".progress-approve-record").forEach(b=>b.addEventListener("click",async()=>{try{await updateDoc(doc(db,"projectprogress",b.dataset.id),{status:"approved",approvedBy:currentUser.email||null,approvedAt:serverTimestamp(),updatedAt:serverTimestamp()});}catch(e){alert("Could not approve.");}}));
+  box.querySelectorAll(".progress-unlock-record").forEach(b=>b.addEventListener("click",async()=>{try{await updateDoc(doc(db,"projectprogress",b.dataset.id),{locked:false,status:"unlocked",unlockedBy:currentUser.email||null,unlockedAt:serverTimestamp(),updatedAt:serverTimestamp()});}catch(e){alert("Could not unlock.");}}));
+}
+
+const _originalOpenProjectProgress=openProjectProgress;
+openProjectProgress=function(id){_originalOpenProjectProgress(id);setTimeout(()=>renderProgressAdminRecords(),0);};
+
+</script>
 <style>
   :root{
     --navy:#123354;
@@ -133,6 +338,24 @@
   #syncDot{width:8px;height:8px;border-radius:50%;background:#4ade80;display:inline-block;margin-right:5px;}
   #syncDot.off{background:#f87171;}
   .loading-screen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:100;font-size:13px;color:var(--text-muted);}
+
+  /* ---------- PROJECT PROGRESS REPORT ---------- */
+  .progress-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:10px 0 14px;}
+  .progress-stat{border:1px solid var(--border);border-radius:10px;background:#fff;padding:10px;text-align:center;}
+  .progress-stat b{display:block;font-size:20px;color:var(--navy);}
+  .progress-stat span{font-size:10px;color:var(--text-muted);}
+  .progress-level-card{border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:10px;background:#fff;}
+  .progress-option-row{display:flex;gap:6px;align-items:center;margin:6px 0;}
+  .progress-option-row input,.progress-option-row select{flex:1;min-width:0;padding:8px;border:1px solid var(--border);border-radius:7px;font-size:13px;background:#fff;}
+  .progress-job-card{border:1px solid var(--border);border-radius:10px;padding:10px;margin:8px 0;background:#fff;}
+  .progress-job-card .job-check{display:flex;align-items:center;gap:8px;font-weight:700;cursor:pointer;}
+  .progress-job-detail{display:none;margin-top:8px;padding-top:8px;border-top:1px dashed var(--border);}
+  .progress-job-card.selected .progress-job-detail{display:block;}
+  .progress-path{font-size:12px;color:var(--text-muted);background:#f7f9fb;border:1px solid var(--border);border-radius:8px;padding:8px;margin-bottom:10px;}
+  .progress-lock{font-size:11px;color:var(--red);font-weight:700;}
+  .progress-approved{font-size:11px;color:var(--green);font-weight:700;}
+  @media(max-width:600px){.progress-summary{grid-template-columns:repeat(2,minmax(0,1fr));}}
+
 </style>
 </head>
 <body>
@@ -322,6 +545,45 @@
     <div class="modal-actions">
       <button class="btn btn-light" data-close="editProjectModal">Cancel</button>
       <button class="btn btn-primary" id="saveEditProjectBtn">Save changes</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- PROJECT PROGRESS REPORT MODALS - added separately from the existing Project Report/task workflow -->
+<div class="modal-overlay" id="projectProgressModal">
+  <div class="modal" style="max-width:700px;">
+    <button class="close-x" data-close="projectProgressModal">&times;</button>
+    <h2 id="projectProgressTitle">Project Progress Report</h2>
+    <div class="toolbar" style="margin-bottom:8px;">
+      <button class="btn btn-navy" id="projectProgressSummaryBtn">Progress Summary</button>
+      <button class="btn btn-light" id="projectProgressConfigureBtn" style="display:none;">Configure</button>
+    </div>
+    <div id="projectProgressSummary"></div>
+    <div id="projectProgressSelectorArea"></div>
+    <div id="projectProgressJobsArea"></div>
+    <div class="error-text" id="projectProgressError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" data-close="projectProgressModal">Close</button>
+      <button class="btn btn-primary" id="saveProjectProgressBtn">Save &amp; Submit for Approval</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="projectProgressConfigModal">
+  <div class="modal" style="max-width:760px;">
+    <button class="close-x" data-close="projectProgressConfigModal">&times;</button>
+    <h2>Project Progress Configuration</h2>
+    <div class="hint">Each project can have its own hierarchy. Lower-level options can be linked to an option in the level above.</div>
+    <div id="projectProgressLevelsSettings" style="margin-top:12px;"></div>
+    <button class="btn btn-light" id="addProgressLevelBtn" style="width:100%;margin-bottom:12px;">+ Add Level</button>
+    <div class="section-label">Jobs available after the final level</div>
+    <div id="projectProgressJobsSettings"></div>
+    <button class="btn btn-light" id="addProgressJobBtn" style="width:100%;">+ Add Job</button>
+    <div class="error-text" id="projectProgressConfigError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" data-close="projectProgressConfigModal">Cancel</button>
+      <button class="btn btn-primary" id="saveProjectProgressConfigBtn">Save Configuration</button>
     </div>
   </div>
 </div>
@@ -1221,7 +1483,7 @@ $("downloadBackupBtn").addEventListener("click", async ()=>{
   $("downloadBackupBtn").textContent = "Preparing backup…";
   try{
     const collectionNames = [
-      "snags","workreports","projects","projecttasks",
+      "snags","workreports","projects","projecttasks","projectprogress",
       "authorizedStaff","staffAccessRequests","staffLogins","settings"
     ];
     const backup = {};
