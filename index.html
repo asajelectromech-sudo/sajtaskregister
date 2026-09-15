@@ -133,6 +133,35 @@
   #syncDot{width:8px;height:8px;border-radius:50%;background:#4ade80;display:inline-block;margin-right:5px;}
   #syncDot.off{background:#f87171;}
   .loading-screen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:100;font-size:13px;color:var(--text-muted);}
+
+/* PROJECT PROGRESS REPORT — mobile-safe additions */
+#prModal .modal, #prCustomizeModal .modal{
+  width:min(100%, 720px);
+  max-height:calc(100dvh - 20px);
+  overflow-y:auto;
+  -webkit-overflow-scrolling:touch;
+}
+#prModal .modal select, #prCustomizeModal .modal select,
+#prModal .modal input, #prCustomizeModal .modal input,
+#prModal .modal textarea, #prCustomizeModal .modal textarea{
+  width:100%;
+  max-width:100%;
+  min-width:0;
+}
+@media(max-width:600px){
+  #prModal .modal, #prCustomizeModal .modal{
+    width:100%;
+    max-height:calc(100dvh - 8px);
+    border-radius:12px 12px 0 0;
+    padding:16px 14px calc(18px + env(safe-area-inset-bottom));
+  }
+  #prModal .toolbar, #prCustomizeModal .toolbar{display:block;}
+  #prModal .btn, #prCustomizeModal .btn{min-height:42px;}
+  #prModal .field, #prCustomizeModal .field{margin-bottom:12px;}
+  #prModal h2, #prCustomizeModal h2{font-size:18px;line-height:1.25;padding-right:30px;}
+  #prModal .chips{gap:6px;overflow-x:auto;flex-wrap:nowrap;padding-bottom:2px;}
+  #prModal .chips .chip{flex:0 0 auto;}
+}
 </style>
 </head>
 <body>
@@ -699,6 +728,47 @@
 </div>
 
 
+<!-- ============ BEGIN HTML (paste before </body>) ============ -->
+
+<!-- Opened either from a "Progress Report" button injected onto each
+     project card, or from an "Open Progress Report" button injected into
+     the header of your existing Project Tasks modal. Both are wired up
+     automatically by the JS below — you don't add those buttons by hand. -->
+<div class="modal-overlay" id="prModal">
+  <div class="modal">
+    <button class="close-x" data-close="prModal">&times;</button>
+    <h2 id="prTitle">Project Progress Report</h2>
+    <div class="chips" id="prTabs">
+      <button class="chip active" data-pr-tab="fill">Fill Progress</button>
+      <button class="chip" data-pr-tab="report">Completion Report</button>
+    </div>
+    <div class="toolbar" id="prCustomizeRow" style="display:none;">
+      <button class="btn btn-navy" id="prCustomizeBtn" style="width:100%;">Customize (admin)</button>
+    </div>
+    <div id="prFillView"></div>
+    <div id="prReportView" style="display:none;"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="prCustomizeModal">
+  <div class="modal">
+    <button class="close-x" data-close="prCustomizeModal">&times;</button>
+    <h2>Customize Progress Report (admin)</h2>
+    <div class="section-label">Drop-box levels</div>
+    <div class="hint">These are the cascading drop boxes, in order (e.g. Building, Floor, Unit Number). The last level always leads to the job checklist, not another drop box.</div>
+    <div id="prLevelsList"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" id="prAddLevelBtn" style="width:100%;">+ Add drop box level</button>
+    </div>
+    <div class="section-label">Options</div>
+    <div class="hint" id="prTreeBreadcrumb"></div>
+    <div id="prTreeEditor"></div>
+    <div class="error-text" id="prCustomizeError"></div>
+  </div>
+</div>
+
+
+
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
@@ -706,7 +776,7 @@ import {
   GoogleAuthProvider, signInWithPopup, EmailAuthProvider, linkWithCredential, updatePassword
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDoc, getDocs, setDoc, onSnapshot, query, orderBy, serverTimestamp, Timestamp, arrayUnion
+  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDoc, getDocs, setDoc, onSnapshot, query, where, orderBy, serverTimestamp, Timestamp, arrayUnion
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 // ---------- CONFIG ----------
@@ -4259,7 +4329,6 @@ function generateWorkPdf(items, siteFilterValue, fromValue, toValue){
 // `where` isn't imported by your existing Firestore import line, so it's
 // imported separately here. This is a new, additive import — your existing
 // import statement is untouched.
-import { where } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 // ---------- STATE ----------
 let prCurrentProjectId = null;
@@ -4786,44 +4855,5 @@ if(prTasksModalEl){
 }
 /* ============ END PROGRESS REPORT ADDITION (JS) ============ */
 </script>
-
-<!-- Opened either from a "Progress Report" button injected onto each
-     project card, or from an "Open Progress Report" button injected into
-     the header of your existing Project Tasks modal. Both are wired up
-     automatically by the JS below — you don't add those buttons by hand. -->
-<div class="modal-overlay" id="prModal">
-  <div class="modal">
-    <button class="close-x" data-close="prModal">&times;</button>
-    <h2 id="prTitle">Project Progress Report</h2>
-    <div class="chips" id="prTabs">
-      <button class="chip active" data-pr-tab="fill">Fill Progress</button>
-      <button class="chip" data-pr-tab="report">Completion Report</button>
-    </div>
-    <div class="toolbar" id="prCustomizeRow" style="display:none;">
-      <button class="btn btn-navy" id="prCustomizeBtn" style="width:100%;">Customize (admin)</button>
-    </div>
-    <div id="prFillView"></div>
-    <div id="prReportView" style="display:none;"></div>
-  </div>
-</div>
-
-<div class="modal-overlay" id="prCustomizeModal">
-  <div class="modal">
-    <button class="close-x" data-close="prCustomizeModal">&times;</button>
-    <h2>Customize Progress Report (admin)</h2>
-    <div class="section-label">Drop-box levels</div>
-    <div class="hint">These are the cascading drop boxes, in order (e.g. Building, Floor, Unit Number). The last level always leads to the job checklist, not another drop box.</div>
-    <div id="prLevelsList"></div>
-    <div class="modal-actions">
-      <button class="btn btn-light" id="prAddLevelBtn" style="width:100%;">+ Add drop box level</button>
-    </div>
-    <div class="section-label">Options</div>
-    <div class="hint" id="prTreeBreadcrumb"></div>
-    <div id="prTreeEditor"></div>
-    <div class="error-text" id="prCustomizeError"></div>
-  </div>
-</div>
-
-<!-- ============ END HTML ============ -->
 </body>
 </html>
