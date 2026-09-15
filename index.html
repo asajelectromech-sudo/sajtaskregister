@@ -4415,7 +4415,7 @@ function prRenderHierarchyEditor(){
 // ---------- PROJECT PROGRESS CONFIGURATION WIRING ----------
 // This block restores the admin Customize button and the configuration
 // controls used by the current Progress Report markup.
-function prRefreshConfig(){
+function prRefreshConfig(preserveSelections){
   const levelBox=$('prLevelsEditor');
   if(!levelBox) return;
   const levels=prTree.levels||[];
@@ -4425,12 +4425,18 @@ function prRefreshConfig(){
   levelBox.querySelectorAll('.pr-delete-level').forEach(el=>el.addEventListener('click',async()=>{const i=+el.dataset.i;if(!confirm('Delete this level? Its options and related jobs may no longer be reachable.'))return;const levels2=prTree.levels.slice();levels2.splice(i,1);await prSaveConfigTree({levels:levels2});}));
   levelBox.querySelectorAll('.pr-level-up').forEach(el=>el.addEventListener('click',async()=>{const i=+el.dataset.i;if(i<1)return;const a=prTree.levels.slice();[a[i-1],a[i]]=[a[i],a[i-1]];await prSaveConfigTree({levels:a});}));
   levelBox.querySelectorAll('.pr-level-down').forEach(el=>el.addEventListener('click',async()=>{const i=+el.dataset.i;if(i>=prTree.levels.length-1)return;const a=prTree.levels.slice();[a[i],a[i+1]]=[a[i+1],a[i]];await prSaveConfigTree({levels:a});}));
-  prRenderPathSelectors('prOptionPathSelectors',[]);
-  prRenderPathSelectors('prJobPathSelectors',[]);
+  const keepOption=preserveSelections&&preserveSelections.option?preserveSelections.option:[];
+  const keepJob=preserveSelections&&preserveSelections.job?preserveSelections.job:[];
+  prRenderPathSelectors('prOptionPathSelectors',keepOption);
+  prRenderPathSelectors('prJobPathSelectors',keepJob);
 }
 async function prSaveConfigTree(partial){
   const next={...prTree,...partial};
-  try{await setDoc(doc(db,'progressTrees',prProjectId),{...next,projectId:prProjectId,updatedAt:serverTimestamp(),updatedBy:currentUser?.email||null},{merge:true});prTree=prNormalize(next);prRefreshConfig();prRenderFill();}
+  const preserveSelections={
+    option: prNormalizeSelection(window._prOptionSelectionsFull||[]),
+    job: prNormalizeSelection(window._prJobSelectionsFull||[])
+  };
+  try{await setDoc(doc(db,'progressTrees',prProjectId),{...next,projectId:prProjectId,updatedAt:serverTimestamp(),updatedBy:currentUser?.email||null},{merge:true});prTree=prNormalize(next);prRefreshConfig(preserveSelections);prRenderFill();}
   catch(e){console.error(e);$('prConfigError').textContent='Could not save configuration. Check Firebase rules and admin sign-in.';}
 }
 $('prCustomizeBtn').addEventListener('click',async()=>{
