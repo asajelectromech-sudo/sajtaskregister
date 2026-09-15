@@ -508,12 +508,6 @@
       <label>App password</label>
       <input type="text" id="appSettingsPassword" placeholder="Leave blank for no password" />
     </div>
-    <div class="section-label">Project Report task columns</div>
-    <div id="projectColumnsSettings"></div>
-    <div class="modal-actions" style="margin-top:8px;">
-      <button class="btn btn-light" id="addProjectColumnBtn" style="width:100%;">+ Add Column</button>
-    </div>
-    <div class="hint">Add, rename, reorder, or delete Project Report columns. Required columns are checked when a task is saved.</div>
     <div class="section-label">Admin Password</div>
     <div class="hint">Set or update a password for your admin account (<b id="adminPasswordForEmail"></b>) so "Admin sign in" works as a backup alongside Google Sign-In. If you've never set one (or aren't sure), just set one here now.</div>
     <div class="field"><label>New password</label><input type="password" id="adminNewPassword" placeholder="At least 6 characters" /></div>
@@ -949,7 +943,6 @@ function unlockApp(){
   updateFabVisibility();
   updateSnagExportLabel();
   updateWorkExportLabel();
-  loadProjectFieldLabels();
   startSnagListener();
   startWorkListener();
   startProjectListeners();
@@ -1004,7 +997,6 @@ function renderAuthBox(){
     $("staffAccessBtn").addEventListener("click", openStaffAccessAdminModal);
     $("appSettingsBtn").addEventListener("click", ()=>{
       $("appSettingsPassword").value = appPassword || "";
-      renderProjectColumnsSettings();
       $("appSettingsError").textContent = "";
       $("adminPasswordForEmail").textContent = currentUser.email || "";
       $("adminNewPassword").value = "";
@@ -1132,14 +1124,7 @@ async function deleteProjectColumn(key){
   renderProjectColumnsSettings();
 }
 
-$("addProjectColumnBtn").addEventListener("click",()=>{
-  const key=`col_${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
-  projectColumns.push({key,label:"New Column",required:false,filledBy:"admin"});
-  renderProjectColumnsSettings();
-  const inputs=document.querySelectorAll("#projectColumnsSettings .project-column-name");
-  const last=inputs[inputs.length-1];
-  if(last){ last.focus(); last.select(); }
-});
+
 
 function applyProjectFieldLabels(){
   renderProjectTaskFields();
@@ -1147,16 +1132,11 @@ function applyProjectFieldLabels(){
 
 $("saveAppSettingsBtn").addEventListener("click", async ()=>{
   const val = $("appSettingsPassword").value.trim();
-  projectColumns=normalizeProjectColumns(projectColumns).filter(c=>String(c.label||"").trim());
-  projectColumns.forEach(c=>c.label=String(c.label).trim());
   $("appSettingsError").textContent = "";
   $("saveAppSettingsBtn").disabled = true;
   try{
     await setDoc(doc(db, "settings", "appAccess"), { password: val }, { merge: true });
-    await setDoc(doc(db, "settings", "projectTaskLabels"), { columns: projectColumns }, { merge: true });
     appPassword = val;
-    renderProjectColumnsSettings();
-    applyProjectFieldLabels();
     hideModal("appSettingsModal");
   }catch(err){
     console.error(err);
@@ -1164,6 +1144,7 @@ $("saveAppSettingsBtn").addEventListener("click", async ()=>{
   }
   $("saveAppSettingsBtn").disabled = false;
 });
+
 
 // ---------- ADMIN PASSWORD (backup sign-in alongside Google) ----------
 // Some admin accounts only ever have a Google credential attached (e.g. if
@@ -4255,7 +4236,33 @@ function prRenderFill(){
   for(let i=0;i<prTree.levels.length;i++){const opts=prOptionsForPath(prSelectedPath.slice(0,i));h+=`<label>${prSafe(prTree.levels[i].label)}</label><select data-pr-level="${i}"><option value="">Select ${prSafe(prTree.levels[i].label)}</option>${opts.map(o=>`<option value="${prSafe(o.id)}" ${prSelectedPath[i]===o.id?'selected':''}>${prSafe(o.label)}</option>`).join('')}</select>`;}
   const jobs=prJobsForPath(prSelectedPath);if(jobs.length){h+='<h3 style="margin-top:14px">Jobs</h3>';h+=jobs.map(j=>`<div class="pr-job"><div class="pr-job-head">${prSafe(j.jobLabel||'Job')}</div><div class="pr-path">${prSafe((j.pathLabels||[]).join(' → '))}</div><label>Staff Name</label><input data-pr-staff="${j.id}" value="${prSafe(j.staffName||'')}" placeholder="Staff name"><label>Note</label><textarea class="pr-note" data-pr-note="${j.id}" placeholder="Note">${prSafe(j.note||'')}</textarea><div class="pr-status"><button class="btn btn-light ${j.status==='progressing'?'active':''}" data-pr-status="progressing" data-job="${j.id}">Progressing</button><button class="btn btn-light ${j.status==='completed'?'active':''}" data-pr-status="completed" data-job="${j.id}">Completed</button></div></div>`).join('');}else if(prSelectedPath.length){h+='<div class="hint" style="margin-top:12px">No jobs are configured for this selection.</div>';}root.innerHTML=h;
   root.querySelectorAll('select[data-pr-level]').forEach(el=>el.addEventListener('change',()=>{const i=Number(el.dataset.prLevel);prSelectedPath=prSelectedPath.slice(0,i);if(el.value)prSelectedPath[i]=el.value;prRenderFill();}));
-  root.querySelectorAll('[data-pr-status]').forEach(btn=>btn.addEventListener('click',async()=>{const id=btn.dataset.job;const staff=root.querySelector(`[data-pr-staff="${id}"]`);const note=root.querySelector(`[data-pr-note="${id}"]`);const status=btn.dataset.prStatus;await updateDoc(doc(db,'progressJobs',id),{status,staffName:staff?staff.value.trim():'',assignee:staff?staff.value.trim():'',note:note?note.value.trim():'',completedAt:status==='completed'?serverTimestamp():null,updatedAt:serverTimestamp()});await prLoad(prProjectId);prRenderFill();}));
+  root.querySelectorAll('[data-pr-status]').forEach(btn=>btn.addEventListener('click',async(e)=>{
+    e.preventDefault();
+    const id=btn.dataset.job;
+    const staff=root.querySelector(`[data-pr-staff="${id}"]`);
+    const note=root.querySelector(`[data-pr-note="${id}"]`);
+    const status=btn.dataset.prStatus;
+    if(!id || !['progressing','completed'].includes(status)) return;
+    btn.disabled=true;
+    try{
+      await updateDoc(doc(db,'progressJobs',id),{
+        status,
+        staffName:staff?staff.value.trim():'',
+        assignee:staff?staff.value.trim():'',
+        note:note?note.value.trim():'',
+        completedAt:status==='completed'?serverTimestamp():null,
+        progressingAt:status==='progressing'?serverTimestamp():null,
+        updatedAt:serverTimestamp()
+      });
+      await prLoad(prProjectId);
+      prRenderFill();
+    }catch(err){
+      console.error('Progress status update failed:',err);
+      alert('Could not update this job. Please check your Firebase Firestore rules and sign-in access.\n\n'+(err?.message||err));
+    }finally{
+      btn.disabled=false;
+    }
+  }));
 }
 async function openProgressReport(pid){try{await prLoad(pid);prSelectedPath=[];$('prTitle').textContent=`Project Progress Report — ${prProjectName}`;$('prCustomizeBtn').style.display=isAdmin?'inline-block':'none';showModal('progressReportModal');prRenderFill();}catch(e){console.error('Progress report:',e);alert('Unable to open Progress Report. Please check the Progress Report Firestore rules.');}}
 function prRenderCompletion(){prSummary();const root=$('prContent');let h='';function walk(nodes,path,depth){for(const n of(nodes||[])){const p=path.concat(n.id);h+=`<div class="pr-level-box"><b>${prSafe(prTree.levels[depth]?prTree.levels[depth].label:'Option')}: ${prSafe(n.label)}</b>`;const jobs=prJobs.filter(j=>Array.isArray(j.pathIds)&&j.pathIds.length>=p.length&&p.every((v,i)=>j.pathIds[i]===v));for(const j of jobs)h+=`<div class="pr-job"><b>${prSafe(j.jobLabel||'Job')}</b> — ${prSafe(j.status||'pending')}${j.staffName?' — '+prSafe(j.staffName):''}${j.note?`<div class="pr-path">Note: ${prSafe(j.note)}</div>`:''}</div>`;walk(n.children||[],p,depth+1);h+='</div>';}}walk(prTree.nodes,[],0);root.innerHTML=h||'<div class="hint">No hierarchy configured.</div>';}
