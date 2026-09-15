@@ -562,6 +562,17 @@
   </div>
 </div>
 
+<!-- GOOGLE VERIFICATION FOR USER PROJECT PROGRESS -->
+<div class="modal-overlay" id="progressVerifyModal">
+  <div class="modal">
+    <button class="close-x" data-close="progressVerifyModal">&times;</button>
+    <h2>Verify your Google account</h2>
+    <div class="hint">Sign in with Google before entering the Project Progress Report. This confirms who is opening the report.</div>
+    <div class="error-text" id="progressVerifyError"></div>
+    <div class="modal-actions"><button class="btn btn-primary" id="progressVerifyGoogleBtn" style="width:100%;">Continue with Google</button></div>
+  </div>
+</div>
+
 <!-- VERIFY EMAIL MODAL (non-admin staff verifying to unlock elevated actions) -->
 <!-- Lightweight Google verification before creating a Service Action Report.
      Unlike the staff "Verify email" flow, this does NOT check an approval
@@ -694,9 +705,9 @@
 
 
 <style>
-.pr-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.pr-scroll{max-height:68vh;overflow:auto}.pr-job{border:1px solid #e1e5ea;border-radius:10px;padding:12px;margin:9px 0;background:#fff}.pr-job-head{font-weight:700;margin-bottom:7px}.pr-status{display:flex;gap:8px;flex-wrap:wrap}.pr-status button{flex:1;min-width:120px}.pr-status button.active{font-weight:700;border:2px solid #123354}.pr-note{width:100%;min-height:65px;resize:vertical}.pr-path{font-size:12px;color:#68707a;margin:4px 0 8px}.pr-admin-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pr-level-box{border:1px solid #e1e5ea;border-radius:10px;padding:10px;margin:9px 0}.pr-node-row{display:flex;gap:7px;align-items:center;padding:7px 0}.pr-node-row span{flex:1}.pr-child-box{margin-left:16px;border-left:2px solid #edf0f4;padding-left:10px}.pr-muted{color:#68707a;font-size:13px}@media(max-width:600px){.pr-admin-grid{grid-template-columns:1fr}.pr-status button{min-width:0}.pr-scroll{max-height:72vh}}
+.pr-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.pr-scroll{max-height:68vh;overflow:auto}.pr-job{border:1px solid #e1e5ea;border-radius:10px;padding:12px;margin:9px 0;background:#fff}.pr-job-head{font-weight:700;margin-bottom:7px}.pr-status{display:flex;gap:8px;flex-wrap:wrap}.pr-status button{flex:1;min-width:120px}.pr-status button.active{font-weight:700;border:2px solid #123354}.pr-note{width:100%;min-height:65px;resize:vertical}.pr-path{font-size:12px;color:#68707a;margin:4px 0 8px}.pr-completion-panel{border:1px solid #e1e5ea;border-radius:10px;margin-top:10px;background:#fff;overflow:hidden}.pr-completion-head{font-weight:700;padding:10px 12px;background:#f7f9fb;border-bottom:1px solid #e1e5ea}.pr-admin-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pr-level-box{border:1px solid #e1e5ea;border-radius:10px;padding:10px;margin:9px 0}.pr-node-row{display:flex;gap:7px;align-items:center;padding:7px 0}.pr-node-row span{flex:1}.pr-child-box{margin-left:16px;border-left:2px solid #edf0f4;padding-left:10px}.pr-muted{color:#68707a;font-size:13px}@media(max-width:600px){.pr-admin-grid{grid-template-columns:1fr}.pr-status button{min-width:0}.pr-scroll{max-height:72vh}}
 </style>
-<div class="modal-overlay" id="progressReportModal"><div class="modal" style="max-width:900px;width:96%;"><button class="close-x" data-close="progressReportModal">&times;</button><h2 id="prTitle">Project Progress Report</h2><div id="prSummary" class="hint"></div><div class="pr-toolbar"><button class="btn btn-primary" id="prFillBtn">Fill Progress</button><button class="btn btn-light" id="prCompletionBtn">Completion Report</button><button class="btn btn-light" id="prPdfBtn">Download PDF</button><button class="btn btn-navy" id="prCustomizeBtn" style="display:none">Customize</button></div><div id="prContent" class="pr-scroll"></div></div></div>
+<div class="modal-overlay" id="progressReportModal"><div class="modal" style="max-width:900px;width:96%;"><button class="close-x" data-close="progressReportModal">&times;</button><h2 id="prTitle">Project Progress Report</h2><div id="prSummary" class="hint"></div><div class="pr-toolbar"><button class="btn btn-primary" id="prFillBtn">Fill Progress</button><button class="btn btn-light" id="prCompletionBtn" type="button">Completion Report ▾</button><button class="btn btn-light" id="prPdfBtn" style="display:none">Download PDF</button><button class="btn btn-navy" id="prCustomizeBtn" style="display:none">Customize</button></div><div id="prContent" class="pr-scroll"></div><div id="prCompletionPanel" class="pr-completion-panel" style="display:none"><div class="pr-completion-head">Completion Report</div><div id="prCompletionContent" class="pr-scroll"></div></div></div></div>
 <div class="modal-overlay" id="prConfigModal"><div class="modal" style="max-width:900px;width:96%;"><button class="close-x" data-close="prConfigModal">&times;</button><h2>Progress Report Configuration</h2><p class="hint">Build a true hierarchy such as Building → Floor → Unit → Indoor/Outdoor. Every level can have multiple options, and lower-level options belong to the option selected above.</p><div class="pr-admin-grid"><input id="prNewLevelLabel" placeholder="New level name"><button class="btn btn-primary" id="prAddLevelBtn">Add Level</button></div><div id="prLevelsEditor" style="margin-top:12px"></div><hr><h3>Add Option</h3><div id="prOptionPathSelectors"></div><div class="pr-admin-grid" style="margin-top:8px"><input id="prNewOptionLabel" placeholder="Option name"><button class="btn btn-primary" id="prAddOptionBtn">Add Option</button></div><hr><h3>Add Job</h3><div id="prJobPathSelectors"></div><input id="prNewJobLabel" placeholder="Job details / job name" style="margin-top:8px;width:100%"><div class="modal-actions"><button class="btn btn-primary" id="prAddJobBtn">Add Job</button></div><div id="prConfigError" class="error-text"></div></div></div>
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
@@ -2779,7 +2790,7 @@ function renderProjectList(){
     if(isAdmin){
       projectCardButtons += `<button class="btn btn-light edit-project" data-project-id="${p.id}">Edit</button><button class="btn btn-red delete-project" data-project-id="${p.id}">Delete</button>`;
     }
-    if(canManageProjects){
+    if(isAdmin){
       projectCardButtons += `<button class="btn btn-navy pdf-project" data-project-id="${p.id}">Download PDF</button>`;
     }
     const adminActions = projectCardButtons ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">${projectCardButtons}</div>` : "";
@@ -3593,8 +3604,8 @@ $("workVerifyGoogleBtn").addEventListener("click", async ()=>{
 $("fab").addEventListener("click", async ()=>{
   if(activeTab === "projects") return;
   if(activeTab === "work"){
-    $("workVerifyError").textContent = "";
-    showModal("workVerifyModal");
+    if(isAdmin || isVerifiedStaff){ openNewWorkReportForm(); }
+    else { $("workVerifyError").textContent = ""; showModal("workVerifyModal"); }
     return;
   }
 
@@ -3617,6 +3628,28 @@ $("fab").addEventListener("click", async ()=>{
 // authorizedStaff or isVerifiedStaff. After Google sign-in, immediately sign back
 // out so the task remains a normal USER-created task, not an elevated/assigned
 // staff task. No admin approval is involved.
+$("progressVerifyGoogleBtn").addEventListener("click", async ()=>{
+  $("progressVerifyError").textContent="";
+  $("progressVerifyGoogleBtn").disabled=true;
+  try{
+    const result=await signInWithPopup(auth,googleProvider);
+    const email=(result.user.email||"").toLowerCase();
+    if(!email){ $("progressVerifyError").textContent="Could not read an email address from that Google account."; await signOut(auth); $("progressVerifyGoogleBtn").disabled=false; return; }
+    try{
+      await addDoc(collection(db,"staffLogins"),{email,uid:result.user.uid,verifiedAt:serverTimestamp(),action:"Service Action Report"});
+    }catch(e){ console.error("Could not record project progress verification",e); }
+    const pid=pendingProgressProjectId;
+    pendingProgressProjectId=null;
+    await signOut(auth);
+    hideModal("progressVerifyModal");
+    if(pid) await openProgressReportAfterVerification(pid);
+  }catch(err){
+    console.error("Project progress Google verification failed",err);
+    if(err.code!=="auth/popup-closed-by-user" && err.code!=="auth/cancelled-popup-request") $("progressVerifyError").textContent=`Could not verify (${err.code||err.message||"unknown error"}).`;
+  }
+  $("progressVerifyGoogleBtn").disabled=false;
+});
+
 $("projectTaskVerifyGoogleBtn").addEventListener("click", async ()=>{
   $("projectTaskVerifyError").textContent = "";
   $("projectTaskVerifyGoogleBtn").disabled = true;
@@ -4218,6 +4251,7 @@ function generateWorkPdf(items, siteFilterValue, fromValue, toValue){
 
 // ================= PROJECT PROGRESS REPORT: TRUE HIERARCHY =================
 let prProjectId=null, prProjectName='', prTree={levels:[],nodes:[]}, prJobs=[];
+let pendingProgressProjectId=null;
 let prSelectedPath=[];
 const prSafe=v=>escapeHtml(String(v==null?'':v));
 const prNewId=()=> 'pr_'+Math.random().toString(36).slice(2,10);
@@ -4264,8 +4298,29 @@ function prRenderFill(){
     }
   }));
 }
-async function openProgressReport(pid){try{await prLoad(pid);prSelectedPath=[];$('prTitle').textContent=`Project Progress Report — ${prProjectName}`;$('prCustomizeBtn').style.display=isAdmin?'inline-block':'none';showModal('progressReportModal');prRenderFill();}catch(e){console.error('Progress report:',e);alert('Unable to open Progress Report. Please check the Progress Report Firestore rules.');}}
-function prRenderCompletion(){prSummary();const root=$('prContent');let h='';function walk(nodes,path,depth){for(const n of(nodes||[])){const p=path.concat(n.id);h+=`<div class="pr-level-box"><b>${prSafe(prTree.levels[depth]?prTree.levels[depth].label:'Option')}: ${prSafe(n.label)}</b>`;const jobs=prJobs.filter(j=>Array.isArray(j.pathIds)&&j.pathIds.length>=p.length&&p.every((v,i)=>j.pathIds[i]===v));for(const j of jobs)h+=`<div class="pr-job"><b>${prSafe(j.jobLabel||'Job')}</b> — ${prSafe(j.status||'pending')}${j.staffName?' — '+prSafe(j.staffName):''}${j.note?`<div class="pr-path">Note: ${prSafe(j.note)}</div>`:''}</div>`;walk(n.children||[],p,depth+1);h+='</div>';}}walk(prTree.nodes,[],0);root.innerHTML=h||'<div class="hint">No hierarchy configured.</div>';}
+async function openProgressReport(pid){
+  if(!isAdmin && !isVerifiedStaff){
+    pendingProgressProjectId=pid;
+    $("progressVerifyError").textContent="";
+    showModal("progressVerifyModal");
+    return;
+  }
+  await openProgressReportAfterVerification(pid);
+}
+async function openProgressReportAfterVerification(pid){
+  try{
+    await prLoad(pid);
+    prSelectedPath=[];
+    $("prTitle").textContent=`Project Progress Report — ${prProjectName}`;
+    $("prCustomizeBtn").style.display=isAdmin?'inline-block':'none';
+    showModal("progressReportModal");
+    prRenderFill();
+  }catch(e){
+    console.error('Progress report:',e);
+    alert('Unable to open Progress Report. Please check the Progress Report Firestore rules.');
+  }
+}
+function prRenderCompletion(){prSummary();const root=$('prCompletionContent');let h='';function walk(nodes,path,depth){for(const n of(nodes||[])){const p=path.concat(n.id);h+=`<div class="pr-level-box"><b>${prSafe(prTree.levels[depth]?prTree.levels[depth].label:'Option')}: ${prSafe(n.label)}</b>`;const jobs=prJobs.filter(j=>Array.isArray(j.pathIds)&&j.pathIds.length>=p.length&&p.every((v,i)=>j.pathIds[i]===v));for(const j of jobs)h+=`<div class="pr-job"><b>${prSafe(j.jobLabel||'Job')}</b> — ${prSafe(j.status||'pending')}${j.staffName?' — '+prSafe(j.staffName):''}${j.note?`<div class="pr-path">Note: ${prSafe(j.note)}</div>`:''}</div>`;walk(n.children||[],p,depth+1);h+='</div>';}}walk(prTree.nodes,[],0);root.innerHTML=h||'<div class="hint">No hierarchy configured.</div>';}
 function prRenderPathSelectors(containerId,initial){const box=$(containerId);let h='';let path=(initial||[]).slice();for(let i=0;i<prTree.levels.length;i++){const opts=prOptionsForPath(path.slice(0,i));h+=`<label>${prSafe(prTree.levels[i].label)}</label><select data-config-level="${i}"><option value="">Select ${prSafe(prTree.levels[i].label)}</option>${opts.map(o=>`<option value="${prSafe(o.id)}" ${path[i]===o.id?'selected':''}>${prSafe(o.label)}</option>`).join('')}</select>`;}box.innerHTML=h;box.querySelectorAll('[data-config-level]').forEach(el=>el.addEventListener('change',()=>{const i=Number(el.dataset.configLevel);path=path.slice(0,i);if(el.value)path[i]=el.value;if(containerId==='prJobPathSelectors')prSelectedPath=path.slice();prRenderPathSelectors(containerId,path);}));}
 function prRenderOptionTree(nodes,depth,path){return (nodes||[]).map(n=>`<div class="pr-node-row"><span><b>${prSafe(prTree.levels[depth]?prTree.levels[depth].label:'Option')}:</b> ${prSafe(n.label)}</span>${depth<prTree.levels.length-1?'<button class="btn btn-light" data-expand="'+prSafe(n.id)+'">Children</button>':''}<button class="btn btn-red" data-delete-node="${prSafe(n.id)}">Delete</button></div>${depth<prTree.levels.length-1?`<div class="pr-child-box" data-child-box="${prSafe(n.id)}"></div>`:''}`).join('');}
 function prRenderLevelsEditor(){const box=$('prLevelsEditor');box.innerHTML=prTree.levels.map((lv,i)=>`<div class="pr-level-box"><div class="pr-admin-grid"><input data-level-label="${i}" value="${prSafe(lv.label)}"><button class="btn btn-light" data-remove-level="${i}">Remove Level</button></div>${i===0?'<div style="margin-top:8px">'+prRenderOptionTree(prTree.nodes,0,[]):'<div class="pr-muted" style="margin-top:8px">Add options for this level using the Add Option section below.</div>'}</div>`).join('');box.querySelectorAll('[data-level-label]').forEach(i=>i.addEventListener('change',async()=>{prTree.levels[Number(i.dataset.levelLabel)].label=i.value.trim()||`Level ${Number(i.dataset.levelLabel)+1}`;await prSaveTree();}));box.querySelectorAll('[data-remove-level]').forEach(b=>b.addEventListener('click',async()=>{const idx=Number(b.dataset.removeLevel);if(!confirm('Remove this level and rebuild its hierarchy?'))return;prTree.levels.splice(idx,1);if(idx===0)prTree.nodes=[];await prSaveTree();prRenderLevelsEditor();prRenderPathSelectors('prOptionPathSelectors',[]);prRenderPathSelectors('prJobPathSelectors',[]);}));box.querySelectorAll('[data-expand]').forEach(b=>b.addEventListener('click',()=>{const n=prFind(prTree.nodes,b.dataset.expand);const box= document.querySelector(`[data-child-box="${b.dataset.expand}"]`);if(n&&box){box.innerHTML=prRenderOptionTree(n.children||[],(prTree.levels.findIndex(x=>x.id===prTree.levels[0].id))+1,[]);prBindTreeButtons(box,n);}}));prBindTreeButtons(box, null);}
@@ -4277,7 +4332,7 @@ $('prCustomizeBtn').addEventListener('click',()=>{prRenderLevelsEditor();prRende
 $('prAddLevelBtn').addEventListener('click',async()=>{const label=$('prNewLevelLabel').value.trim();if(!label)return;$('prNewLevelLabel').value='';prTree.levels.push({id:prNewId(),label});await prSaveTree();prRenderLevelsEditor();prRenderPathSelectors('prOptionPathSelectors',[]);prRenderPathSelectors('prJobPathSelectors',[]);});
 $('prAddOptionBtn').addEventListener('click',async()=>{const label=$('prNewOptionLabel').value.trim();if(!label){$('prConfigError').textContent='Enter an option name.';return;}const selects=[...document.querySelectorAll('#prOptionPathSelectors select[data-config-level]')];const path=selects.map(x=>x.value).filter(Boolean);const targetLevel=path.length;if(targetLevel>=prTree.levels.length){$('prConfigError').textContent='Select the parent hierarchy before adding this option.';return;}prAddAtPath(path,label);await prSaveTree();$('prNewOptionLabel').value='';$('prConfigError').textContent=`Added ${prTree.levels[targetLevel].label}: ${label}`;prRenderLevelsEditor();prRenderPathSelectors('prOptionPathSelectors',path);prRenderPathSelectors('prJobPathSelectors',prSelectedPath);});
 $('prAddJobBtn').addEventListener('click',async()=>{const label=$('prNewJobLabel').value.trim();const path=[...document.querySelectorAll('#prJobPathSelectors select[data-config-level]')].map(x=>x.value).filter(Boolean);if(!label){$('prConfigError').textContent='Enter job details.';return;}if(!path.length){$('prConfigError').textContent='Select at least one hierarchy option for the job.';return;}await addDoc(collection(db,'progressJobs'),{projectId:prProjectId,pathIds:path,pathLabels:prLabels(path),jobLabel:label,status:'pending',staffName:'',assignee:'',note:'',createdAt:serverTimestamp(),createdBy:currentUser?currentUser.uid:null});$('prNewJobLabel').value='';$('prConfigError').textContent='Job added.';await prLoad(prProjectId);prSelectedPath=path.slice();prRenderPathSelectors('prJobPathSelectors',path);});
-$('prFillBtn').addEventListener('click',prRenderFill);$('prCompletionBtn').addEventListener('click',prRenderCompletion);
+$('prFillBtn').addEventListener('click',()=>{prRenderFill();$('prCompletionPanel').style.display='none';$('prCompletionBtn').textContent='Completion Report ▾';});$('prCompletionBtn').addEventListener('click',()=>{const panel=$('prCompletionPanel');const open=panel.style.display!=='none';if(open){panel.style.display='none';$('prCompletionBtn').textContent='Completion Report ▾';}else{prRenderCompletion();panel.style.display='block';$('prCompletionBtn').textContent='Completion Report ▴';}});
 $('prPdfBtn').addEventListener('click',()=>{const J=window.jspdf&&window.jspdf.jsPDF;if(!J){alert('PDF library is not loaded.');return;}const pdf=new J();let y=15;const line=t=>{if(y>280){pdf.addPage();y=15;}pdf.text(String(t),12,y);y+=6;};const c=prCounts();pdf.setFont('helvetica','bold');line(`Project Progress Report — ${prProjectName}`);pdf.setFont('helvetica','normal');line(`Completed: ${c.completed} | Progressing: ${c.progressing} | Pending: ${c.pending}`);function walk(nodes,path,depth){for(const n of(nodes||[])){const p=path.concat(n.id);line(' '.repeat(depth*3)+(prTree.levels[depth]?prTree.levels[depth].label+': ':'')+n.label);for(const j of prJobs.filter(j=>Array.isArray(j.pathIds)&&j.pathIds.length>=p.length&&p.every((v,i)=>j.pathIds[i]===v)))line(' '.repeat((depth+1)*3)+'JOB: '+j.jobLabel+' — '+(j.status||'pending')+(j.staffName?' — Staff: '+j.staffName:'')+(j.note?' — Note: '+j.note:''));walk(n.children||[],p,depth+1);}}walk(prTree.nodes,[],0);pdf.save('SAJ_Project_Progress_'+prProjectName.replace(/[^a-z0-9_-]+/gi,'_')+'.pdf');});
 
 </script>
