@@ -4441,14 +4441,69 @@ $('prCustomizeBtn').addEventListener('click',async()=>{
 });
 $('prAddLevelBtn').addEventListener('click',async()=>{if(!isAdmin)return;const name=$('prNewLevelLabel').value.trim();if(!name){$('prConfigError').textContent='Enter a level name.';return;}const levels=(prTree.levels||[]).concat({id:prNewId(),label:name});$('prNewLevelLabel').value='';await prSaveConfigTree({levels});});
 function prFindParentForPath(path){let arr=prTree.nodes||[];let node=null;for(const id of (path||[])){node=arr.find(n=>n.id===id);if(!node)return null;arr=node.children||[];}return {node,arr};}
-$('prAddOptionBtn').addEventListener('click',async()=>{if(!isAdmin)return;const name=$('prNewOptionLabel').value.trim();if(!name){$('prConfigError').textContent='Enter an option name.';return;}const path=window._prOptionSelections||[];const nodes=JSON.parse(JSON.stringify(prTree.nodes||[]));let arr=nodes;for(const id of path){const n=arr.find(x=>x.id===id);if(!n)return; n.children=n.children||[];arr=n.children;}arr.push({id:prNewId(),label:name,children:[]});$('prNewOptionLabel').value='';await prSaveConfigTree({nodes});});
+$('prAddOptionBtn').addEventListener('click',async()=>{
+  if(!isAdmin)return;
+  const name=$('prNewOptionLabel').value.trim();
+  if(!name){$('prConfigError').textContent='Enter an option name.';return;}
+  const selections=prNormalizeSelection(window._prOptionSelectionsFull||[]);
+  const levels=prTree.levels||[];
+  if(!levels.length){$('prConfigError').textContent='Add a level first.';return;}
+  let targetLevel=0;
+  while(targetLevel<levels.length && selections[targetLevel]&&selections[targetLevel].length) targetLevel++;
+  // The selected options in all preceding levels are the parents to which
+  // this new option must be attached. Multiple selections create the same
+  // option under every selected parent combination.
+  const parentSelections=selections.slice(0,targetLevel);
+  if(targetLevel>0 && parentSelections.some(a=>!a||!a.length)){
+    $('prConfigError').textContent='Select the parent option(s) for every previous level.';return;
+  }
+  const nodes=JSON.parse(JSON.stringify(prTree.nodes||[]));
+  function findNode(arr,id){return (arr||[]).find(n=>n.id===id)||null;}
+  function addUnderPath(path){
+    let arr=nodes;
+    for(const id of path){const n=findNode(arr,id);if(!n)return false;n.children=n.children||[];arr=n.children;}
+    if(arr.some(n=>n.label.trim().toLowerCase()===name.toLowerCase())) return true;
+    arr.push({id:prNewId(),label:name,children:[]});
+    return true;
+  }
+  function combinations(i,path,out){
+    if(i>=parentSelections.length){out.push(path.slice());return;}
+    for(const id of parentSelections[i]||[]) combinations(i+1,path.concat(id),out);
+  }
+  const paths=[];
+  combinations(0,[],paths);
+  if(!paths.length && targetLevel>0){$('prConfigError').textContent='Select at least one parent option.';return;}
+  if(targetLevel===0) addUnderPath([]); else for(const path of paths) addUnderPath(path);
+  $('prNewOptionLabel').value='';
+  $('prConfigError').textContent=`Added "${name}" to ${targetLevel===0?'the first level':`${paths.length} selected parent branch${paths.length===1?'':'es'}`}.`;
+  await prSaveConfigTree({nodes});
+});
 $('prAddJobBtn').addEventListener('click',async()=>{if(!isAdmin)return;const name=$('prNewJobLabel').value.trim();if(!name){$('prConfigError').textContent='Enter job details.';return;}const path=window._prJobSelections||[];if(!path.length){$('prConfigError').textContent='Select at least one level/option for this job.';return;}const labels=prPathLabels(path);try{await addDoc(collection(db,'progressJobs'),{projectId:prProjectId,pathIds:path,pathLabels:labels,jobLabel:name,status:'pending',staffName:null,assignee:null,note:null,completedAt:null,createdAt:serverTimestamp(),createdBy:currentUser?.email||null});$('prNewJobLabel').value='';}catch(e){console.error(e);$('prConfigError').textContent='Could not add job. Check Firebase rules.';}});
 // Replace the path-selector renderer so selections are retained and are usable
 // by Add Option and Add Job. Multiple selection is still the collapsible box.
 prRenderPathSelectors=function(containerId,initial){
   const box=$(containerId);let selections=prNormalizeSelection(initial);const key=containerId==='prOptionPathSelectors'?'_prOptionSelections':'_prJobSelections';
   function firstPath(){const out=[];for(const a of selections){if(!a||!a.length)break;out.push(a[0]);}return out;}
-  function render(){let h='';for(let i=0;i<prTree.levels.length;i++){const opts=prOptionsForSelections(selections,i),selected=selections[i]||[];h+=prMultiDropdown(prTree.levels[i].label,opts,selected,'config',i);}box.innerHTML=h;window[key]=firstPath();box.querySelectorAll('input[data-config-choice]').forEach(el=>el.addEventListener('change',()=>{const i=+el.dataset.configLevel;const vals=[...box.querySelectorAll(`input[data-config-level="${i}"][data-config-choice]:checked`)].map(x=>x.dataset.configChoice);selections=selections.slice(0,i);selections[i]=vals;selections=selections.slice(0,i+1);render();}));}
+  function render(){
+    let h='';
+    for(let i=0;i<prTree.levels.length;i++){
+      const opts=prOptionsForSelections(selections,i),selected=selections[i]||[];
+      h+=prMultiDropdown(prTree.levels[i].label,opts,selected,'config',i);
+    }
+    box.innerHTML=h;
+    window[key]=firstPath();
+    window[key+'Full']=selections.map(a=>Array.isArray(a)?a.slice():[]);
+    box.querySelectorAll('input[data-config-choice]').forEach(el=>el.addEventListener('change',()=>{
+      const i=+el.dataset.configLevel;
+      const vals=[...box.querySelectorAll(`input[data-config-level="${i}"][data-config-choice]:checked`)].map(x=>x.dataset.configChoice);
+      selections=selections.slice(0,i);
+      selections[i]=vals;
+      // Keep the selected parents, but clear lower levels because their
+      // available options depend on the new parent selection.
+      selections=selections.slice(0,i+1);
+      render();
+    }));
+  }
   render();
 };
 
