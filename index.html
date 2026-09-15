@@ -4285,11 +4285,16 @@ function prNormalizeSelection(sel){
 }
 function prOptionsForSelections(selections, targetLevel){
   if(targetLevel===0) return prTree.nodes||[];
-  const parents=prNormalizeSelection(selections[targetLevel-1]);
+  const normalized=prNormalizeSelection(selections);
+  const parents=normalized[targetLevel-1]||[];
   const seen=new Set(), out=[];
+  // Find each selected parent anywhere in the hierarchy, then show its
+  // immediate children. This is what allows Level 3, 4, 5, etc. to work.
   for(const id of parents){
     const n=prFind(prTree.nodes,id);
-    for(const child of ((n&&n.children)||[])) if(!seen.has(child.id)){seen.add(child.id);out.push(child);}
+    for(const child of ((n&&n.children)||[])){
+      if(!seen.has(child.id)){seen.add(child.id);out.push(child);}
+    }
   }
   return out;
 }
@@ -4419,12 +4424,10 @@ function prRefreshConfig(preserveSelections){
   const levelBox=$('prLevelsEditor');
   if(!levelBox) return;
   const levels=prTree.levels||[];
-  levelBox.innerHTML=levels.map((lv,i)=>`<div class="card" style="margin:8px 0;"><div class="card-body pr-level-config-row"><input class="pr-level-name-edit" data-i="${i}" value="${prSafe(lv.label)}"><button type="button" class="btn btn-light pr-order-btn pr-level-up" data-i="${i}" ${i===0?'disabled':''} title="Move level up" aria-label="Move level up">↑</button><button type="button" class="btn btn-light pr-order-btn pr-level-down" data-i="${i}" ${i===levels.length-1?'disabled':''} title="Move level down" aria-label="Move level down">↓</button><button type="button" class="btn btn-red pr-delete-level" data-i="${i}" title="Delete level">Delete</button></div></div>`).join('')||'<div class="hint">No levels configured.</div>';
+  levelBox.innerHTML=levels.map((lv,i)=>`<div class="card" style="margin:8px 0;"><div class="card-body pr-level-config-row"><input class="pr-level-name-edit" data-i="${i}" value="${prSafe(lv.label)}"><button type="button" class="btn btn-red pr-delete-level" data-i="${i}" title="Delete level">Delete</button></div></div>`).join('')||'<div class="hint">No levels configured.</div>';
   levelBox.querySelectorAll('.pr-level-name-edit').forEach(el=>el.addEventListener('change',async()=>{const i=+el.dataset.i;const levels2=prTree.levels.slice();levels2[i]={...levels2[i],label:el.value.trim()||`Level ${i+1}`};await prSaveConfigTree({levels:levels2});}));
   prRenderHierarchyEditor();
   levelBox.querySelectorAll('.pr-delete-level').forEach(el=>el.addEventListener('click',async()=>{const i=+el.dataset.i;if(!confirm('Delete this level? Its options and related jobs may no longer be reachable.'))return;const levels2=prTree.levels.slice();levels2.splice(i,1);await prSaveConfigTree({levels:levels2});}));
-  levelBox.querySelectorAll('.pr-level-up').forEach(el=>el.addEventListener('click',async()=>{const i=+el.dataset.i;if(i<1)return;const a=prTree.levels.slice();[a[i-1],a[i]]=[a[i],a[i-1]];await prSaveConfigTree({levels:a});}));
-  levelBox.querySelectorAll('.pr-level-down').forEach(el=>el.addEventListener('click',async()=>{const i=+el.dataset.i;if(i>=prTree.levels.length-1)return;const a=prTree.levels.slice();[a[i],a[i+1]]=[a[i+1],a[i]];await prSaveConfigTree({levels:a});}));
   const keepOption=preserveSelections&&preserveSelections.option?preserveSelections.option:[];
   const keepJob=preserveSelections&&preserveSelections.job?preserveSelections.job:[];
   prRenderPathSelectors('prOptionPathSelectors',keepOption);
@@ -4488,15 +4491,24 @@ $('prAddJobBtn').addEventListener('click',async()=>{if(!isAdmin)return;const nam
 // Replace the path-selector renderer so selections are retained and are usable
 // by Add Option and Add Job. Multiple selection is still the collapsible box.
 prRenderPathSelectors=function(containerId,initial){
-  const box=$(containerId);let selections=prNormalizeSelection(initial);const key=containerId==='prOptionPathSelectors'?'_prOptionSelections':'_prJobSelections';
+  const box=$(containerId);
+  let selections=prNormalizeSelection(initial);
+  const key=containerId==='prOptionPathSelectors'?'_prOptionSelections':'_prJobSelections';
   function firstPath(){const out=[];for(const a of selections){if(!a||!a.length)break;out.push(a[0]);}return out;}
-  function render(){
+  function render(openLevel){
     let h='';
     for(let i=0;i<prTree.levels.length;i++){
       const opts=prOptionsForSelections(selections,i),selected=selections[i]||[];
       h+=prMultiDropdown(prTree.levels[i].label,opts,selected,'config',i);
     }
     box.innerHTML=h;
+    // Keep the dropdown open while selecting multiple items. Previously the
+    // whole selector was re-rendered after every checkbox click, which closed
+    // the <details> element and forced the user to reopen it for every item.
+    if(Number.isInteger(openLevel)){
+      const details=box.querySelectorAll('details.pr-multi')[openLevel];
+      if(details) details.open=true;
+    }
     window[key]=firstPath();
     window[key+'Full']=selections.map(a=>Array.isArray(a)?a.slice():[]);
     box.querySelectorAll('input[data-config-choice]').forEach(el=>el.addEventListener('change',()=>{
@@ -4504,10 +4516,10 @@ prRenderPathSelectors=function(containerId,initial){
       const vals=[...box.querySelectorAll(`input[data-config-level="${i}"][data-config-choice]:checked`)].map(x=>x.dataset.configChoice);
       selections=selections.slice(0,i);
       selections[i]=vals;
-      // Keep the selected parents, but clear lower levels because their
-      // available options depend on the new parent selection.
+      // Lower levels depend on this selection, so clear them. Keep this
+      // dropdown open so multiple parent options can be selected continuously.
       selections=selections.slice(0,i+1);
-      render();
+      render(i);
     }));
   }
   render();
