@@ -252,22 +252,6 @@
   </div>
 </div>
 
-<!-- QUICK ACTION CHOOSER: shown right after a project is picked from the +
-     button, for every signed-in user (admin, verified staff, or a plain
-     user who just passed the Google check). Lets them go to either the
-     task form or the Progress Report instead of always landing on Add Task. -->
-<div class="modal-overlay" id="projectQuickActionModal">
-  <div class="modal">
-    <button class="close-x" data-close="projectQuickActionModal">&times;</button>
-    <h2 id="projectQuickActionTitle">Project</h2>
-    <div class="hint">What would you like to do?</div>
-    <div class="modal-actions" style="flex-direction:column;gap:8px;margin-top:14px;">
-      <button class="btn btn-primary" id="quickActionAddTaskBtn" style="width:100%;">Add Task</button>
-      <button class="btn btn-navy" id="quickActionProgressBtn" style="width:100%;">Progress Report</button>
-    </div>
-  </div>
-</div>
-
 <div class="modal-overlay" id="projectTasksModal">
   <div class="modal">
     <button class="close-x" data-close="projectTasksModal" aria-label="Close">&times;</button>
@@ -829,13 +813,6 @@ let editingWorkId = null;
 // anonymous immediately after, so currentUser.email is no longer available
 // by the time the form is actually submitted.
 let verifiedWorkReportEmail = null;
-// Set once a normal user completes the lightweight Project Reports + button
-// Google check (see projectTaskVerifyGoogleBtn below). That check signs the
-// person back out immediately, same as verifiedWorkReportEmail above, so
-// isVerifiedStaff stays false for them — this flag is what lets them also
-// fill in Progress Report jobs for the rest of the session without being
-// promoted to actual staff/admin.
-let projectQuickVerified = false;
 let appPassword = "";
 let appUnlocked = false;
 
@@ -3499,41 +3476,20 @@ function openProjectTaskProjectSelector(createMode="staffCreate"){
       hideModal("projectTaskProjectSelectModal");
 
       // Normal users arrive here after the Project Reports + Google identity
-      // check; admins/admin-verified staff arrive here directly from the same
-      // + button. Either way, let them choose between adding a task and
-      // opening the Progress Report, instead of always landing on Add Task.
-      openProjectQuickActionChooser(createMode);
+      // check and use the ordinary USER-created task flow. Admins and
+      // admin-verified staff arrive here directly from the same + button and
+      // use the elevated assignment flow instead.
+      editingProjectTaskId=null;
+      $("projectTaskError").textContent="";
+      renderProjectTaskFields({}, createMode === "admin" ? "admin" : "staffCreate");
+      $("newProjectTaskTitle").textContent = createMode === "admin" ? "Assign Task" : "Add Task";
+      $("saveProjectTaskBtn").textContent="Save";
+      showModal("newProjectTaskModal");
     });
   });
 
   showModal("projectTaskProjectSelectModal");
 }
-
-// Shown after a project is picked from the + button. Both actions are
-// available to every signed-in user — Progress Report is viewable by anyone;
-// editing a job inside it is still gated to admin/verified staff by the
-// existing canEdit check and by the progressJobs Firestore rules.
-let pendingProjectTaskCreateMode = "staffCreate";
-function openProjectQuickActionChooser(createMode){
-  pendingProjectTaskCreateMode = createMode;
-  $("projectQuickActionTitle").textContent = currentProjectName || "Project";
-  showModal("projectQuickActionModal");
-}
-
-$("quickActionAddTaskBtn").addEventListener("click", ()=>{
-  hideModal("projectQuickActionModal");
-  editingProjectTaskId=null;
-  $("projectTaskError").textContent="";
-  renderProjectTaskFields({}, pendingProjectTaskCreateMode === "admin" ? "admin" : "staffCreate");
-  $("newProjectTaskTitle").textContent = pendingProjectTaskCreateMode === "admin" ? "Assign Task" : "Add Task";
-  $("saveProjectTaskBtn").textContent="Save";
-  showModal("newProjectTaskModal");
-});
-
-$("quickActionProgressBtn").addEventListener("click", ()=>{
-  hideModal("projectQuickActionModal");
-  openProgressReport(currentProjectId, currentProjectName);
-});
 
 $("newProjectBtn").addEventListener("click",()=>{
   $("projectNameInput").value=""; $("projectError").textContent=""; showModal("newProjectModal");
@@ -3736,7 +3692,6 @@ $("projectTaskVerifyGoogleBtn").addEventListener("click", async ()=>{
       });
     }catch(e){ console.error("Could not record project add-task verification", e); }
     await signOut(auth);
-    projectQuickVerified = true;
     hideModal("projectTaskVerifyModal");
     openProjectTaskProjectSelector("staffCreate");
   }catch(err){
@@ -4338,6 +4293,7 @@ let prCustomizeBreadcrumb = [];  // node ids drilled into, inside the Customize 
 let prJobsEditorPath = null;     // when set (array of node ids), Customize is showing that node's job list instead of its children
 let prExpandedJobId = null;      // which job card is expanded in the Fill Progress tab
 let prJobDrafts = {};            // jobId -> {staff, note} — unsaved text typed into a job's form
+let prCopyPanelOpen = false;     // whether the "copy jobs to other units" picker is showing in the Jobs editor
 
 function prNodeIdGen(){ return "n_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2,7); }
 
@@ -4367,6 +4323,23 @@ function prPathLabels(path){
   }
   return labels;
 }
+// Flattens the whole tree into a single list of {unitPath, label} — every
+// node at every depth, with its full "Building / Floor / Unit" label — used
+// by the job-sharing picker so a job set (e.g. Brazing, Pressure Test) can be
+// copied onto other units, including ones in a different branch/building.
+function prFlattenTree(){
+  const out = [];
+  function walk(nodes, path, labels){
+    (nodes||[]).forEach(n=>{
+      const p = [...path, n.id];
+      const l = [...labels, n.label];
+      out.push({ unitPath: p.join(">"), label: l.join(" / ") });
+      walk(n.children||[], p, l);
+    });
+  }
+  walk((prTreeDoc && prTreeDoc.nodes) || [], [], []);
+  return out;
+}
 
 // ---------- ENTRY POINTS ----------
 function openProgressReport(projectId, projectName){
@@ -4383,6 +4356,7 @@ function openProgressReport(projectId, projectName){
   prJobDrafts = {};
   prCustomizeBreadcrumb = [];
   prJobsEditorPath = null;
+  prCopyPanelOpen = false;
   startPrListeners();
   showModal("prModal");
 }
@@ -4478,6 +4452,7 @@ function renderPrFillView(){
 
 function prStatusBadge(status){
   if(status==="done") return `<span class="badge badge-closed">Completed</span>`;
+  if(status==="submitted") return `<span class="badge badge-assigned">Awaiting approval</span>`;
   if(status==="in_progress") return `<span class="badge" style="background:var(--blue-bg);color:var(--blue);">In progress</span>`;
   return `<span class="badge badge-open">Pending</span>`;
 }
@@ -4511,8 +4486,8 @@ function renderPrJobsChecklist(){
 function prRenderJobCard(j){
   const expanded = prExpandedJobId === j.id;
   const draft = prJobDrafts[j.id] || { staff: j.currentStaff||"", note: j.currentNote||"" };
-  const canEdit = (isAdmin || isVerifiedStaff || projectQuickVerified) && j.status !== "done";
-  const logs = (j.logs||[]).slice().reverse();
+  const canEdit = (isAdmin || isVerifiedStaff) && (j.status==="pending" || j.status==="in_progress");
+  const logs = (j.logs||[]).map((l,idx)=> ({...l, _idx: idx})).reverse();
   return `
     <div class="card" style="cursor:default;flex-direction:column;align-items:stretch;">
       <div class="card-body" style="width:100%;">
@@ -4521,6 +4496,7 @@ function prRenderJobCard(j){
           ${prStatusBadge(j.status)}
         </div>
         ${j.currentStaff ? `<div class="meta">Last: ${escapeHtml(j.currentStaff)}${j.currentNote ? " — "+escapeHtml(j.currentNote) : ""}</div>` : ""}
+        ${j.status==="in_progress" && j.rejectionNote ? `<div class="meta" style="color:var(--red);">Sent back by admin: ${escapeHtml(j.rejectionNote)}</div>` : ""}
         ${expanded ? `
           <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
             ${canEdit ? `
@@ -4528,21 +4504,43 @@ function prRenderJobCard(j){
               <div class="field"><label>Note</label><textarea class="pr-job-note" data-id="${j.id}" placeholder="What's today's update?">${escapeHtml(draft.note)}</textarea></div>
               <div class="modal-actions" style="margin-top:0;">
                 <button class="btn btn-light pr-job-save" data-id="${j.id}">Save Progress</button>
-                <button class="btn btn-green pr-job-complete" data-id="${j.id}">Mark Completed</button>
+                <button class="btn btn-green pr-job-complete" data-id="${j.id}">Submit as Completed</button>
               </div>
+            ` : (j.status==="submitted" ? `
+              <div class="detail-row"><b>Submitted by:</b> ${escapeHtml(j.submittedStaff || j.currentStaff || "")}</div>
+              ${j.submittedNote ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(j.submittedNote)}</div>` : ""}
+              ${isAdmin ? `
+                <div class="hint">Waiting on your review.</div>
+                <div class="modal-actions">
+                  <button class="btn btn-green pr-job-approve" data-id="${j.id}">Approve</button>
+                  <button class="btn btn-red pr-job-reject" data-id="${j.id}">Reject</button>
+                </div>
+              ` : `<div class="hint">Awaiting admin approval.</div>`}
             ` : (j.status==="done" ? `
               <div class="detail-row"><b>Completed by:</b> ${escapeHtml(j.completedStaff || j.currentStaff || "")}</div>
               ${j.completedNote ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(j.completedNote)}</div>` : ""}
               ${isAdmin ? `<button class="btn btn-red pr-job-reopen" data-id="${j.id}" style="width:100%;margin-top:6px;">Reopen</button>` : ""}
-            ` : `<div class="hint">Sign in as staff to update this job.</div>`)}
+            ` : `<div class="hint">Sign in with your Google account to update this job.</div>`))}
             ${logs.length ? `
               <div class="section-label" style="margin-top:12px;">History</div>
-              ${logs.map(l=> `<div class="detail-row">${escapeHtml(l.date||"")} &middot; <b>${escapeHtml(l.staffName||"")}</b>${l.completion ? " (Completed)" : ""}${l.note ? " — "+escapeHtml(l.note) : ""}</div>`).join("")}
+              ${logs.map(l=> prRenderLogEntry(j.id, l)).join("")}
             ` : ""}
           </div>
         ` : ""}
       </div>
     </div>`;
+}
+
+function prRenderLogEntry(jobId, l){
+  const label = `${escapeHtml(l.date||"")} &middot; <b>${escapeHtml(l.staffName||"")}</b>${l.completion ? " (Submitted as completed)" : ""}${l.approved ? " (Approved)" : ""}${l.rejected ? " (Rejected)" : ""}${l.note ? " — "+escapeHtml(l.note) : ""}`;
+  if(!isAdmin) return `<div class="detail-row">${label}</div>`;
+  return `<div class="detail-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+    <span style="flex:1;">${label}</span>
+    <span style="display:flex;gap:4px;flex-shrink:0;">
+      <button class="btn btn-light pr-log-edit" data-job="${jobId}" data-idx="${l._idx}" style="padding:3px 8px;font-size:11px;">Edit</button>
+      <button class="btn btn-red pr-log-delete" data-job="${jobId}" data-idx="${l._idx}" style="padding:3px 8px;font-size:11px;">Delete</button>
+    </span>
+  </div>`;
 }
 
 function prWireJobCards(box){
@@ -4570,6 +4568,10 @@ function prWireJobCards(box){
   box.querySelectorAll(".pr-job-save").forEach(btn=> btn.addEventListener("click", ()=> prSaveProgress(btn.getAttribute("data-id"))));
   box.querySelectorAll(".pr-job-complete").forEach(btn=> btn.addEventListener("click", ()=> prCompleteJob(btn.getAttribute("data-id"))));
   box.querySelectorAll(".pr-job-reopen").forEach(btn=> btn.addEventListener("click", ()=> prReopenJob(btn.getAttribute("data-id"))));
+  box.querySelectorAll(".pr-job-approve").forEach(btn=> btn.addEventListener("click", ()=> prApproveJob(btn.getAttribute("data-id"))));
+  box.querySelectorAll(".pr-job-reject").forEach(btn=> btn.addEventListener("click", ()=> prRejectJob(btn.getAttribute("data-id"))));
+  box.querySelectorAll(".pr-log-edit").forEach(btn=> btn.addEventListener("click", ()=> prEditLog(btn.getAttribute("data-job"), parseInt(btn.getAttribute("data-idx"),10))));
+  box.querySelectorAll(".pr-log-delete").forEach(btn=> btn.addEventListener("click", ()=> prDeleteLog(btn.getAttribute("data-job"), parseInt(btn.getAttribute("data-idx"),10))));
 }
 
 function prReadDraft(jobId){
@@ -4604,7 +4606,7 @@ async function prSaveProgress(jobId){
 
 async function prCompleteJob(jobId){
   const { staff, note } = prReadDraft(jobId);
-  if(!staff || !note){ alert("Please enter both a staff name and a note to mark this completed."); return; }
+  if(!staff || !note){ alert("Please enter both a staff name and a note to submit this as completed."); return; }
   const entry = {
     date: new Date().toISOString().slice(0,10),
     staffName: staff, note,
@@ -4613,17 +4615,69 @@ async function prCompleteJob(jobId){
     completion: true
   };
   try{
+    // Submitting doesn't close the job by itself — it goes to "submitted"
+    // and waits for admin approval (Approve -> done, Reject -> back to
+    // in_progress with a note for staff to fix and resubmit).
+    await updateDoc(doc(db,"progressJobs",jobId), {
+      status: "submitted",
+      currentStaff: staff, currentNote: note,
+      submittedStaff: staff, submittedNote: note,
+      submittedAt: serverTimestamp(),
+      submittedBy: currentUser ? (currentUser.email||null) : null,
+      rejectionNote: null, rejectedBy: null, rejectedAt: null,
+      logs: arrayUnion(entry),
+      updatedAt: serverTimestamp()
+    });
+    delete prJobDrafts[jobId];
+  }catch(err){ console.error(err); alert("Could not save. Check your connection and try again."); }
+}
+
+async function prApproveJob(jobId){
+  if(!isAdmin) return;
+  const job = prJobs.find(j=> j.id===jobId);
+  if(!job) return;
+  const staff = job.submittedStaff || job.currentStaff || "";
+  const note = job.submittedNote || job.currentNote || "";
+  const entry = {
+    date: new Date().toISOString().slice(0,10),
+    staffName: staff, note: "Approved by admin",
+    savedBy: currentUser ? (currentUser.email||null) : null,
+    savedAt: Timestamp.now(),
+    approved: true
+  };
+  try{
     await updateDoc(doc(db,"progressJobs",jobId), {
       status: "done",
-      currentStaff: staff, currentNote: note,
       completedStaff: staff, completedNote: note,
       completedAt: serverTimestamp(),
       completedBy: currentUser ? (currentUser.email||null) : null,
       logs: arrayUnion(entry),
       updatedAt: serverTimestamp()
     });
-    delete prJobDrafts[jobId];
-  }catch(err){ console.error(err); alert("Could not save. Check your connection and try again."); }
+  }catch(err){ console.error(err); alert("Could not approve. Check your connection and try again."); }
+}
+
+async function prRejectJob(jobId){
+  if(!isAdmin) return;
+  const note = prompt("Reason for sending this back to staff (shown to them):", "");
+  if(note === null) return;
+  const entry = {
+    date: new Date().toISOString().slice(0,10),
+    staffName: currentUser ? (currentUser.email||"Admin") : "Admin",
+    note: note.trim() || "Rejected — needs rework",
+    savedAt: Timestamp.now(),
+    rejected: true
+  };
+  try{
+    await updateDoc(doc(db,"progressJobs",jobId), {
+      status: "in_progress",
+      rejectionNote: note.trim() || "Needs rework",
+      rejectedBy: currentUser ? (currentUser.email||null) : null,
+      rejectedAt: serverTimestamp(),
+      logs: arrayUnion(entry),
+      updatedAt: serverTimestamp()
+    });
+  }catch(err){ console.error(err); alert("Could not reject. Check your connection and try again."); }
 }
 
 async function prReopenJob(jobId){
@@ -4634,13 +4688,54 @@ async function prReopenJob(jobId){
   try{
     await updateDoc(doc(db,"progressJobs",jobId), {
       status: (job.logs && job.logs.length) ? "in_progress" : "pending",
-      completedAt: null, completedBy: null,
+      completedAt: null, completedBy: null, completedStaff: null, completedNote: null,
+      submittedStaff: null, submittedNote: null, submittedAt: null, submittedBy: null,
+      rejectionNote: null, rejectedBy: null, rejectedAt: null,
       updatedAt: serverTimestamp()
     });
   }catch(err){ console.error(err); alert("Could not update job. Check your connection and try again."); }
 }
 
+async function prEditLog(jobId, idx){
+  if(!isAdmin) return;
+  const job = prJobs.find(j=> j.id===jobId);
+  if(!job || !job.logs || !job.logs[idx]) return;
+  const entry = job.logs[idx];
+  const staff = prompt("Staff name:", entry.staffName || "");
+  if(staff === null) return;
+  const note = prompt("Note:", entry.note || "");
+  if(note === null) return;
+  const logs = job.logs.slice();
+  logs[idx] = { ...entry, staffName: staff.trim(), note: note.trim() };
+  try{
+    await updateDoc(doc(db,"progressJobs",jobId), { logs, updatedAt: serverTimestamp() });
+  }catch(err){ console.error(err); alert("Could not update entry. Check your connection and try again."); }
+}
+
+async function prDeleteLog(jobId, idx){
+  if(!isAdmin) return;
+  if(!(await confirmDelete("Delete this history entry? This cannot be undone."))) return;
+  const job = prJobs.find(j=> j.id===jobId);
+  if(!job || !job.logs) return;
+  const logs = job.logs.slice();
+  logs.splice(idx,1);
+  try{
+    await updateDoc(doc(db,"progressJobs",jobId), { logs, updatedAt: serverTimestamp() });
+  }catch(err){ console.error(err); alert("Could not delete entry. Check your connection and try again."); }
+}
+
 // ---------- COMPLETION REPORT TAB ----------
+function prProgressBarRow(label, count, pct, color){
+  return `<div style="margin-bottom:8px;">
+    <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
+      <span>${escapeHtml(label)} (${count})</span><span>${pct}%</span>
+    </div>
+    <div style="background:#eef1f4;border-radius:6px;height:8px;overflow:hidden;">
+      <div style="width:${pct}%;height:100%;background:${color};"></div>
+    </div>
+  </div>`;
+}
+
 function renderPrReportView(){
   const box = $("prReportView");
   if(!box || !prTreeDoc) return;
@@ -4650,15 +4745,23 @@ function renderPrReportView(){
     byLoc[j.unitPath].jobs.push(j);
   });
   const locPaths = Object.keys(byLoc);
-  if(!locPaths.length){
+  const totalJobs = prJobs.length;
+  if(!totalJobs){
     box.innerHTML = `<div class="hint" style="padding:16px 0;">No jobs recorded yet.</div>`;
     return;
   }
+  const doneN = prJobs.filter(j=> j.status==="done").length;
+  const submittedN = prJobs.filter(j=> j.status==="submitted").length;
+  const progressN = prJobs.filter(j=> j.status==="in_progress").length;
+  const pendingN = prJobs.filter(j=> j.status==="pending").length;
+  const pct = n=> totalJobs ? Math.round((n/totalJobs)*100) : 0;
+
   let completedLocs = 0;
   const rows = locPaths.map(path=>{
     const u = byLoc[path];
     const total = u.jobs.length;
     const done = u.jobs.filter(j=> j.status==="done").length;
+    const submitted = u.jobs.filter(j=> j.status==="submitted");
     const inProgress = u.jobs.filter(j=> j.status==="in_progress");
     const pending = u.jobs.filter(j=> j.status==="pending");
     const isComplete = done===total;
@@ -4668,17 +4771,99 @@ function renderPrReportView(){
         <div class="card-body">
           <p class="card-title">${escapeHtml(u.label)}</p>
           <span class="badge ${isComplete?'badge-closed':'badge-open'}">${done}/${total} done</span>
+          ${submitted.length ? `<div class="meta">Awaiting approval: ${submitted.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
           ${inProgress.length ? `<div class="meta">In progress: ${inProgress.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
           ${pending.length ? `<div class="meta">Pending: ${pending.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
         </div>
       </div>`;
   }).join("");
+
   box.innerHTML = `
-    <div class="section-label">Summary</div>
-    <div class="detail-row"><b>${completedLocs}</b> of <b>${locPaths.length}</b> item(s) fully completed &middot; <b>${locPaths.length - completedLocs}</b> pending</div>
+    <div class="section-label">Overall progress</div>
+    <div class="card" style="cursor:default;flex-direction:column;align-items:stretch;">
+      <div class="card-body" style="width:100%;">
+        <div class="detail-row"><b>${completedLocs}</b> of <b>${locPaths.length}</b> item(s) fully completed</div>
+        <div style="margin-top:10px;">
+          ${prProgressBarRow("Completed", doneN, pct(doneN), "var(--green)")}
+          ${prProgressBarRow("Awaiting approval", submittedN, pct(submittedN), "var(--blue)")}
+          ${prProgressBarRow("In progress", progressN, pct(progressN), "var(--amber)")}
+          ${prProgressBarRow("Pending", pendingN, pct(pendingN), "var(--text-muted)")}
+        </div>
+      </div>
+    </div>
+    ${isAdmin ? `<button class="btn btn-navy" id="prDownloadPdfBtn" style="width:100%;margin:10px 0;">Download PDF Report</button>` : ""}
     <div class="section-label" style="margin-top:14px;">By item</div>
     ${rows}
   `;
+  const pdfBtn = document.getElementById("prDownloadPdfBtn");
+  if(pdfBtn) pdfBtn.addEventListener("click", prDownloadPdf);
+}
+
+// PDF export is admin-only, matching the app's other report exports.
+function prDownloadPdf(){
+  if(!isAdmin) return;
+  const byLoc = {};
+  prJobs.forEach(j=>{
+    if(!byLoc[j.unitPath]) byLoc[j.unitPath] = { label: j.unitLabel || j.unitPath, jobs: [] };
+    byLoc[j.unitPath].jobs.push(j);
+  });
+  const locPaths = Object.keys(byLoc);
+  const totalJobs = prJobs.length;
+  const doneN = prJobs.filter(j=> j.status==="done").length;
+  const submittedN = prJobs.filter(j=> j.status==="submitted").length;
+  const progressN = prJobs.filter(j=> j.status==="in_progress").length;
+  const pendingN = prJobs.filter(j=> j.status==="pending").length;
+  const pct = n=> totalJobs ? Math.round((n/totalJobs)*100) : 0;
+
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({unit:"pt",format:"a4"});
+  const margin = 40;
+  let y = 50;
+  const lineHeight = 15;
+  pdf.setFontSize(18);
+  pdf.text("SAJ Project Progress Report", margin, y);
+  y += 26;
+  pdf.setFontSize(12);
+  pdf.text(`Project: ${prCurrentProjectName}`, margin, y);
+  y += 18;
+  pdf.text(`Generated: ${new Date().toLocaleString("en-GB")}`, margin, y);
+  y += 26;
+  pdf.setFontSize(13);
+  pdf.text("Summary", margin, y);
+  y += 18;
+  pdf.setFontSize(10);
+  [
+    `Total jobs: ${totalJobs}`,
+    `Completed: ${doneN} (${pct(doneN)}%)`,
+    `Awaiting approval: ${submittedN} (${pct(submittedN)}%)`,
+    `In progress: ${progressN} (${pct(progressN)}%)`,
+    `Pending: ${pendingN} (${pct(pendingN)}%)`
+  ].forEach(line=>{ pdf.text(line, margin, y); y += lineHeight; });
+  y += 16;
+
+  locPaths.forEach(path=>{
+    const u = byLoc[path];
+    if(y > 740){ pdf.addPage(); y = 50; }
+    pdf.setFontSize(12);
+    const wrappedTitle = pdf.splitTextToSize(u.label, 515);
+    pdf.text(wrappedTitle, margin, y);
+    y += lineHeight * wrappedTitle.length;
+    pdf.setFontSize(9);
+    u.jobs.forEach(j=>{
+      const statusLabel = j.status==="done" ? "Completed" : j.status==="submitted" ? "Awaiting approval" : j.status==="in_progress" ? "In progress" : "Pending";
+      let line = `- ${j.jobLabel}: ${statusLabel}`;
+      if(j.status==="done") line += ` (by ${j.completedStaff||""}, ${fmtDate(j.completedAt)})`;
+      else if(j.currentStaff) line += ` (last: ${j.currentStaff})`;
+      const wrapped = pdf.splitTextToSize(line, 500);
+      if(y > 770){ pdf.addPage(); y = 50; }
+      pdf.text(wrapped, margin+10, y);
+      y += lineHeight * wrapped.length;
+    });
+    y += 10;
+  });
+
+  const filename = `SAJ_Progress_Report_${sanitizeForFilename(prCurrentProjectName)}_${fmtDateOnly()}.pdf`;
+  pdf.save(filename);
 }
 
 // ---------- CUSTOMIZE (admin only) — free-form tree browser ----------
@@ -4686,6 +4871,7 @@ $("prCustomizeBtn").addEventListener("click", ()=>{
   if(!isAdmin) return;
   prCustomizeBreadcrumb = [];
   prJobsEditorPath = null;
+  prCopyPanelOpen = false;
   $("prCustomizeError").textContent = "";
   renderPrTreeEditor();
   showModal("prCustomizeModal");
@@ -4724,6 +4910,22 @@ async function prAddNode(label){
   const siblings = prGetSiblingsRef(nodes, prCustomizeBreadcrumb);
   if(!siblings) return;
   siblings.push({ id: prNodeIdGen(), label, children: [] });
+  await prSaveTree({ nodes });
+}
+
+// Adds `qty` blank items in one go (e.g. 50 rooms) instead of requiring
+// "+ Add item" to be tapped once per item. Each gets a placeholder label
+// ("New item 1", "New item 2", ...) that can then be renamed in place using
+// the existing per-row name field in the tree editor — no need to type a
+// name up front for every single one.
+async function prAddNodesBulk(qty){
+  const nodes = prCloneNodes();
+  const siblings = prGetSiblingsRef(nodes, prCustomizeBreadcrumb);
+  if(!siblings) return;
+  const startNum = siblings.length + 1;
+  for(let i=0;i<qty;i++){
+    siblings.push({ id: prNodeIdGen(), label: `New item ${startNum+i}`, children: [] });
+  }
   await prSaveTree({ nodes });
 }
 
@@ -4826,9 +5028,16 @@ function renderPrTreeEditor(){
   const addNodeBtn = document.getElementById("prAddNodeBtn");
   if(addNodeBtn){
     addNodeBtn.addEventListener("click", async ()=>{
-      const name = prompt(`New item name${crumbNames.length ? ` under "${crumbNames[crumbNames.length-1]}"` : ""}:`, "");
-      if(name === null) return;
-      await prAddNode(name.trim() || "Untitled");
+      const qtyStr = prompt(`How many items to add${crumbNames.length ? ` under "${crumbNames[crumbNames.length-1]}"` : ""}? (e.g. enter 50 for 50 rooms — you'll name each one after)`, "1");
+      if(qtyStr === null) return;
+      const qty = Math.max(1, Math.min(300, parseInt(qtyStr,10) || 1));
+      if(qty === 1){
+        const name = prompt("New item name:", "");
+        if(name === null) return;
+        await prAddNode(name.trim() || "Untitled");
+      } else {
+        await prAddNodesBulk(qty);
+      }
     });
   }
 }
@@ -4841,18 +5050,50 @@ function prOpenJobsEditor(path){
   const unitJobs = prJobs.filter(j=> j.unitPath===unitPath);
   const labelParts = prPathLabels(prJobsEditorPath);
   crumbBox.innerHTML = `Jobs for <b>${escapeHtml(labelParts.join(" / "))}</b> <button class="btn btn-light" id="prJobsBackBtn" style="padding:3px 10px;font-size:12px;">&larr; Back</button>`;
-  document.getElementById("prJobsBackBtn").addEventListener("click", ()=>{ prJobsEditorPath=null; renderPrTreeEditor(); });
+  document.getElementById("prJobsBackBtn").addEventListener("click", ()=>{ prJobsEditorPath=null; prCopyPanelOpen=false; renderPrTreeEditor(); });
 
-  box.innerHTML = unitJobs.map(j=> `
+  const jobRows = unitJobs.map(j=> `
     <div class="card" style="cursor:default;">
       <div class="card-body">
         <div style="display:flex;gap:8px;align-items:center;">
+          <input type="checkbox" class="pr-job-copy-check" data-id="${j.id}" checked style="width:17px;height:17px;flex-shrink:0;" />
           <span style="flex:1;">${escapeHtml(j.jobLabel)}</span>
           ${prStatusBadge(j.status)}
           <button class="btn btn-red pr-job-delete" data-id="${j.id}" style="padding:6px 10px;">Delete</button>
         </div>
       </div>
-    </div>`).join("") + `<div class="modal-actions"><button class="btn btn-light" id="prAddJobBtn" style="width:100%;">+ Add job</button></div>`;
+    </div>`).join("");
+
+  // "Job sharing": the same job(s) (e.g. Brazing, Pressure Test) are often
+  // needed on many units/buildings. Instead of re-typing them per unit,
+  // check the ones to copy above, tap this, tick the target units below
+  // (anywhere in the tree, any building), and Copy clones them all as fresh
+  // "Pending" jobs with no progress history — the original jobs and their
+  // history here are untouched.
+  const copyPanelHtml = prCopyPanelOpen ? (()=>{
+    const others = prFlattenTree().filter(u=> u.unitPath !== unitPath);
+    if(!others.length){
+      return `<div class="hint" style="margin-top:8px;">No other items exist yet to copy into. Add more items via Customize first.</div>`;
+    }
+    return `
+      <div class="section-label" style="margin-top:14px;">Copy the checked job(s) above to:</div>
+      <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;">
+        ${others.map(u=> `
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;cursor:pointer;">
+            <input type="checkbox" class="pr-copy-target" data-unit="${escapeHtml(u.unitPath)}" style="width:17px;height:17px;flex-shrink:0;" />
+            <span>${escapeHtml(u.label)}</span>
+          </label>`).join("")}
+      </div>
+      <div class="modal-actions">
+        <button class="btn btn-light" id="prCopyCancelBtn">Cancel</button>
+        <button class="btn btn-green" id="prCopyConfirmBtn">Copy</button>
+      </div>`;
+  })() : "";
+
+  box.innerHTML = jobRows
+    + `<div class="modal-actions"><button class="btn btn-light" id="prAddJobBtn" style="width:100%;">+ Add job</button></div>`
+    + (unitJobs.length ? `<button class="btn btn-navy" id="prCopyJobsBtn" style="width:100%;margin-top:6px;">${prCopyPanelOpen ? "Hide copy panel" : "Copy jobs to other units"}</button>` : "")
+    + copyPanelHtml;
 
   box.querySelectorAll(".pr-job-delete").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
@@ -4877,6 +5118,59 @@ function prOpenJobsEditor(path){
           createdAt: serverTimestamp(), createdBy: currentUser ? (currentUser.email||null) : null
         });
       }catch(err){ console.error(err); alert("Could not add job."); }
+    });
+  }
+
+  const copyJobsBtn = document.getElementById("prCopyJobsBtn");
+  if(copyJobsBtn){
+    copyJobsBtn.addEventListener("click", ()=>{
+      prCopyPanelOpen = !prCopyPanelOpen;
+      prOpenJobsEditor(prJobsEditorPath);
+    });
+  }
+  const copyCancelBtn = document.getElementById("prCopyCancelBtn");
+  if(copyCancelBtn){
+    copyCancelBtn.addEventListener("click", ()=>{
+      prCopyPanelOpen = false;
+      prOpenJobsEditor(prJobsEditorPath);
+    });
+  }
+  const copyConfirmBtn = document.getElementById("prCopyConfirmBtn");
+  if(copyConfirmBtn){
+    copyConfirmBtn.addEventListener("click", async ()=>{
+      const selectedJobIds = Array.from(box.querySelectorAll(".pr-job-copy-check:checked")).map(el=> el.getAttribute("data-id"));
+      const selectedTargets = Array.from(box.querySelectorAll(".pr-copy-target:checked")).map(el=> el.getAttribute("data-unit"));
+      if(!selectedJobIds.length || !selectedTargets.length){
+        alert("Check at least one job above and at least one target unit below.");
+        return;
+      }
+      const jobsToClone = unitJobs.filter(j=> selectedJobIds.includes(j.id));
+      const allUnits = prFlattenTree();
+      copyConfirmBtn.disabled = true;
+      try{
+        const writes = [];
+        selectedTargets.forEach(targetUnitPath=>{
+          const targetLabel = (allUnits.find(u=> u.unitPath===targetUnitPath)||{}).label || targetUnitPath;
+          jobsToClone.forEach(j=>{
+            writes.push(addDoc(collection(db,"progressJobs"), {
+              projectId: prCurrentProjectId,
+              unitPath: targetUnitPath, unitLabel: targetLabel,
+              jobLabel: j.jobLabel, status: "pending",
+              currentStaff: null, currentNote: null,
+              logs: [],
+              completedAt: null, completedBy: null, completedStaff: null, completedNote: null,
+              createdAt: serverTimestamp(), createdBy: currentUser ? (currentUser.email||null) : null
+            }));
+          });
+        });
+        await Promise.all(writes);
+        prCopyPanelOpen = false;
+        alert(`Copied ${jobsToClone.length} job(s) to ${selectedTargets.length} unit(s).`);
+      }catch(err){
+        console.error(err);
+        alert("Could not copy jobs. Check your connection and try again.");
+        copyConfirmBtn.disabled = false;
+      }
     });
   }
 }
