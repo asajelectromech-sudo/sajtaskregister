@@ -829,6 +829,13 @@ let editingWorkId = null;
 // anonymous immediately after, so currentUser.email is no longer available
 // by the time the form is actually submitted.
 let verifiedWorkReportEmail = null;
+// Set once a normal user completes the lightweight Project Reports + button
+// Google check (see projectTaskVerifyGoogleBtn below). That check signs the
+// person back out immediately, same as verifiedWorkReportEmail above, so
+// isVerifiedStaff stays false for them — this flag is what lets them also
+// fill in Progress Report jobs for the rest of the session without being
+// promoted to actual staff/admin.
+let projectQuickVerified = false;
 let appPassword = "";
 let appUnlocked = false;
 
@@ -3729,6 +3736,7 @@ $("projectTaskVerifyGoogleBtn").addEventListener("click", async ()=>{
       });
     }catch(e){ console.error("Could not record project add-task verification", e); }
     await signOut(auth);
+    projectQuickVerified = true;
     hideModal("projectTaskVerifyModal");
     openProjectTaskProjectSelector("staffCreate");
   }catch(err){
@@ -4503,7 +4511,7 @@ function renderPrJobsChecklist(){
 function prRenderJobCard(j){
   const expanded = prExpandedJobId === j.id;
   const draft = prJobDrafts[j.id] || { staff: j.currentStaff||"", note: j.currentNote||"" };
-  const canEdit = (isAdmin || isVerifiedStaff) && j.status !== "done";
+  const canEdit = (isAdmin || isVerifiedStaff || projectQuickVerified) && j.status !== "done";
   const logs = (j.logs||[]).slice().reverse();
   return `
     <div class="card" style="cursor:default;flex-direction:column;align-items:stretch;">
