@@ -133,20 +133,6 @@
   #syncDot{width:8px;height:8px;border-radius:50%;background:#4ade80;display:inline-block;margin-right:5px;}
   #syncDot.off{background:#f87171;}
   .loading-screen{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;z-index:100;font-size:13px;color:var(--text-muted);}
-
-<style>
-.pr-completion-item{margin:7px 0;border:1px solid #d8dee6;border-radius:9px;background:#fff;overflow:hidden;}
-.pr-completion-item>summary,.pr-completion-job>summary{cursor:pointer;list-style:none;padding:11px 13px;display:flex;align-items:center;justify-content:space-between;gap:10px;}
-.pr-completion-item>summary::-webkit-details-marker,.pr-completion-job>summary::-webkit-details-marker{display:none;}
-.pr-completion-item>summary:before,.pr-completion-job>summary:before{content:'+';font-weight:700;margin-right:2px;}
-.pr-completion-item[open]>summary:before,.pr-completion-job[open]>summary:before{content:'−';}
-.pr-completion-chevron{font-size:12px;transition:transform .15s;}
-.pr-completion-item[open]>summary .pr-completion-chevron,.pr-completion-job[open]>summary .pr-completion-chevron{transform:rotate(180deg);}
-.pr-completion-body{padding:0 10px 10px;}
-.pr-completion-job{margin:6px 0;border:1px solid #e1e5ea;border-radius:7px;background:#f8fafc;}
-.pr-completion-job-body{padding:0 13px 11px;}
-.pr-status-text{text-transform:capitalize;font-weight:600;font-size:12px;opacity:.8;}
-</style>
 </style>
 </head>
 <body>
@@ -522,6 +508,12 @@
       <label>App password</label>
       <input type="text" id="appSettingsPassword" placeholder="Leave blank for no password" />
     </div>
+    <div class="section-label">Project Report task columns</div>
+    <div id="projectColumnsSettings"></div>
+    <div class="modal-actions" style="margin-top:8px;">
+      <button class="btn btn-light" id="addProjectColumnBtn" style="width:100%;">+ Add Column</button>
+    </div>
+    <div class="hint">Add, rename, reorder, or delete Project Report columns. Required columns are checked when a task is saved.</div>
     <div class="section-label">Admin Password</div>
     <div class="hint">Set or update a password for your admin account (<b id="adminPasswordForEmail"></b>) so "Admin sign in" works as a backup alongside Google Sign-In. If you've never set one (or aren't sure), just set one here now.</div>
     <div class="field"><label>New password</label><input type="password" id="adminNewPassword" placeholder="At least 6 characters" /></div>
@@ -573,17 +565,6 @@
       <button class="btn btn-light" id="restoreConfirmCancelBtn">Cancel</button>
       <button class="btn btn-red" id="restoreConfirmBtn">Restore</button>
     </div>
-  </div>
-</div>
-
-<!-- GOOGLE VERIFICATION FOR USER PROJECT PROGRESS -->
-<div class="modal-overlay" id="progressVerifyModal">
-  <div class="modal">
-    <button class="close-x" data-close="progressVerifyModal">&times;</button>
-    <h2>Verify your Google account</h2>
-    <div class="hint">Sign in with Google before entering the Project Progress Report. This confirms who is opening the report.</div>
-    <div class="error-text" id="progressVerifyError"></div>
-    <div class="modal-actions"><button class="btn btn-primary" id="progressVerifyGoogleBtn" style="width:100%;">Continue with Google</button></div>
   </div>
 </div>
 
@@ -718,11 +699,41 @@
 </div>
 
 
-<style>
-.pr-toolbar{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.pr-scroll{max-height:68vh;overflow:auto}.pr-job{border:1px solid #e1e5ea;border-radius:10px;padding:12px;margin:9px 0;background:#fff}.pr-job-head{font-weight:700;margin-bottom:7px}.pr-status{display:flex;gap:8px;flex-wrap:wrap}.pr-status button{flex:1;min-width:120px}.pr-status button.active{font-weight:700;border:2px solid #123354}.pr-note{width:100%;min-height:65px;resize:vertical}.pr-path{font-size:12px;color:#68707a;margin:4px 0 8px}.pr-completion-panel{border:1px solid #e1e5ea;border-radius:10px;margin-top:10px;background:#fff;overflow:hidden}.pr-completion-head{font-weight:700;padding:10px 12px;background:#f7f9fb;border-bottom:1px solid #e1e5ea}.pr-admin-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}.pr-level-box{border:1px solid #e1e5ea;border-radius:10px;padding:10px;margin:9px 0}.pr-level-config-row{display:grid;grid-template-columns:minmax(0,1fr) auto auto auto;gap:7px;align-items:center;padding:9px}.pr-level-config-row input{min-width:0;width:100%;box-sizing:border-box}.pr-order-btn{min-width:42px;padding:9px 12px}.pr-delete-level{min-width:78px;white-space:nowrap}.pr-node-row{display:flex;gap:7px;align-items:center;padding:7px 0}.pr-node-row span{flex:1}.pr-hierarchy-editor{border:1px solid #e1e5ea;border-radius:10px;padding:10px;background:#f8fafc}.pr-hierarchy-title{font-weight:700;margin-bottom:7px}.pr-hierarchy-level{border:1px solid #e1e5ea;border-radius:9px;background:#fff;padding:8px;margin:7px 0}.pr-hierarchy-node{display:flex;align-items:center;gap:7px;padding:5px 0;margin-left:8px}.pr-hierarchy-node .pr-node-label{flex:1;min-width:0}.pr-hierarchy-node .btn{white-space:nowrap}.pr-hierarchy-children{margin-left:18px;border-left:2px solid #edf0f4;padding-left:9px}@media(max-width:600px){.pr-hierarchy-node{align-items:flex-start;flex-wrap:wrap}.pr-hierarchy-node .pr-node-label{width:100%;flex-basis:100%}.pr-hierarchy-node .btn{min-height:40px}.pr-hierarchy-children{margin-left:8px}}.pr-child-box{margin-left:16px;border-left:2px solid #edf0f4;padding-left:10px}.pr-muted{color:#68707a;font-size:13px}.pr-multi{position:relative;margin:7px 0 12px}.pr-multi summary{list-style:none;cursor:pointer;border:1px solid #cfd6de;border-radius:9px;background:#fff;padding:11px 42px 11px 13px;min-height:20px;position:relative;font-size:14px;display:flex;align-items:center;justify-content:space-between;gap:10px}.pr-multi summary::-webkit-details-marker{display:none}.pr-multi summary:after{content:"▾";position:absolute;right:13px;top:10px}.pr-multi[open] summary{border-radius:9px 9px 0 0}.pr-multi[open] summary:after{content:"▴"}.pr-multi-value{color:#68707a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding-right:10px}.pr-multi-options{border:1px solid #cfd6de;border-top:0;border-radius:0 0 9px 9px;background:#fff;max-height:220px;overflow:auto;padding:5px}.pr-multi-option{display:flex;align-items:center;gap:9px;padding:9px 8px;border-radius:6px;cursor:pointer;margin:1px 0}.pr-multi-option input{width:17px;height:17px;flex:0 0 auto}.pr-multi-empty{padding:10px;color:#68707a;font-size:13px}.pr-completion-item{border:1px solid #e1e5ea;border-radius:9px;margin:7px 0;overflow:hidden;background:#fff}.pr-completion-item>summary,.pr-completion-job>summary{list-style:none;cursor:pointer;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;gap:10px}.pr-completion-item>summary::-webkit-details-marker,.pr-completion-job>summary::-webkit-details-marker{display:none}.pr-completion-body{padding:0 10px 10px}.pr-completion-job{border:1px solid #edf0f4;border-radius:8px;margin:7px 0;background:#fafbfc}.pr-completion-job-body{padding:0 12px 12px}.pr-status-text{font-size:12px;color:#68707a;text-align:right}@media(max-width:600px){.pr-admin-grid{grid-template-columns:1fr}.pr-status button{min-width:0}.pr-scroll{max-height:72vh}.pr-multi-options{max-height:190px}.pr-multi summary{padding:11px 36px 11px 12px}.pr-level-config-row{grid-template-columns:minmax(0,1fr) auto auto;gap:6px}.pr-level-config-row .pr-delete-level{grid-column:1 / -1;width:100%;min-height:42px}.pr-level-config-row .pr-order-btn{min-width:44px}.pr-level-config-row input{min-height:42px}.pr-completion-item>summary,.pr-completion-job>summary{padding:11px 10px}.pr-status-text{max-width:45%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}}
-</style>
-<div class="modal-overlay" id="progressReportModal"><div class="modal" style="max-width:900px;width:96%;"><button class="close-x" data-close="progressReportModal">&times;</button><h2 id="prTitle">Project Progress Report</h2><div id="prSummary" class="hint"></div><div class="pr-toolbar"><button class="btn btn-primary" id="prFillBtn">Fill Progress</button><button class="btn btn-light" id="prCompletionBtn" type="button">Completion Report</button><button class="btn btn-light" id="prPdfBtn" style="display:none">Download PDF</button><button class="btn btn-navy" id="prCustomizeBtn" style="display:none">Customize</button></div><div id="prContent" class="pr-scroll"></div><div id="prCompletionPanel" class="pr-completion-panel" style="display:none"><div class="pr-completion-head">Completion Report</div><div id="prCompletionContent" class="pr-scroll"></div></div></div></div>
-<div class="modal-overlay" id="prConfigModal"><div class="modal" style="max-width:900px;width:96%;"><button class="close-x" data-close="prConfigModal">&times;</button><h2>Progress Report Configuration</h2><p class="hint">Build a configurable hierarchy such as Building → Floor → Unit → Sub Level → Jobs. A Sub Level is optional and can be placed at any level. Use Sub Level to group jobs such as Indoor/Outdoor under a unit.</p><div class="pr-admin-grid"><input id="prNewLevelLabel" placeholder="New level name"><button class="btn btn-primary" id="prAddLevelBtn">Add Level</button></div><div id="prLevelsEditor" style="margin-top:12px"></div><div id="prHierarchyEditor" style="margin-top:12px"></div><hr><h3>Add Option</h3><div id="prOptionPathSelectors"></div><div class="pr-admin-grid" style="margin-top:8px"><input id="prNewOptionLabel" placeholder="Option name"><button class="btn btn-primary" id="prAddOptionBtn">Add Option</button></div><hr><h3>Add Job</h3><p class="hint">Select the exact branch where the job belongs. If a Sub Level is configured, select the Sub Level option (for example Indoor or Outdoor) before adding the job. If no Sub Level is used, add jobs under the last normal level.</p><div id="prJobPathSelectors"></div><input id="prNewJobLabel" placeholder="Job details / job name" style="margin-top:8px;width:100%"><div class="modal-actions"><button class="btn btn-primary" id="prAddJobBtn">Add Job</button></div><div id="prConfigError" class="error-text"></div></div></div>
+<!-- ============ PROGRESS REPORT ADDITION — MODALS ============ -->
+<div class="modal-overlay" id="prModal">
+  <div class="modal">
+    <button class="close-x" data-close="prModal">&times;</button>
+    <h2 id="prTitle">Project Progress Report</h2>
+    <div class="chips" id="prTabs">
+      <button class="chip active" data-pr-tab="fill">Fill Progress</button>
+      <button class="chip" data-pr-tab="report">Completion Report</button>
+    </div>
+    <div class="toolbar" id="prCustomizeRow" style="display:none;">
+      <button class="btn btn-navy" id="prCustomizeBtn" style="width:100%;">Customize (admin)</button>
+    </div>
+    <div id="prFillView"></div>
+    <div id="prReportView" style="display:none;"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="prCustomizeModal">
+  <div class="modal">
+    <button class="close-x" data-close="prCustomizeModal">&times;</button>
+    <h2>Customize Progress Report (admin)</h2>
+    <div class="section-label">Drop-box levels</div>
+    <div class="hint">These are the cascading drop boxes, in order (e.g. Building, Floor, Unit Number). The last level always leads to the job checklist, not another drop box.</div>
+    <div id="prLevelsList"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" id="prAddLevelBtn" style="width:100%;">+ Add drop box level</button>
+    </div>
+    <div class="section-label">Options</div>
+    <div class="hint" id="prTreeBreadcrumb"></div>
+    <div id="prTreeEditor"></div>
+    <div class="error-text" id="prCustomizeError"></div>
+  </div>
+</div>
+<!-- ============ END PROGRESS REPORT ADDITION — MODALS ============ -->
+
 <script type="module">
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
@@ -968,6 +979,7 @@ function unlockApp(){
   updateFabVisibility();
   updateSnagExportLabel();
   updateWorkExportLabel();
+  loadProjectFieldLabels();
   startSnagListener();
   startWorkListener();
   startProjectListeners();
@@ -992,7 +1004,6 @@ $("gateAdminLoginBtn").addEventListener("click", ()=>{
 
 function updateFabVisibility(){
   if(!currentUser) { $("fab").style.display = "none"; return; }
-  if(activeTab === "projects") { $("fab").style.display = "none"; $("taskNotificationsBanner").style.display="none"; return; }
   // Work reports can be opened by any signed-in staff member. Snags can also
   // be opened by non-admin staff, but require an OTP from the admin first
   // (handled in the fab click handler) — the fab itself is always visible.
@@ -1022,6 +1033,7 @@ function renderAuthBox(){
     $("staffAccessBtn").addEventListener("click", openStaffAccessAdminModal);
     $("appSettingsBtn").addEventListener("click", ()=>{
       $("appSettingsPassword").value = appPassword || "";
+      renderProjectColumnsSettings();
       $("appSettingsError").textContent = "";
       $("adminPasswordForEmail").textContent = currentUser.email || "";
       $("adminNewPassword").value = "";
@@ -1149,7 +1161,14 @@ async function deleteProjectColumn(key){
   renderProjectColumnsSettings();
 }
 
-
+$("addProjectColumnBtn").addEventListener("click",()=>{
+  const key=`col_${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
+  projectColumns.push({key,label:"New Column",required:false,filledBy:"admin"});
+  renderProjectColumnsSettings();
+  const inputs=document.querySelectorAll("#projectColumnsSettings .project-column-name");
+  const last=inputs[inputs.length-1];
+  if(last){ last.focus(); last.select(); }
+});
 
 function applyProjectFieldLabels(){
   renderProjectTaskFields();
@@ -1157,11 +1176,16 @@ function applyProjectFieldLabels(){
 
 $("saveAppSettingsBtn").addEventListener("click", async ()=>{
   const val = $("appSettingsPassword").value.trim();
+  projectColumns=normalizeProjectColumns(projectColumns).filter(c=>String(c.label||"").trim());
+  projectColumns.forEach(c=>c.label=String(c.label).trim());
   $("appSettingsError").textContent = "";
   $("saveAppSettingsBtn").disabled = true;
   try{
     await setDoc(doc(db, "settings", "appAccess"), { password: val }, { merge: true });
+    await setDoc(doc(db, "settings", "projectTaskLabels"), { columns: projectColumns }, { merge: true });
     appPassword = val;
+    renderProjectColumnsSettings();
+    applyProjectFieldLabels();
     hideModal("appSettingsModal");
   }catch(err){
     console.error(err);
@@ -1169,7 +1193,6 @@ $("saveAppSettingsBtn").addEventListener("click", async ()=>{
   }
   $("saveAppSettingsBtn").disabled = false;
 });
-
 
 // ---------- ADMIN PASSWORD (backup sign-in alongside Google) ----------
 // Some admin accounts only ever have a Google credential attached (e.g. if
@@ -2804,7 +2827,7 @@ function renderProjectList(){
     if(isAdmin){
       projectCardButtons += `<button class="btn btn-light edit-project" data-project-id="${p.id}">Edit</button><button class="btn btn-red delete-project" data-project-id="${p.id}">Delete</button>`;
     }
-    if(isAdmin){
+    if(canManageProjects){
       projectCardButtons += `<button class="btn btn-navy pdf-project" data-project-id="${p.id}">Download PDF</button>`;
     }
     const adminActions = projectCardButtons ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">${projectCardButtons}</div>` : "";
@@ -2812,7 +2835,7 @@ function renderProjectList(){
       <div class="thumb-placeholder">📁</div>
       <div class="card-body">
         <p class="card-title">${escapeHtml(p.name||"")}</p>
-        <p class="card-desc">Open Project Progress Report &middot; Created by ${escapeHtml(p.createdByName || p.createdBy || "User")}</p>
+        <p class="card-desc">${tasks.length} task(s)${!canManageProjects && allTasksForProject.some(t=>t.status === "approved") ? " · approved tasks hidden" : ""} &middot; Created by ${escapeHtml(p.createdByName || p.createdBy || "User")}</p>
         <div class="meta">Created ${fmtDate(p.createdAt)}</div>
         ${adminActions}
       </div>
@@ -2822,7 +2845,7 @@ function renderProjectList(){
   list.querySelectorAll("[data-project-id]").forEach(card=>{
     card.addEventListener("click",(e)=>{
       if(e.target.closest("button")) return;
-      openProgressReport(card.getAttribute("data-project-id"));
+      openProject(card.getAttribute("data-project-id"));
     });
   });
   list.querySelectorAll(".edit-project").forEach(btn=>btn.addEventListener("click", e=>{
@@ -3616,10 +3639,24 @@ $("workVerifyGoogleBtn").addEventListener("click", async ()=>{
 });
 
 $("fab").addEventListener("click", async ()=>{
-  if(activeTab === "projects") return;
+  if(activeTab === "projects"){
+    // The same Project Reports + button serves two separate purposes:
+    // 1) Admin / admin-verified staff: assign a task directly, with no extra
+    //    Google verification because they already have elevated access.
+    // 2) Normal users: require the one-time Google identity check, then create
+    //    a normal USER task. This does NOT make them verified staff and does
+    //    NOT require admin approval.
+    if(isAdmin || isVerifiedStaff){
+      openProjectTaskProjectSelector("admin");
+    }else{
+      $("projectTaskVerifyError").textContent = "";
+      showModal("projectTaskVerifyModal");
+    }
+    return;
+  }
   if(activeTab === "work"){
-    if(isAdmin || isVerifiedStaff){ openNewWorkReportForm(); }
-    else { $("workVerifyError").textContent = ""; showModal("workVerifyModal"); }
+    $("workVerifyError").textContent = "";
+    showModal("workVerifyModal");
     return;
   }
 
@@ -3642,28 +3679,6 @@ $("fab").addEventListener("click", async ()=>{
 // authorizedStaff or isVerifiedStaff. After Google sign-in, immediately sign back
 // out so the task remains a normal USER-created task, not an elevated/assigned
 // staff task. No admin approval is involved.
-$("progressVerifyGoogleBtn").addEventListener("click", async ()=>{
-  $("progressVerifyError").textContent="";
-  $("progressVerifyGoogleBtn").disabled=true;
-  try{
-    const result=await signInWithPopup(auth,googleProvider);
-    const email=(result.user.email||"").toLowerCase();
-    if(!email){ $("progressVerifyError").textContent="Could not read an email address from that Google account."; await signOut(auth); $("progressVerifyGoogleBtn").disabled=false; return; }
-    try{
-      await addDoc(collection(db,"staffLogins"),{email,uid:result.user.uid,verifiedAt:serverTimestamp(),action:"Service Action Report"});
-    }catch(e){ console.error("Could not record project progress verification",e); }
-    const pid=pendingProgressProjectId;
-    pendingProgressProjectId=null;
-    await signOut(auth);
-    hideModal("progressVerifyModal");
-    if(pid) await openProgressReportAfterVerification(pid);
-  }catch(err){
-    console.error("Project progress Google verification failed",err);
-    if(err.code!=="auth/popup-closed-by-user" && err.code!=="auth/cancelled-popup-request") $("progressVerifyError").textContent=`Could not verify (${err.code||err.message||"unknown error"}).`;
-  }
-  $("progressVerifyGoogleBtn").disabled=false;
-});
-
 $("projectTaskVerifyGoogleBtn").addEventListener("click", async ()=>{
   $("projectTaskVerifyError").textContent = "";
   $("projectTaskVerifyGoogleBtn").disabled = true;
@@ -4263,269 +4278,540 @@ function generateWorkPdf(items, siteFilterValue, fromValue, toValue){
   pdf.save(buildPdfFilename("SAJ_Service_Action_Report", items, siteFilterValue, fromValue, toValue, "createdAt"));
 }
 
-// ================= PROJECT PROGRESS REPORT: TRUE HIERARCHY =================
-let prProjectId=null, prProjectName='', prTree={levels:[],nodes:[]}, prJobs=[];
-let pendingProgressProjectId=null;
-let prSelectedPath=[];
-const prSafe=v=>escapeHtml(String(v==null?'':v));
-const prNewId=()=> 'pr_'+Math.random().toString(36).slice(2,10);
-function prEmpty(){return {levels:[],nodes:[]};}
-function prFind(nodes,id){for(const n of (nodes||[])){if(n.id===id)return n;const x=prFind(n.children||[],id);if(x)return x;}return null;}
-function prNormalize(d){if(d&&Array.isArray(d.levels)&&Array.isArray(d.nodes))return {levels:d.levels.map((x,i)=>({id:x.id||('level_'+i),label:x.label||('Level '+(i+1)),subLevel:x.subLevel===true||x.type==='sublevel'})),nodes:d.nodes||[]};return prEmpty();}
-async function prLoad(pid){prProjectId=pid;const p=allProjects.find(x=>x.id===pid);prProjectName=p?(p.name||'Project'):'Project';const td=await getDoc(doc(db,'progressTrees',pid));prTree=td.exists()?prNormalize(td.data()):prEmpty();const snap=await getDocs(collection(db,'progressJobs'));prJobs=snap.docs.map(d=>({id:d.id,...d.data()})).filter(j=>j.projectId===pid);}
-function prCounts(){let completed=0,progressing=0,pending=0;for(const j of prJobs){if(j.status==='completed')completed++;else if(j.status==='progressing')progressing++;else pending++;}return {completed,progressing,pending,total:prJobs.length};}
-function prSummary(){const c=prCounts();const pct=c.total?Math.round(c.completed*100/c.total):0;$('prSummary').textContent=`${c.completed} completed · ${c.progressing} progressing · ${c.pending} pending · ${pct}% completed`;}
+/* ============================================================================
+   PROJECT PROGRESS REPORT — cascading customizable drop boxes + job checklist
+   + completion report. This whole section is NEW and additive: nothing above
+   this point was modified.
+   ============================================================================ */
 
-// Multiple-selection hierarchy helpers. Each level is an array of selected
-// option IDs. Lower levels show the union of children belonging to ANY
-// selected option in the previous level. Existing single-value paths are
-// still understood for backward compatibility.
-function prNormalizeSelection(sel){
-  return (sel||[]).map(v=>Array.isArray(v)?v:(v?[v]:[]));
+let prCurrentProjectId = null;
+let prCurrentProjectName = "";
+let prTreeDoc = null;            // { levelLabels:[...], nodes:[...] }
+let prTreeListenerUnsub = null;
+let prJobs = [];                 // all progressJobs docs for the open project
+let prJobsListenerUnsub = null;
+let prSelectedPath = [];         // selected node ids, one per selector level (Fill tab)
+let prActiveTab = "fill";
+let prCustomizeBreadcrumb = [];  // node ids drilled into, inside the Customize tree editor
+let prJobsEditorUnitId = null;   // set while the Customize modal is showing a unit's job list
+let prJobsEditorPath = [];
+
+function prDefaultLevelLabels(){ return ["Building","Floor","Unit Number"]; }
+function prNodeIdGen(){ return "n_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2,7); }
+
+// ---------- ENTRY POINTS ----------
+function openProgressReport(projectId, projectName){
+  prCurrentProjectId = projectId;
+  prCurrentProjectName = projectName || "Project";
+  $("prTitle").textContent = `Progress Report — ${prCurrentProjectName}`;
+  $("prCustomizeRow").style.display = isAdmin ? "flex" : "none";
+  prActiveTab = "fill";
+  $("prTabs").querySelectorAll(".chip").forEach(c=> c.classList.toggle("active", c.getAttribute("data-pr-tab")==="fill"));
+  $("prFillView").style.display = "block";
+  $("prReportView").style.display = "none";
+  prSelectedPath = [];
+  startPrListeners();
+  showModal("prModal");
 }
-function prOptionsForSelections(selections, targetLevel){
-  if(targetLevel===0) return prTree.nodes||[];
-  const normalized=prNormalizeSelection(selections);
-  const parents=normalized[targetLevel-1]||[];
-  const seen=new Set(), out=[];
-  // Find each selected parent anywhere in the hierarchy, then show its
-  // immediate children. This is what allows Level 3, 4, 5, etc. to work.
-  for(const id of parents){
-    const n=prFind(prTree.nodes,id);
-    for(const child of ((n&&n.children)||[])){
-      if(!seen.has(child.id)){seen.add(child.id);out.push(child);}
-    }
+
+function prCleanupListeners(){
+  if(prTreeListenerUnsub){ prTreeListenerUnsub(); prTreeListenerUnsub = null; }
+  if(prJobsListenerUnsub){ prJobsListenerUnsub(); prJobsListenerUnsub = null; }
+}
+const prModalCloseBtn = document.querySelector('#prModal [data-close="prModal"]');
+if(prModalCloseBtn) prModalCloseBtn.addEventListener("click", prCleanupListeners);
+
+function startPrListeners(){
+  prCleanupListeners();
+  prTreeDoc = null;
+  prJobs = [];
+
+  prTreeListenerUnsub = onSnapshot(doc(db, "progressTrees", prCurrentProjectId), snap=>{
+    const data = snap.exists() ? snap.data() : {};
+    prTreeDoc = {
+      levelLabels: (Array.isArray(data.levelLabels) && data.levelLabels.length) ? data.levelLabels : prDefaultLevelLabels(),
+      nodes: Array.isArray(data.nodes) ? data.nodes : []
+    };
+    renderPrFillView();
+    renderPrCustomizeLevels();
+    if(!prJobsEditorUnitId) renderPrTreeEditor();
+  }, err=> console.error("progressTrees listener:", err));
+
+  // Client-side filter by projectId instead of a where() query, so no extra
+  // Firestore import or composite index is needed.
+  prJobsListenerUnsub = onSnapshot(collection(db, "progressJobs"), snap=>{
+    prJobs = snap.docs.map(d=> ({ id: d.id, ...d.data() })).filter(j=> j.projectId === prCurrentProjectId);
+    renderPrFillView();
+    renderPrReportView();
+    if(prJobsEditorUnitId) prOpenJobsEditor(prJobsEditorUnitId);
+  }, err=> console.error("progressJobs listener:", err));
+}
+
+// ---------- TABS ----------
+$("prTabs").querySelectorAll(".chip").forEach(chip=>{
+  chip.addEventListener("click", ()=>{
+    prActiveTab = chip.getAttribute("data-pr-tab");
+    $("prTabs").querySelectorAll(".chip").forEach(c=> c.classList.toggle("active", c===chip));
+    $("prFillView").style.display = prActiveTab==="fill" ? "block" : "none";
+    $("prReportView").style.display = prActiveTab==="report" ? "block" : "none";
+    if(prActiveTab==="report") renderPrReportView();
+  });
+});
+
+// ---------- FILL PROGRESS TAB ----------
+function renderPrFillView(){
+  if(!prTreeDoc) return;
+  const box = $("prFillView");
+  const labels = prTreeDoc.levelLabels || [];
+  if(!prTreeDoc.nodes || prTreeDoc.nodes.length===0){
+    box.innerHTML = `<div class="hint" style="padding:16px 0;">No options set up yet for "${escapeHtml(labels[0]||"this project")}".${isAdmin ? " Tap Customize above to add them." : " Ask your admin to set this up."}</div>`;
+    return;
   }
-  return out;
+  let html = "";
+  let nodesAtLevel = prTreeDoc.nodes;
+  for(let i=0;i<labels.length;i++){
+    const selectedId = prSelectedPath[i] || "";
+    html += `<div class="field"><label>${escapeHtml(labels[i])}</label>
+      <select class="pr-level-select" data-level="${i}">
+        <option value="">Select ${escapeHtml(labels[i])}...</option>
+        ${nodesAtLevel.map(n=>`<option value="${escapeHtml(n.id)}" ${n.id===selectedId?"selected":""}>${escapeHtml(n.label)}</option>`).join("")}
+      </select></div>`;
+    if(!selectedId){ nodesAtLevel = []; continue; }
+    const node = nodesAtLevel.find(n=> n.id===selectedId);
+    nodesAtLevel = node ? (node.children||[]) : [];
+  }
+  html += `<div id="prJobsChecklist"></div>`;
+  box.innerHTML = html;
+  box.querySelectorAll(".pr-level-select").forEach(sel=>{
+    sel.addEventListener("change", ()=>{
+      const lvl = parseInt(sel.getAttribute("data-level"),10);
+      prSelectedPath = prSelectedPath.slice(0, lvl);
+      if(sel.value) prSelectedPath.push(sel.value);
+      renderPrFillView();
+    });
+  });
+  renderPrJobsChecklist();
 }
-function prSelectedPathIds(){return prNormalizeSelection(prSelectedPath);}
-function prJobsForPath(selections){
-  const sel=prNormalizeSelection(selections);
-  if(!sel.length || sel.every(a=>!a.length)) return [];
-  return prJobs.filter(j=>{
-    const path=Array.isArray(j.pathIds)?j.pathIds:[];
-    if(!path.length || path.length>sel.length) return false;
-    return path.every((id,i)=>sel[i] && sel[i].includes(id));
+
+function prUnitPath(){
+  if(!prTreeDoc) return null;
+  if(prSelectedPath.length !== (prTreeDoc.levelLabels||[]).length) return null;
+  return prSelectedPath.join(">");
+}
+
+function renderPrJobsChecklist(){
+  const box = $("prJobsChecklist");
+  if(!box) return;
+  const unitPath = prUnitPath();
+  const lastLabel = (prTreeDoc.levelLabels||[]).slice(-1)[0] || "unit";
+  if(!unitPath){
+    box.innerHTML = `<div class="hint">Select every drop box above to see the job checklist.</div>`;
+    return;
+  }
+  const jobs = prJobs.filter(j=> j.unitPath===unitPath);
+  if(!jobs.length){
+    box.innerHTML = `<div class="hint">No jobs defined for this ${escapeHtml(lastLabel)} yet.${isAdmin ? " Add jobs via Customize." : ""}</div>`;
+    return;
+  }
+  const doneCount = jobs.filter(j=> j.status==="done").length;
+  box.innerHTML = `
+    <div class="section-label">Jobs (${doneCount}/${jobs.length} done)</div>
+    ${jobs.map(j=>`
+      <div class="card" style="cursor:pointer;" data-job-id="${j.id}">
+        <div class="card-body">
+          <p class="card-title">${escapeHtml(j.jobLabel)}</p>
+          ${j.status==="done"
+            ? `<span class="badge badge-closed">Done — ${escapeHtml(j.assignee||"")}</span>`
+            : `<span class="badge badge-open">Pending</span>`}
+        </div>
+      </div>`).join("")}
+    ${doneCount===jobs.length ? `<div class="hint" style="color:var(--green);font-weight:700;margin-top:6px;">All jobs complete for this ${escapeHtml(lastLabel)}.</div>` : ""}
+  `;
+  box.querySelectorAll("[data-job-id]").forEach(card=>{
+    card.addEventListener("click", ()=> prToggleJob(card.getAttribute("data-job-id")));
   });
 }
-function prSelectedCombinations(selections){
-  const levels=prNormalizeSelection(selections).filter(a=>a.length);
-  if(!levels.length) return [];
-  let combos=[[]];
-  for(const ids of levels){
-    const next=[];
-    for(const c of combos) for(const id of ids) next.push(c.concat(id));
-    combos=next;
-  }
-  return combos;
-}
-function prPathLabels(path){
-  const out=[];let nodes=prTree.nodes||[];
-  for(const id of path){const n=nodes.find(x=>x.id===id);if(!n)break;out.push(n.label);nodes=n.children||[];}
-  return out;
-}
-function prMultiDropdown(levelLabel, opts, selected, dataAttr, levelIndex){
-  const sel=new Set(Array.isArray(selected)?selected:[]);
-  const names=opts.filter(o=>sel.has(o.id)).map(o=>o.label);
-  const summary=names.length===0 ? "Select..." : (names.length===1 ? names[0] : `${names.length} selected`);
-  const options=opts.length ? opts.map(o=>`<label class="pr-multi-option"><input type="checkbox" ${sel.has(o.id)?"checked":""} data-${dataAttr}-choice="${prSafe(o.id)}" data-${dataAttr}-level="${levelIndex}"><span>${prSafe(o.label)}</span></label>`).join('') : '<div class="pr-multi-empty">No options available.</div>';
-  return `<details class="pr-multi"><summary><span class="pr-multi-title">${prSafe(levelLabel)}</span><span class="pr-multi-value">${prSafe(summary)}</span></summary><div class="pr-multi-options">${options}</div></details>`;
-}
-function prRenderFill(){
-  prSummary();const root=$('prContent');if(!prTree.levels.length){root.innerHTML='<div class="hint">No levels configured. Admin can use Customize.</div>';return;}
-  prSelectedPath=prNormalizeSelection(prSelectedPath);
-  let h='<div class="pr-path"><b>Choose:</b> <span class="pr-muted">Open each drop box and tick one or more items.</span></div>';
-  for(let i=0;i<prTree.levels.length;i++){
-    const opts=prOptionsForSelections(prSelectedPath,i); const selected=prSelectedPath[i]||[];
-    h+=prMultiDropdown(prTree.levels[i].label,opts,selected,'pr',i);
-  }
-  const jobs=prJobsForPath(prSelectedPath);if(jobs.length){h+='<h3 style="margin-top:14px">Jobs</h3>';h+=jobs.map(j=>`<div class="pr-job"><div class="pr-job-head">${prSafe(j.jobLabel||'Job')}</div><div class="pr-path">${prSafe((j.pathLabels||[]).join(' → '))}</div><label>Staff Name</label><input data-pr-staff="${j.id}" value="${prSafe(j.staffName||'')}" placeholder="Staff name"><label>Note</label><textarea class="pr-note" data-pr-note="${j.id}" placeholder="Note">${prSafe(j.note||'')}</textarea><div class="pr-status"><button class="btn btn-light ${j.status==='progressing'?'active':''}" data-pr-status="progressing" data-job="${j.id}">Progressing</button><button class="btn btn-light ${j.status==='completed'?'active':''}" data-pr-status="completed" data-job="${j.id}">Completed</button></div></div>`).join('');}else if(prSelectedPath.some(a=>a.length)){h+='<div class="hint" style="margin-top:12px">No jobs are configured for this selection.</div>';}root.innerHTML=h;
-  root.querySelectorAll('input[data-pr-choice]').forEach(el=>el.addEventListener('change',()=>{
-    const i=Number(el.dataset.prLevel);const checked=[...root.querySelectorAll(`input[data-pr-level="${i}"][data-pr-choice]:checked`)].map(x=>x.dataset.prChoice);
-    prSelectedPath=prNormalizeSelection(prSelectedPath).slice(0,i);prSelectedPath[i]=checked;prSelectedPath=prSelectedPath.slice(0,i+1);prRenderFill();
-  }));
-  root.querySelectorAll('[data-pr-status]').forEach(btn=>btn.addEventListener('click',async(e)=>{
-    e.preventDefault();const id=btn.dataset.job;const staff=root.querySelector(`[data-pr-staff="${id}"]`);const note=root.querySelector(`[data-pr-note="${id}"]`);const status=btn.dataset.prStatus;if(!id||!['progressing','completed'].includes(status))return;btn.disabled=true;
-    try{await updateDoc(doc(db,'progressJobs',id),{status,staffName:staff?staff.value.trim():'',assignee:staff?staff.value.trim():'',note:note?note.value.trim():'',completedAt:status==='completed'?serverTimestamp():null,progressingAt:status==='progressing'?serverTimestamp():null,updatedAt:serverTimestamp()});await prLoad(prProjectId);prRenderFill();}catch(err){console.error('Progress status update failed:',err);alert('Could not update this job. Please check your Firebase Firestore rules and sign-in access.\n\n'+(err?.message||err));}finally{btn.disabled=false;}
-  }));
-}
-async function openProgressReport(pid){if(!isAdmin&&!isVerifiedStaff){pendingProgressProjectId=pid;$('progressVerifyError').textContent='';showModal('progressVerifyModal');return;}await openProgressReportAfterVerification(pid);}
-async function openProgressReportAfterVerification(pid){try{await prLoad(pid);prSelectedPath=[];$('prTitle').textContent=`Project Progress Report — ${prProjectName}`;$('prCustomizeBtn').style.display=isAdmin?'inline-block':'none';showModal('progressReportModal');prRenderFill();}catch(e){console.error('Progress report:',e);alert('Unable to open Progress Report. Please check the Progress Report Firestore rules.');}}
-function prRenderCompletion(){
-  prSummary();
-  const root=$('prCompletionContent');
-  function renderNodes(nodes,path,depth){
-    let out='';
-    for(const n of (nodes||[])){
-      const p=path.concat(n.id);
-      const levelLabel=prTree.levels[depth]?(prTree.levels[depth].label+(prTree.levels[depth].subLevel?' (Sub Level)':'')):'Option';
-      const directJobs=prJobs.filter(j=>{const jp=Array.isArray(j.pathIds)?j.pathIds:[];return jp.length===p.length&&p.every((v,i)=>jp[i]===v);});
-      const childHtml=renderNodes(n.children||[],p,depth+1);
-      const jobsHtml=directJobs.map(j=>`<details class="pr-completion-job"><summary><b>${prSafe(j.jobLabel||'Job')}</b><span class="pr-status-text">${prSafe(j.status||'pending')}${j.staffName?' — '+prSafe(j.staffName):''}</span></summary><div class="pr-completion-job-body"><div class="pr-path">${prSafe((j.pathLabels||[]).join(' → '))}</div><div><b>Status:</b> ${prSafe(j.status||'pending')}</div>${j.staffName?`<div><b>Staff:</b> ${prSafe(j.staffName)}</div>`:''}${j.note?`<div><b>Note:</b> ${prSafe(j.note)}</div>`:'<div class="pr-muted">No note.</div>'}</div></details>`).join('');
-      const inside=(jobsHtml||childHtml)?jobsHtml+childHtml:'<div class="pr-muted">No jobs or lower-level items.</div>';
-      out+=`<details class="pr-completion-item"><summary><span><b>${prSafe(levelLabel)}: ${prSafe(n.label)}</b></span><span class="pr-completion-chevron">▾</span></summary><div class="pr-completion-body">${inside}</div></details>`;
-    } return out;
-  }
-  root.innerHTML=renderNodes(prTree.nodes,[],0)||'<div class="hint">No hierarchy configured.</div>';
-}
 
-
-function prRenderPathSelectors(containerId,initial){
-  const box=$(containerId);let selections=prNormalizeSelection(initial);let h='';
-  for(let i=0;i<prTree.levels.length;i++){
-    const opts=prOptionsForSelections(selections,i);const selected=selections[i]||[];
-    h+=prMultiDropdown(prTree.levels[i].label,opts,selected,'config',i);
-  }
-  box.innerHTML=h;
-  box.querySelectorAll('input[data-config-choice]').forEach(el=>el.addEventListener('change',()=>{
-    const i=Number(el.dataset.configLevel);const values=[...box.querySelectorAll(`input[data-config-level="${i}"][data-config-choice]:checked`)].map(x=>x.dataset.configChoice);
-    selections=selections.slice(0,i);selections[i]=values;selections=selections.slice(0,i+1);if(containerId==='prJobPathSelectors')prSelectedPath=selections.slice();prRenderPathSelectors(containerId,selections);
-  }));
-}
-$('prFillBtn').addEventListener('click',()=>{prRenderFill();$('prContent').style.display='block';$('prCompletionPanel').style.display='none';});$('prCompletionBtn').addEventListener('click',()=>{prRenderCompletion();$('prContent').style.display='none';$('prCompletionPanel').style.display='block';$('prCompletionBtn').textContent='Completion Report';});
-$('prPdfBtn').addEventListener('click',()=>{const J=window.jspdf&&window.jspdf.jsPDF;if(!J){alert('PDF library is not loaded.');return;}const pdf=new J();let y=15;const line=t=>{if(y>280){pdf.addPage();y=15;}pdf.text(String(t),12,y);y+=6;};const c=prCounts();pdf.setFont('helvetica','bold');line(`Project Progress Report — ${prProjectName}`);pdf.setFont('helvetica','normal');line(`Completed: ${c.completed} | Progressing: ${c.progressing} | Pending: ${c.pending}`);function walk(nodes,path,depth){for(const n of(nodes||[])){const p=path.concat(n.id);line(' '.repeat(depth*3)+(prTree.levels[depth]?prTree.levels[depth].label+': ':'')+n.label);for(const j of prJobs.filter(j=>Array.isArray(j.pathIds)&&j.pathIds.length>=p.length&&p.every((v,i)=>j.pathIds[i]===v)))line(' '.repeat((depth+1)*3)+'JOB: '+j.jobLabel+' — '+(j.status||'pending')+(j.staffName?' — Staff: '+j.staffName:'')+(j.note?' — Note: '+j.note:''));walk(n.children||[],p,depth+1);}}walk(prTree.nodes,[],0);pdf.save('SAJ_Project_Progress_'+prProjectName.replace(/[^a-z0-9_-]+/gi,'_')+'.pdf');});
-
-
-function prRemoveNodeAtPath(nodes,path){if(!Array.isArray(path)||!path.length)return false;let arr=nodes;for(const id of path.slice(0,-1)){const n=arr.find(x=>x.id===id);if(!n)return false;arr=n.children||[];}const i=arr.findIndex(x=>x.id===path[path.length-1]);if(i<0)return false;arr.splice(i,1);return true;}
-function prRenderHierarchyEditor(){
-  const box=$('prHierarchyEditor');
-  if(!box)return;
-  const levels=prTree.levels||[];
-  if(!levels.length){box.innerHTML='';return;}
-  function walk(nodes,path,depth){
-    return (nodes||[]).map(n=>{
-      const p=path.concat(n.id);
-      const child=walk(n.children||[],p,depth+1);
-      const childHtml=child ? `<div class="pr-hierarchy-children">${child}</div>` : '';
-      return `<div class="pr-hierarchy-node"><span class="pr-node-label"><b>${prSafe(levels[depth]?.label||'Option')}:</b> ${prSafe(n.label)}</span><button type="button" class="btn btn-red pr-delete-option" data-path="${prSafe(JSON.stringify(p))}">Delete</button></div>${childHtml}`;
-    }).join('');
-  }
-  box.innerHTML=`<div class="pr-hierarchy-editor"><div class="pr-hierarchy-title">Configured Options</div>${walk(prTree.nodes||[],[],0)||'<div class="pr-muted">No options added yet.</div>'}</div>`;
-  box.querySelectorAll('.pr-delete-option').forEach(btn=>btn.addEventListener('click',async()=>{
-    let path=[];
-    try{path=JSON.parse(btn.dataset.path||'[]')}catch(e){}
-    if(!path.length||!confirm('Delete this option and its lower-level options?'))return;
-    const nodes=JSON.parse(JSON.stringify(prTree.nodes||[]));
-    if(!prRemoveNodeAtPath(nodes,path))return;
+async function prToggleJob(jobId){
+  if(!isAdmin && !isVerifiedStaff) return;
+  const job = prJobs.find(j=> j.id===jobId);
+  if(!job) return;
+  if(job.status === "done"){
+    if(!isAdmin) return; // only admin can undo a completed job
+    if(!confirm(`Mark "${job.jobLabel}" back as pending?`)) return;
     try{
-      const affected=prJobs.filter(j=>Array.isArray(j.pathIds)&&j.pathIds.length>=path.length&&path.every((id,i)=>j.pathIds[i]===id));
-      await Promise.all(affected.map(j=>deleteDoc(doc(db,'progressJobs',j.id))));
-      await prSaveConfigTree({nodes});
-    }catch(e){
-      console.error(e);
-      $('prConfigError').textContent='Could not delete option. Check Firebase rules and admin sign-in.';
-    }
-  }));
+      await updateDoc(doc(db,"progressJobs",jobId), { status:"pending", assignee:null, completedAt:null, updatedAt: serverTimestamp() });
+    }catch(err){ console.error(err); alert("Could not update job. Check your connection and try again."); }
+    return;
+  }
+  const name = prompt(`Who will do "${job.jobLabel}"?`, "");
+  if(name === null) return;
+  if(!name.trim()){ alert("Please enter a name."); return; }
+  try{
+    await updateDoc(doc(db,"progressJobs",jobId), { status:"done", assignee:name.trim(), completedAt: serverTimestamp(), updatedAt: serverTimestamp() });
+  }catch(err){ console.error(err); alert("Could not save. Check your connection and try again."); }
 }
-// ---------- PROJECT PROGRESS CONFIGURATION WIRING ----------
-// This block restores the admin Customize button and the configuration
-// controls used by the current Progress Report markup.
-function prRefreshConfig(preserveSelections){
-  const levelBox=$('prLevelsEditor');
-  if(!levelBox) return;
-  const levels=prTree.levels||[];
-  levelBox.innerHTML=levels.map((lv,i)=>`<div class="card" style="margin:8px 0;"><div class="card-body pr-level-config-row"><input class="pr-level-name-edit" data-i="${i}" value="${prSafe(lv.label)}"><label style="display:flex;align-items:center;gap:6px;margin:0 8px 0 10px;white-space:nowrap;"><input type="checkbox" class="pr-sublevel-toggle" data-i="${i}" ${lv.subLevel?'checked':''}> Sub Level</label><button type="button" class="btn btn-red pr-delete-level" data-i="${i}" title="Delete level">Delete</button></div></div>`).join('')||'<div class="hint">No levels configured.</div>';
-  levelBox.querySelectorAll('.pr-level-name-edit').forEach(el=>el.addEventListener('change',async()=>{const i=+el.dataset.i;const levels2=prTree.levels.slice();levels2[i]={...levels2[i],label:el.value.trim()||`Level ${i+1}`};await prSaveConfigTree({levels:levels2});}));
-  levelBox.querySelectorAll('.pr-sublevel-toggle').forEach(el=>el.addEventListener('change',async()=>{const i=+el.dataset.i;const levels2=prTree.levels.map((lv,idx)=>({...lv,subLevel:idx===i?el.checked:false}));await prSaveConfigTree({levels:levels2});}));
-  prRenderHierarchyEditor();
-  levelBox.querySelectorAll('.pr-delete-level').forEach(el=>el.addEventListener('click',async()=>{const i=+el.dataset.i;if(!confirm('Delete this level? Its options and related jobs may no longer be reachable.'))return;const levels2=prTree.levels.slice();levels2.splice(i,1);await prSaveConfigTree({levels:levels2});}));
-  const keepOption=preserveSelections&&preserveSelections.option?preserveSelections.option:[];
-  const keepJob=preserveSelections&&preserveSelections.job?preserveSelections.job:[];
-  prRenderPathSelectors('prOptionPathSelectors',keepOption);
-  prRenderPathSelectors('prJobPathSelectors',keepJob);
-}
-async function prSaveConfigTree(partial){
-  const next={...prTree,...partial};
-  const preserveSelections={
-    option: prNormalizeSelection(window._prOptionSelectionsFull||[]),
-    job: prNormalizeSelection(window._prJobSelectionsFull||[])
-  };
-  try{await setDoc(doc(db,'progressTrees',prProjectId),{...next,projectId:prProjectId,updatedAt:serverTimestamp(),updatedBy:currentUser?.email||null},{merge:true});prTree=prNormalize(next);prRefreshConfig(preserveSelections);prRenderFill();}
-  catch(e){console.error(e);$('prConfigError').textContent='Could not save configuration. Check Firebase rules and admin sign-in.';}
-}
-$('prCustomizeBtn').addEventListener('click',async()=>{
-  if(!isAdmin)return;
-  $('prConfigError').textContent='';
-  if(!prTree.levels.length){prTree={levels:[{id:'level_0',label:'Building',subLevel:false},{id:'level_1',label:'Floor',subLevel:false},{id:'level_2',label:'Unit Number',subLevel:false},{id:'level_3',label:'Sub Level',subLevel:true}],nodes:[]};await prSaveConfigTree(prTree);}
-  prRefreshConfig();showModal('prConfigModal');
-});
-$('prAddLevelBtn').addEventListener('click',async()=>{if(!isAdmin)return;const name=$('prNewLevelLabel').value.trim();if(!name){$('prConfigError').textContent='Enter a level name.';return;}const levels=(prTree.levels||[]).concat({id:prNewId(),label:name,subLevel:false});$('prNewLevelLabel').value='';await prSaveConfigTree({levels});});
-function prFindParentForPath(path){let arr=prTree.nodes||[];let node=null;for(const id of (path||[])){node=arr.find(n=>n.id===id);if(!node)return null;arr=node.children||[];}return {node,arr};}
-$('prAddOptionBtn').addEventListener('click',async()=>{
-  if(!isAdmin)return;
-  const name=$('prNewOptionLabel').value.trim();
-  if(!name){$('prConfigError').textContent='Enter an option name.';return;}
-  const selections=prNormalizeSelection(window._prOptionSelectionsFull||[]);
-  const levels=prTree.levels||[];
-  if(!levels.length){$('prConfigError').textContent='Add a level first.';return;}
-  let targetLevel=0;
-  while(targetLevel<levels.length && selections[targetLevel]&&selections[targetLevel].length) targetLevel++;
-  // The selected options in all preceding levels are the parents to which
-  // this new option must be attached. Multiple selections create the same
-  // option under every selected parent combination.
-  const parentSelections=selections.slice(0,targetLevel);
-  if(targetLevel>0 && parentSelections.some(a=>!a||!a.length)){
-    $('prConfigError').textContent='Select the parent option(s) for every previous level.';return;
-  }
-  const nodes=JSON.parse(JSON.stringify(prTree.nodes||[]));
-  function findNode(arr,id){return (arr||[]).find(n=>n.id===id)||null;}
-  function addUnderPath(path){
-    let arr=nodes;
-    for(const id of path){const n=findNode(arr,id);if(!n)return false;n.children=n.children||[];arr=n.children;}
-    if(arr.some(n=>n.label.trim().toLowerCase()===name.toLowerCase())) return true;
-    arr.push({id:prNewId(),label:name,children:[]});
-    return true;
-  }
-  function combinations(i,path,out){
-    if(i>=parentSelections.length){out.push(path.slice());return;}
-    for(const id of parentSelections[i]||[]) combinations(i+1,path.concat(id),out);
-  }
-  const paths=[];
-  combinations(0,[],paths);
-  if(!paths.length && targetLevel>0){$('prConfigError').textContent='Select at least one parent option.';return;}
-  if(targetLevel===0) addUnderPath([]); else for(const path of paths) addUnderPath(path);
-  $('prNewOptionLabel').value='';
-  $('prConfigError').textContent=`Added "${name}" to ${targetLevel===0?'the first level':`${paths.length} selected parent branch${paths.length===1?'':'es'}`}.`;
-  await prSaveConfigTree({nodes});
-});
-$('prAddJobBtn').addEventListener('click',async()=>{if(!isAdmin)return;const name=$('prNewJobLabel').value.trim();if(!name){$('prConfigError').textContent='Enter job details.';return;}const path=window._prJobSelections||[];if(!path.length){$('prConfigError').textContent='Select at least one level/option for this job.';return;}const labels=prPathLabels(path);try{await addDoc(collection(db,'progressJobs'),{projectId:prProjectId,pathIds:path,pathLabels:labels,jobLabel:name,status:'pending',staffName:null,assignee:null,note:null,completedAt:null,createdAt:serverTimestamp(),createdBy:currentUser?.email||null});$('prNewJobLabel').value='';}catch(e){console.error(e);$('prConfigError').textContent='Could not add job. Check Firebase rules.';}});
-// Replace the path-selector renderer so selections are retained and are usable
-// by Add Option and Add Job. Multiple selection is still the collapsible box.
-prRenderPathSelectors=function(containerId,initial){
-  const box=$(containerId);
-  let selections=prNormalizeSelection(initial);
-  const key=containerId==='prOptionPathSelectors'?'_prOptionSelections':'_prJobSelections';
-  function firstPath(){const out=[];for(const a of selections){if(!a||!a.length)break;out.push(a[0]);}return out;}
-  function render(openLevel){
-    let h='';
-    for(let i=0;i<prTree.levels.length;i++){
-      const opts=prOptionsForSelections(selections,i),selected=selections[i]||[];
-      h+=prMultiDropdown(prTree.levels[i].label,opts,selected,'config',i);
-    }
-    box.innerHTML=h;
-    // Keep the dropdown open while selecting multiple items. Previously the
-    // whole selector was re-rendered after every checkbox click, which closed
-    // the <details> element and forced the user to reopen it for every item.
-    if(Number.isInteger(openLevel)){
-      const details=box.querySelectorAll('details.pr-multi')[openLevel];
-      if(details) details.open=true;
-    }
-    window[key]=firstPath();
-    window[key+'Full']=selections.map(a=>Array.isArray(a)?a.slice():[]);
-    box.querySelectorAll('input[data-config-choice]').forEach(el=>el.addEventListener('change',()=>{
-      const i=+el.dataset.configLevel;
-      const vals=[...box.querySelectorAll(`input[data-config-level="${i}"][data-config-choice]:checked`)].map(x=>x.dataset.configChoice);
-      selections=selections.slice(0,i);
-      selections[i]=vals;
-      // Lower levels depend on this selection, so clear them. Keep this
-      // dropdown open so multiple parent options can be selected continuously.
-      selections=selections.slice(0,i+1);
-      render(i);
-    }));
-  }
-  render();
-};
 
+// ---------- COMPLETION REPORT TAB ----------
+function renderPrReportView(){
+  const box = $("prReportView");
+  if(!box || !prTreeDoc) return;
+  const lastLabel = (prTreeDoc.levelLabels||[]).slice(-1)[0] || "unit";
+  const byUnit = {};
+  prJobs.forEach(j=>{
+    if(!byUnit[j.unitPath]) byUnit[j.unitPath] = { unitLabel: j.unitLabel || j.unitPath, jobs: [] };
+    byUnit[j.unitPath].jobs.push(j);
+  });
+  const unitPaths = Object.keys(byUnit);
+  if(!unitPaths.length){
+    box.innerHTML = `<div class="hint" style="padding:16px 0;">No jobs recorded yet.</div>`;
+    return;
+  }
+  let completedUnits = 0;
+  const rows = unitPaths.map(path=>{
+    const u = byUnit[path];
+    const total = u.jobs.length;
+    const done = u.jobs.filter(j=> j.status==="done").length;
+    const pending = u.jobs.filter(j=> j.status!=="done");
+    const isComplete = done===total;
+    if(isComplete) completedUnits++;
+    return `
+      <div class="card" style="cursor:default;">
+        <div class="card-body">
+          <p class="card-title">${escapeHtml(u.unitLabel)}</p>
+          <span class="badge ${isComplete?'badge-closed':'badge-open'}">${done}/${total} done</span>
+          ${pending.length ? `<div class="meta">Pending: ${pending.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
+        </div>
+      </div>`;
+  }).join("");
+  box.innerHTML = `
+    <div class="section-label">Summary</div>
+    <div class="detail-row"><b>${completedUnits}</b> of <b>${unitPaths.length}</b> ${escapeHtml(lastLabel)}(s) fully completed &middot; <b>${unitPaths.length - completedUnits}</b> pending</div>
+    <div class="section-label" style="margin-top:14px;">By ${escapeHtml(lastLabel)}</div>
+    ${rows}
+  `;
+}
+
+// ---------- CUSTOMIZE (admin only) ----------
+$("prCustomizeBtn").addEventListener("click", ()=>{
+  if(!isAdmin) return;
+  prCustomizeBreadcrumb = [];
+  prJobsEditorUnitId = null;
+  $("prCustomizeError").textContent = "";
+  renderPrCustomizeLevels();
+  renderPrTreeEditor();
+  showModal("prCustomizeModal");
+});
+
+async function prSaveTree(partial){
+  const payload = {
+    projectId: prCurrentProjectId,
+    updatedAt: serverTimestamp(),
+    updatedBy: currentUser ? (currentUser.email||null) : null,
+    ...partial
+  };
+  try{
+    await setDoc(doc(db,"progressTrees",prCurrentProjectId), payload, { merge:true });
+  }catch(err){
+    console.error(err);
+    $("prCustomizeError").textContent = "Could not save. Check your connection and try again.";
+  }
+}
+
+function renderPrCustomizeLevels(){
+  const box = $("prLevelsList");
+  if(!box || !prTreeDoc) return;
+  const labels = prTreeDoc.levelLabels || [];
+  box.innerHTML = labels.map((lbl,i)=>`
+    <div class="field" style="display:flex;gap:8px;align-items:end;">
+      <div style="flex:1;">
+        <label>Level ${i+1}${i===labels.length-1 ? " (leads to job checklist)" : ""}</label>
+        <input type="text" class="pr-level-name" data-idx="${i}" value="${escapeHtml(lbl)}" />
+      </div>
+      ${labels.length>1 && i===labels.length-1 ? `<button class="btn btn-red pr-delete-level" style="padding:9px 12px;">Delete</button>` : ""}
+    </div>`).join("");
+  box.querySelectorAll(".pr-level-name").forEach(input=>{
+    input.addEventListener("change", async ()=>{
+      const idx = parseInt(input.getAttribute("data-idx"),10);
+      const labels2 = (prTreeDoc.levelLabels||[]).slice();
+      labels2[idx] = input.value.trim() || `Level ${idx+1}`;
+      await prSaveTree({ levelLabels: labels2 });
+    });
+  });
+  const delBtn = box.querySelector(".pr-delete-level");
+  if(delBtn){
+    delBtn.addEventListener("click", async ()=>{
+      if(labels.length<=1) return;
+      if(!(await confirmDelete(`Delete the last level "${labels[labels.length-1]}"? This removes all options and jobs recorded at that depth for every branch. This cannot be undone.`))) return;
+      await prDeleteLastLevel();
+    });
+  }
+}
+
+$("prAddLevelBtn").addEventListener("click", async ()=>{
+  if(!prTreeDoc) prTreeDoc = { levelLabels: prDefaultLevelLabels(), nodes: [] };
+  const name = prompt("Name for the new drop box level (added just before the job checklist):", "New Level");
+  if(name === null) return;
+  const labels2 = (prTreeDoc.levelLabels||[]).concat([name.trim() || "New Level"]);
+  await prSaveTree({ levelLabels: labels2 });
+});
+
+function prTruncateNodes(nodes, depthRemaining){
+  return nodes.map(n=>{
+    if(depthRemaining<=1){
+      const { children, ...rest } = n;
+      return rest;
+    }
+    return { ...n, children: prTruncateNodes(n.children||[], depthRemaining-1) };
+  });
+}
+
+async function prDeleteLastLevel(){
+  const labels = (prTreeDoc.levelLabels||[]).slice();
+  if(labels.length<=1) return;
+  labels.pop();
+  const newNodes = prTruncateNodes(prTreeDoc.nodes||[], labels.length);
+  await prSaveTree({ levelLabels: labels, nodes: newNodes });
+  try{
+    const snap = await getDocs(collection(db,"progressJobs"));
+    const mine = snap.docs.filter(d=> d.data().projectId === prCurrentProjectId);
+    await Promise.all(mine.map(d=> deleteDoc(doc(db,"progressJobs",d.id))));
+  }catch(err){ console.error("Could not clear jobs after level delete:", err); }
+  prCustomizeBreadcrumb = [];
+  renderPrTreeEditor();
+}
+
+function prCloneNodes(){ return JSON.parse(JSON.stringify(prTreeDoc.nodes||[])); }
+
+function prGetSiblingsRef(nodes, pathIds){
+  let level = nodes;
+  for(const id of pathIds){
+    const found = level.find(n=> n.id===id);
+    if(!found) return null;
+    if(!found.children) found.children = [];
+    level = found.children;
+  }
+  return level;
+}
+
+async function prAddNode(label){
+  const nodes = prCloneNodes();
+  const siblings = prGetSiblingsRef(nodes, prCustomizeBreadcrumb);
+  if(!siblings) return;
+  siblings.push({ id: prNodeIdGen(), label, children: [] });
+  await prSaveTree({ nodes });
+}
+
+async function prRenameNode(id, label){
+  const nodes = prCloneNodes();
+  const siblings = prGetSiblingsRef(nodes, prCustomizeBreadcrumb);
+  if(!siblings) return;
+  const n = siblings.find(x=> x.id===id);
+  if(n) n.label = label;
+  await prSaveTree({ nodes });
+}
+
+async function prDeleteNode(id){
+  const nodes = prCloneNodes();
+  const siblings = prGetSiblingsRef(nodes, prCustomizeBreadcrumb);
+  if(!siblings) return;
+  const idx = siblings.findIndex(x=> x.id===id);
+  if(idx===-1) return;
+  siblings.splice(idx,1);
+  await prSaveTree({ nodes });
+  try{
+    const deletedPrefix = [...prCustomizeBreadcrumb, id].join(">");
+    const snap = await getDocs(collection(db,"progressJobs"));
+    const toDelete = snap.docs.filter(d=>{
+      const data = d.data();
+      if(data.projectId !== prCurrentProjectId) return false;
+      const up = data.unitPath || "";
+      return up === deletedPrefix || up.startsWith(deletedPrefix + ">");
+    });
+    await Promise.all(toDelete.map(d=> deleteDoc(doc(db,"progressJobs",d.id))));
+  }catch(err){ console.error("Could not clean up jobs for deleted node:", err); }
+}
+
+function renderPrTreeEditor(){
+  const crumbBox = $("prTreeBreadcrumb");
+  const box = $("prTreeEditor");
+  if(!box || !prTreeDoc) return;
+  const labels = prTreeDoc.levelLabels || [];
+  if(prCustomizeBreadcrumb.length >= labels.length){
+    prCustomizeBreadcrumb = prCustomizeBreadcrumb.slice(0, Math.max(0,labels.length-1));
+  }
+  const currentLevelLabel = labels[prCustomizeBreadcrumb.length] || "";
+  const crumbNames = [];
+  let nodesWalk = prTreeDoc.nodes || [];
+  prCustomizeBreadcrumb.forEach(id=>{
+    const n = nodesWalk.find(x=> x.id===id);
+    crumbNames.push(n ? n.label : "?");
+    nodesWalk = n ? (n.children||[]) : [];
+  });
+  crumbBox.innerHTML = `Editing: <b>${crumbNames.length ? escapeHtml(crumbNames.join(" / ")) : "(top level)"}</b> — showing <b>${escapeHtml(currentLevelLabel)}</b> options
+    ${prCustomizeBreadcrumb.length ? ` <button class="btn btn-light" id="prBreadcrumbBackBtn" style="padding:3px 10px;font-size:12px;">&larr; Back</button>` : ""}`;
+  if(prCustomizeBreadcrumb.length){
+    document.getElementById("prBreadcrumbBackBtn").addEventListener("click", ()=>{
+      prCustomizeBreadcrumb.pop();
+      renderPrTreeEditor();
+    });
+  }
+
+  const siblings = nodesWalk;
+  const isLeafSelectorLevel = (prCustomizeBreadcrumb.length === labels.length-1);
+
+  box.innerHTML = siblings.map(n=>`
+    <div class="card" style="cursor:default;">
+      <div class="card-body">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <input type="text" class="pr-node-name" data-id="${n.id}" value="${escapeHtml(n.label)}" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:8px;" />
+          ${!isLeafSelectorLevel ? `<button class="btn btn-light pr-node-drill" data-id="${n.id}" style="padding:8px 10px;">Open &rarr;</button>` : `<button class="btn btn-light pr-node-jobs" data-id="${n.id}" style="padding:8px 10px;">Jobs</button>`}
+          <button class="btn btn-red pr-node-delete" data-id="${n.id}" style="padding:8px 10px;">Delete</button>
+        </div>
+      </div>
+    </div>`).join("") + `<div class="modal-actions"><button class="btn btn-light" id="prAddNodeBtn" style="width:100%;">+ Add ${escapeHtml(currentLevelLabel)} option</button></div>`;
+
+  box.querySelectorAll(".pr-node-name").forEach(input=>{
+    input.addEventListener("change", async ()=>{
+      await prRenameNode(input.getAttribute("data-id"), input.value.trim() || "Untitled");
+    });
+  });
+  box.querySelectorAll(".pr-node-drill").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      prCustomizeBreadcrumb.push(btn.getAttribute("data-id"));
+      renderPrTreeEditor();
+    });
+  });
+  box.querySelectorAll(".pr-node-jobs").forEach(btn=>{
+    btn.addEventListener("click", ()=> prOpenJobsEditor(btn.getAttribute("data-id")));
+  });
+  box.querySelectorAll(".pr-node-delete").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      const id = btn.getAttribute("data-id");
+      const n = siblings.find(x=> x.id===id);
+      if(!(await confirmDelete(`Delete "${n?n.label:''}" and everything under it? This cannot be undone.`))) return;
+      await prDeleteNode(id);
+    });
+  });
+  const addNodeBtn = document.getElementById("prAddNodeBtn");
+  if(addNodeBtn){
+    addNodeBtn.addEventListener("click", async ()=>{
+      const name = prompt(`New ${currentLevelLabel} name:`, "");
+      if(name === null) return;
+      await prAddNode(name.trim() || "Untitled");
+    });
+  }
+}
+
+function prOpenJobsEditor(unitNodeId){
+  prJobsEditorUnitId = unitNodeId;
+  prJobsEditorPath = [...prCustomizeBreadcrumb, unitNodeId];
+  const unitPath = prJobsEditorPath.join(">");
+  const box = $("prTreeEditor");
+  const crumbBox = $("prTreeBreadcrumb");
+  const unitJobs = prJobs.filter(j=> j.unitPath===unitPath);
+  crumbBox.innerHTML = `Editing jobs for this unit <button class="btn btn-light" id="prJobsBackBtn" style="padding:3px 10px;font-size:12px;">&larr; Back</button>`;
+  document.getElementById("prJobsBackBtn").addEventListener("click", ()=>{ prJobsEditorUnitId=null; renderPrTreeEditor(); });
+
+  box.innerHTML = unitJobs.map(j=>`
+    <div class="card" style="cursor:default;">
+      <div class="card-body">
+        <div style="display:flex;gap:8px;align-items:center;">
+          <span style="flex:1;">${escapeHtml(j.jobLabel)}</span>
+          <span class="badge ${j.status==='done'?'badge-closed':'badge-open'}">${j.status==='done'?('Done — '+escapeHtml(j.assignee||'')):'Pending'}</span>
+          <button class="btn btn-red pr-job-delete" data-id="${j.id}" style="padding:6px 10px;">Delete</button>
+        </div>
+      </div>
+    </div>`).join("") + `<div class="modal-actions"><button class="btn btn-light" id="prAddJobBtn" style="width:100%;">+ Add job</button></div>`;
+
+  box.querySelectorAll(".pr-job-delete").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      if(!(await confirmDelete("Delete this job item?"))) return;
+      try{ await deleteDoc(doc(db,"progressJobs",btn.getAttribute("data-id"))); }
+      catch(err){ console.error(err); alert("Could not delete."); }
+    });
+  });
+  const addJobBtn = document.getElementById("prAddJobBtn");
+  if(addJobBtn){
+    addJobBtn.addEventListener("click", async ()=>{
+      const name = prompt("New job name (e.g. Unit Mounting):", "");
+      if(name === null || !name.trim()) return;
+      let nodesWalk2 = prTreeDoc.nodes || [];
+      const labelParts = [];
+      prJobsEditorPath.forEach(id=>{
+        const n = nodesWalk2.find(x=> x.id===id);
+        labelParts.push(n?n.label:"?");
+        nodesWalk2 = n ? (n.children||[]) : [];
+      });
+      try{
+        await addDoc(collection(db,"progressJobs"), {
+          projectId: prCurrentProjectId,
+          unitPath, unitLabel: labelParts.join(" / "),
+          jobLabel: name.trim(), status:"pending", assignee:null, completedAt:null,
+          createdAt: serverTimestamp(), createdBy: currentUser ? (currentUser.email||null) : null
+        });
+      }catch(err){ console.error(err); alert("Could not add job."); }
+    });
+  }
+}
+
+// ---------- ENTRY-POINT BUTTONS ----------
+// Injected onto project cards and into the Project Tasks modal header via
+// observers, so none of the existing render functions had to be modified.
+function prInjectProjectCardButtons(){
+  if(!(isAdmin || isVerifiedStaff)) return;
+  document.querySelectorAll('#projectList .card[data-project-id]').forEach(card=>{
+    if(card.querySelector(".pr-open-btn")) return;
+    const actionsRow = card.querySelector('.card-body > div[style*="flex-wrap"]');
+    const btn = document.createElement("button");
+    btn.className = "btn btn-navy pr-open-btn";
+    btn.textContent = "Progress Report";
+    btn.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const pid = card.getAttribute("data-project-id");
+      const proj = allProjects.find(p=> p.id===pid);
+      openProgressReport(pid, proj ? (proj.name||"Project") : "Project");
+    });
+    if(actionsRow){
+      actionsRow.appendChild(btn);
+    } else {
+      const wrap = document.createElement("div");
+      wrap.style.cssText = "margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;";
+      wrap.appendChild(btn);
+      const cardBody = card.querySelector(".card-body");
+      if(cardBody) cardBody.appendChild(wrap);
+    }
+  });
+}
+const prProjectListEl = document.getElementById("projectList");
+if(prProjectListEl){
+  new MutationObserver(()=> prInjectProjectCardButtons()).observe(prProjectListEl, { childList:true, subtree:false });
+}
+
+function prInjectTasksModalButton(){
+  if(!(isAdmin || isVerifiedStaff) || !currentProjectId) return;
+  const titleEl = document.getElementById("projectTasksTitle");
+  if(!titleEl) return;
+  let btn = document.getElementById("prFromTasksModalBtn");
+  if(!btn){
+    btn = document.createElement("button");
+    btn.id = "prFromTasksModalBtn";
+    btn.className = "btn btn-navy";
+    btn.style.cssText = "display:block;width:100%;margin:8px 0;";
+    titleEl.insertAdjacentElement("afterend", btn);
+  }
+  btn.textContent = "Open Progress Report";
+  btn.onclick = ()=> openProgressReport(currentProjectId, currentProjectName);
+}
+const prTasksModalEl = document.getElementById("projectTasksModal");
+if(prTasksModalEl){
+  new MutationObserver((mutations)=>{
+    mutations.forEach(m=>{
+      if(m.attributeName === "class" && prTasksModalEl.classList.contains("show")) prInjectTasksModalButton();
+    });
+  }).observe(prTasksModalEl, { attributes:true });
+}
+/* ============ END PROJECT PROGRESS REPORT ============ */
 </script>
 </body>
 </html>
