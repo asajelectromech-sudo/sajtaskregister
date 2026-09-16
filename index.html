@@ -720,14 +720,8 @@
   <div class="modal">
     <button class="close-x" data-close="prCustomizeModal">&times;</button>
     <h2>Customize Progress Report (admin)</h2>
-    <div class="section-label">Drop-box levels</div>
-    <div class="hint">These are the cascading drop boxes, in order (e.g. Building, Floor, Unit Number). The last level always leads to the job checklist, not another drop box.</div>
-    <div id="prLevelsList"></div>
-    <div class="modal-actions">
-      <button class="btn btn-light" id="prAddLevelBtn" style="width:100%;">+ Add drop box level</button>
-    </div>
-    <div class="section-label">Options</div>
-    <div class="hint" id="prTreeBreadcrumb"></div>
+    <div class="hint">Build the location/equipment tree freely — tap "Open" on any item to add sub-items under it (e.g. Building &rarr; Floor &rarr; Unit &rarr; Indoor/Outdoor). Any item, at any depth, can also carry its own job checklist directly — branches don't need to be the same depth as each other.</div>
+    <div class="hint" id="prTreeBreadcrumb" style="margin-top:10px;"></div>
     <div id="prTreeEditor"></div>
     <div class="error-text" id="prCustomizeError"></div>
   </div>
@@ -4279,25 +4273,55 @@ function generateWorkPdf(items, siteFilterValue, fromValue, toValue){
 }
 
 /* ============================================================================
-   PROJECT PROGRESS REPORT — cascading customizable drop boxes + job checklist
-   + completion report. This whole section is NEW and additive: nothing above
-   this point was modified.
+   PROJECT PROGRESS REPORT — free-form location/equipment tree (any branch can
+   go as deep as it needs, e.g. Building > Floor > Unit > Indoor/Outdoor, while
+   another branch stops earlier) + job checklist attachable at ANY node in the
+   tree (not just the deepest one) + a daily progress log per job (staff name,
+   note, date — kept, editable, never overwritten) + completion report.
+   This whole section is additive: nothing above this point was modified.
    ============================================================================ */
 
 let prCurrentProjectId = null;
 let prCurrentProjectName = "";
-let prTreeDoc = null;            // { levelLabels:[...], nodes:[...] }
+let prTreeDoc = null;            // { nodes:[ {id,label,children:[...]} , ... ] }
 let prTreeListenerUnsub = null;
 let prJobs = [];                 // all progressJobs docs for the open project
 let prJobsListenerUnsub = null;
-let prSelectedPath = [];         // selected node ids, one per selector level (Fill tab)
+let prSelectedPath = [];         // node ids drilled into so far, in the Fill Progress tab
 let prActiveTab = "fill";
 let prCustomizeBreadcrumb = [];  // node ids drilled into, inside the Customize tree editor
-let prJobsEditorUnitId = null;   // set while the Customize modal is showing a unit's job list
-let prJobsEditorPath = [];
+let prJobsEditorPath = null;     // when set (array of node ids), Customize is showing that node's job list instead of its children
+let prExpandedJobId = null;      // which job card is expanded in the Fill Progress tab
+let prJobDrafts = {};            // jobId -> {staff, note} — unsaved text typed into a job's form
 
-function prDefaultLevelLabels(){ return ["Building","Floor","Unit Number"]; }
 function prNodeIdGen(){ return "n_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2,7); }
+
+// ---------- TREE HELPERS (shared by Fill Progress + Customize) ----------
+function prGetNodeByPath(path){
+  let nodes = (prTreeDoc && prTreeDoc.nodes) || [];
+  let node = null;
+  for(const id of path){
+    node = (nodes||[]).find(n=> n.id===id);
+    if(!node) return null;
+    nodes = node.children || [];
+  }
+  return node;
+}
+function prGetChildren(path){
+  if(!path.length) return (prTreeDoc && prTreeDoc.nodes) || [];
+  const node = prGetNodeByPath(path);
+  return node ? (node.children||[]) : [];
+}
+function prPathLabels(path){
+  let nodes = (prTreeDoc && prTreeDoc.nodes) || [];
+  const labels = [];
+  for(const id of path){
+    const n = (nodes||[]).find(x=> x.id===id);
+    labels.push(n ? n.label : "?");
+    nodes = n ? (n.children||[]) : [];
+  }
+  return labels;
+}
 
 // ---------- ENTRY POINTS ----------
 function openProgressReport(projectId, projectName){
@@ -4310,6 +4334,10 @@ function openProgressReport(projectId, projectName){
   $("prFillView").style.display = "block";
   $("prReportView").style.display = "none";
   prSelectedPath = [];
+  prExpandedJobId = null;
+  prJobDrafts = {};
+  prCustomizeBreadcrumb = [];
+  prJobsEditorPath = null;
   startPrListeners();
   showModal("prModal");
 }
@@ -4328,22 +4356,18 @@ function startPrListeners(){
 
   prTreeListenerUnsub = onSnapshot(doc(db, "progressTrees", prCurrentProjectId), snap=>{
     const data = snap.exists() ? snap.data() : {};
-    prTreeDoc = {
-      levelLabels: (Array.isArray(data.levelLabels) && data.levelLabels.length) ? data.levelLabels : prDefaultLevelLabels(),
-      nodes: Array.isArray(data.nodes) ? data.nodes : []
-    };
+    prTreeDoc = { nodes: Array.isArray(data.nodes) ? data.nodes : [] };
     renderPrFillView();
-    renderPrCustomizeLevels();
-    if(!prJobsEditorUnitId) renderPrTreeEditor();
+    if(!prJobsEditorPath) renderPrTreeEditor();
   }, err=> console.error("progressTrees listener:", err));
 
   // Client-side filter by projectId instead of a where() query, so no extra
   // Firestore import or composite index is needed.
   prJobsListenerUnsub = onSnapshot(collection(db, "progressJobs"), snap=>{
     prJobs = snap.docs.map(d=> ({ id: d.id, ...d.data() })).filter(j=> j.projectId === prCurrentProjectId);
-    renderPrFillView();
+    renderPrJobsChecklist();
     renderPrReportView();
-    if(prJobsEditorUnitId) prOpenJobsEditor(prJobsEditorUnitId);
+    if(prJobsEditorPath) prOpenJobsEditor(prJobsEditorPath);
   }, err=> console.error("progressJobs listener:", err));
 }
 
@@ -4358,147 +4382,266 @@ $("prTabs").querySelectorAll(".chip").forEach(chip=>{
   });
 });
 
-// ---------- FILL PROGRESS TAB ----------
+// ---------- FILL PROGRESS TAB (tap-through location browser) ----------
 function renderPrFillView(){
   if(!prTreeDoc) return;
   const box = $("prFillView");
-  const labels = prTreeDoc.levelLabels || [];
-  if(!prTreeDoc.nodes || prTreeDoc.nodes.length===0){
-    box.innerHTML = `<div class="hint" style="padding:16px 0;">No options set up yet for "${escapeHtml(labels[0]||"this project")}".${isAdmin ? " Tap Customize above to add them." : " Ask your admin to set this up."}</div>`;
+  const rootNodes = prTreeDoc.nodes || [];
+  if(!rootNodes.length){
+    box.innerHTML = `<div class="hint" style="padding:16px 0;">No locations set up yet.${isAdmin ? " Tap Customize above to add them." : " Ask your admin to set this up."}</div>`;
     return;
   }
-  let html = "";
-  let nodesAtLevel = prTreeDoc.nodes;
-  for(let i=0;i<labels.length;i++){
-    const selectedId = prSelectedPath[i] || "";
-    html += `<div class="field"><label>${escapeHtml(labels[i])}</label>
-      <select class="pr-level-select" data-level="${i}">
-        <option value="">Select ${escapeHtml(labels[i])}...</option>
-        ${nodesAtLevel.map(n=>`<option value="${escapeHtml(n.id)}" ${n.id===selectedId?"selected":""}>${escapeHtml(n.label)}</option>`).join("")}
-      </select></div>`;
-    if(!selectedId){ nodesAtLevel = []; continue; }
-    const node = nodesAtLevel.find(n=> n.id===selectedId);
-    nodesAtLevel = node ? (node.children||[]) : [];
+  const children = prGetChildren(prSelectedPath);
+  const labels = prPathLabels(prSelectedPath);
+
+  let html = `<div class="hint" style="margin-bottom:10px;">
+    <span class="pr-crumb" data-idx="-1" style="cursor:pointer;text-decoration:underline;">Top</span>
+    ${labels.map((l,i)=> ` &rarr; <span class="pr-crumb" data-idx="${i}" style="cursor:pointer;text-decoration:underline;">${escapeHtml(l)}</span>`).join("")}
+  </div>`;
+
+  if(children.length){
+    html += `<div class="section-label">${prSelectedPath.length ? "Sub-items" : "Select"}</div>`;
+    html += children.map(n=> `
+      <div class="card" style="cursor:pointer;" data-drill-id="${n.id}">
+        <div class="card-body"><p class="card-title">${escapeHtml(n.label)}</p></div>
+      </div>`).join("");
+  } else if(!prSelectedPath.length){
+    html += `<div class="hint">No items yet.${isAdmin ? " Tap Customize above to add them." : ""}</div>`;
   }
+
   html += `<div id="prJobsChecklist"></div>`;
   box.innerHTML = html;
-  box.querySelectorAll(".pr-level-select").forEach(sel=>{
-    sel.addEventListener("change", ()=>{
-      const lvl = parseInt(sel.getAttribute("data-level"),10);
-      prSelectedPath = prSelectedPath.slice(0, lvl);
-      if(sel.value) prSelectedPath.push(sel.value);
+
+  box.querySelectorAll(".pr-crumb").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const idx = parseInt(el.getAttribute("data-idx"), 10);
+      prSelectedPath = idx < 0 ? [] : prSelectedPath.slice(0, idx+1);
+      prExpandedJobId = null;
       renderPrFillView();
     });
   });
+  box.querySelectorAll("[data-drill-id]").forEach(card=>{
+    card.addEventListener("click", ()=>{
+      prSelectedPath = [...prSelectedPath, card.getAttribute("data-drill-id")];
+      prExpandedJobId = null;
+      renderPrFillView();
+    });
+  });
+
   renderPrJobsChecklist();
 }
 
-function prUnitPath(){
-  if(!prTreeDoc) return null;
-  if(prSelectedPath.length !== (prTreeDoc.levelLabels||[]).length) return null;
-  return prSelectedPath.join(">");
+function prStatusBadge(status){
+  if(status==="done") return `<span class="badge badge-closed">Completed</span>`;
+  if(status==="in_progress") return `<span class="badge" style="background:var(--blue-bg);color:var(--blue);">In progress</span>`;
+  return `<span class="badge badge-open">Pending</span>`;
 }
 
 function renderPrJobsChecklist(){
   const box = $("prJobsChecklist");
   if(!box) return;
-  const unitPath = prUnitPath();
-  const lastLabel = (prTreeDoc.levelLabels||[]).slice(-1)[0] || "unit";
-  if(!unitPath){
-    box.innerHTML = `<div class="hint">Select every drop box above to see the job checklist.</div>`;
+  // Don't wipe the box out from under someone who's mid-typing in a job form.
+  if(box.contains(document.activeElement) &&
+     (document.activeElement.classList.contains("pr-job-staff") || document.activeElement.classList.contains("pr-job-note"))){
     return;
   }
+  if(!prSelectedPath.length){
+    box.innerHTML = "";
+    return;
+  }
+  const unitPath = prSelectedPath.join(">");
   const jobs = prJobs.filter(j=> j.unitPath===unitPath);
   if(!jobs.length){
-    box.innerHTML = `<div class="hint">No jobs defined for this ${escapeHtml(lastLabel)} yet.${isAdmin ? " Add jobs via Customize." : ""}</div>`;
+    box.innerHTML = `<div class="hint" style="margin-top:10px;">No jobs attached directly to this item.${isAdmin ? " Add via Customize." : ""}</div>`;
     return;
   }
   const doneCount = jobs.filter(j=> j.status==="done").length;
   box.innerHTML = `
-    <div class="section-label">Jobs (${doneCount}/${jobs.length} done)</div>
-    ${jobs.map(j=>`
-      <div class="card" style="cursor:pointer;" data-job-id="${j.id}">
-        <div class="card-body">
-          <p class="card-title">${escapeHtml(j.jobLabel)}</p>
-          ${j.status==="done"
-            ? `<span class="badge badge-closed">Done — ${escapeHtml(j.assignee||"")}</span>`
-            : `<span class="badge badge-open">Pending</span>`}
-        </div>
-      </div>`).join("")}
-    ${doneCount===jobs.length ? `<div class="hint" style="color:var(--green);font-weight:700;margin-top:6px;">All jobs complete for this ${escapeHtml(lastLabel)}.</div>` : ""}
+    <div class="section-label" style="margin-top:14px;">Jobs here (${doneCount}/${jobs.length} done)</div>
+    ${jobs.map(j=> prRenderJobCard(j)).join("")}
   `;
-  box.querySelectorAll("[data-job-id]").forEach(card=>{
-    card.addEventListener("click", ()=> prToggleJob(card.getAttribute("data-job-id")));
-  });
+  prWireJobCards(box);
 }
 
-async function prToggleJob(jobId){
-  if(!isAdmin && !isVerifiedStaff) return;
+function prRenderJobCard(j){
+  const expanded = prExpandedJobId === j.id;
+  const draft = prJobDrafts[j.id] || { staff: j.currentStaff||"", note: j.currentNote||"" };
+  const canEdit = (isAdmin || isVerifiedStaff) && j.status !== "done";
+  const logs = (j.logs||[]).slice().reverse();
+  return `
+    <div class="card" style="cursor:default;flex-direction:column;align-items:stretch;">
+      <div class="card-body" style="width:100%;">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;" data-job-toggle="${j.id}">
+          <p class="card-title" style="margin:0;">${escapeHtml(j.jobLabel)}</p>
+          ${prStatusBadge(j.status)}
+        </div>
+        ${j.currentStaff ? `<div class="meta">Last: ${escapeHtml(j.currentStaff)}${j.currentNote ? " — "+escapeHtml(j.currentNote) : ""}</div>` : ""}
+        ${expanded ? `
+          <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
+            ${canEdit ? `
+              <div class="field"><label>Staff name</label><input type="text" class="pr-job-staff" data-id="${j.id}" value="${escapeHtml(draft.staff)}" placeholder="Who is doing this?" /></div>
+              <div class="field"><label>Note</label><textarea class="pr-job-note" data-id="${j.id}" placeholder="What's today's update?">${escapeHtml(draft.note)}</textarea></div>
+              <div class="modal-actions" style="margin-top:0;">
+                <button class="btn btn-light pr-job-save" data-id="${j.id}">Save Progress</button>
+                <button class="btn btn-green pr-job-complete" data-id="${j.id}">Mark Completed</button>
+              </div>
+            ` : (j.status==="done" ? `
+              <div class="detail-row"><b>Completed by:</b> ${escapeHtml(j.completedStaff || j.currentStaff || "")}</div>
+              ${j.completedNote ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(j.completedNote)}</div>` : ""}
+              ${isAdmin ? `<button class="btn btn-red pr-job-reopen" data-id="${j.id}" style="width:100%;margin-top:6px;">Reopen</button>` : ""}
+            ` : `<div class="hint">Sign in as staff to update this job.</div>`)}
+            ${logs.length ? `
+              <div class="section-label" style="margin-top:12px;">History</div>
+              ${logs.map(l=> `<div class="detail-row">${escapeHtml(l.date||"")} &middot; <b>${escapeHtml(l.staffName||"")}</b>${l.completion ? " (Completed)" : ""}${l.note ? " — "+escapeHtml(l.note) : ""}</div>`).join("")}
+            ` : ""}
+          </div>
+        ` : ""}
+      </div>
+    </div>`;
+}
+
+function prWireJobCards(box){
+  box.querySelectorAll("[data-job-toggle]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const id = el.getAttribute("data-job-toggle");
+      prExpandedJobId = (prExpandedJobId===id) ? null : id;
+      renderPrJobsChecklist();
+    });
+  });
+  box.querySelectorAll(".pr-job-staff").forEach(inp=>{
+    inp.addEventListener("input", ()=>{
+      const id = inp.getAttribute("data-id");
+      if(!prJobDrafts[id]) prJobDrafts[id] = { staff:"", note:"" };
+      prJobDrafts[id].staff = inp.value;
+    });
+  });
+  box.querySelectorAll(".pr-job-note").forEach(inp=>{
+    inp.addEventListener("input", ()=>{
+      const id = inp.getAttribute("data-id");
+      if(!prJobDrafts[id]) prJobDrafts[id] = { staff:"", note:"" };
+      prJobDrafts[id].note = inp.value;
+    });
+  });
+  box.querySelectorAll(".pr-job-save").forEach(btn=> btn.addEventListener("click", ()=> prSaveProgress(btn.getAttribute("data-id"))));
+  box.querySelectorAll(".pr-job-complete").forEach(btn=> btn.addEventListener("click", ()=> prCompleteJob(btn.getAttribute("data-id"))));
+  box.querySelectorAll(".pr-job-reopen").forEach(btn=> btn.addEventListener("click", ()=> prReopenJob(btn.getAttribute("data-id"))));
+}
+
+function prReadDraft(jobId){
+  const box = $("prJobsChecklist");
+  const staffInput = box ? box.querySelector(`.pr-job-staff[data-id="${jobId}"]`) : null;
+  const noteInput = box ? box.querySelector(`.pr-job-note[data-id="${jobId}"]`) : null;
+  return {
+    staff: (staffInput ? staffInput.value : (prJobDrafts[jobId]||{}).staff || "").trim(),
+    note: (noteInput ? noteInput.value : (prJobDrafts[jobId]||{}).note || "").trim()
+  };
+}
+
+async function prSaveProgress(jobId){
+  const { staff, note } = prReadDraft(jobId);
+  if(!staff || !note){ alert("Please enter both a staff name and a note before saving progress."); return; }
+  const entry = {
+    date: new Date().toISOString().slice(0,10),
+    staffName: staff, note,
+    savedBy: currentUser ? (currentUser.email||null) : null,
+    savedAt: Timestamp.now()
+  };
+  try{
+    await updateDoc(doc(db,"progressJobs",jobId), {
+      status: "in_progress",
+      currentStaff: staff, currentNote: note,
+      logs: arrayUnion(entry),
+      updatedAt: serverTimestamp()
+    });
+    delete prJobDrafts[jobId];
+  }catch(err){ console.error(err); alert("Could not save. Check your connection and try again."); }
+}
+
+async function prCompleteJob(jobId){
+  const { staff, note } = prReadDraft(jobId);
+  if(!staff || !note){ alert("Please enter both a staff name and a note to mark this completed."); return; }
+  const entry = {
+    date: new Date().toISOString().slice(0,10),
+    staffName: staff, note,
+    savedBy: currentUser ? (currentUser.email||null) : null,
+    savedAt: Timestamp.now(),
+    completion: true
+  };
+  try{
+    await updateDoc(doc(db,"progressJobs",jobId), {
+      status: "done",
+      currentStaff: staff, currentNote: note,
+      completedStaff: staff, completedNote: note,
+      completedAt: serverTimestamp(),
+      completedBy: currentUser ? (currentUser.email||null) : null,
+      logs: arrayUnion(entry),
+      updatedAt: serverTimestamp()
+    });
+    delete prJobDrafts[jobId];
+  }catch(err){ console.error(err); alert("Could not save. Check your connection and try again."); }
+}
+
+async function prReopenJob(jobId){
+  if(!isAdmin) return;
   const job = prJobs.find(j=> j.id===jobId);
   if(!job) return;
-  if(job.status === "done"){
-    if(!isAdmin) return; // only admin can undo a completed job
-    if(!confirm(`Mark "${job.jobLabel}" back as pending?`)) return;
-    try{
-      await updateDoc(doc(db,"progressJobs",jobId), { status:"pending", assignee:null, completedAt:null, updatedAt: serverTimestamp() });
-    }catch(err){ console.error(err); alert("Could not update job. Check your connection and try again."); }
-    return;
-  }
-  const name = prompt(`Who will do "${job.jobLabel}"?`, "");
-  if(name === null) return;
-  if(!name.trim()){ alert("Please enter a name."); return; }
+  if(!confirm(`Reopen "${job.jobLabel}"? It will go back to In Progress so it can be edited again.`)) return;
   try{
-    await updateDoc(doc(db,"progressJobs",jobId), { status:"done", assignee:name.trim(), completedAt: serverTimestamp(), updatedAt: serverTimestamp() });
-  }catch(err){ console.error(err); alert("Could not save. Check your connection and try again."); }
+    await updateDoc(doc(db,"progressJobs",jobId), {
+      status: (job.logs && job.logs.length) ? "in_progress" : "pending",
+      completedAt: null, completedBy: null,
+      updatedAt: serverTimestamp()
+    });
+  }catch(err){ console.error(err); alert("Could not update job. Check your connection and try again."); }
 }
 
 // ---------- COMPLETION REPORT TAB ----------
 function renderPrReportView(){
   const box = $("prReportView");
   if(!box || !prTreeDoc) return;
-  const lastLabel = (prTreeDoc.levelLabels||[]).slice(-1)[0] || "unit";
-  const byUnit = {};
+  const byLoc = {};
   prJobs.forEach(j=>{
-    if(!byUnit[j.unitPath]) byUnit[j.unitPath] = { unitLabel: j.unitLabel || j.unitPath, jobs: [] };
-    byUnit[j.unitPath].jobs.push(j);
+    if(!byLoc[j.unitPath]) byLoc[j.unitPath] = { label: j.unitLabel || j.unitPath, jobs: [] };
+    byLoc[j.unitPath].jobs.push(j);
   });
-  const unitPaths = Object.keys(byUnit);
-  if(!unitPaths.length){
+  const locPaths = Object.keys(byLoc);
+  if(!locPaths.length){
     box.innerHTML = `<div class="hint" style="padding:16px 0;">No jobs recorded yet.</div>`;
     return;
   }
-  let completedUnits = 0;
-  const rows = unitPaths.map(path=>{
-    const u = byUnit[path];
+  let completedLocs = 0;
+  const rows = locPaths.map(path=>{
+    const u = byLoc[path];
     const total = u.jobs.length;
     const done = u.jobs.filter(j=> j.status==="done").length;
-    const pending = u.jobs.filter(j=> j.status!=="done");
+    const inProgress = u.jobs.filter(j=> j.status==="in_progress");
+    const pending = u.jobs.filter(j=> j.status==="pending");
     const isComplete = done===total;
-    if(isComplete) completedUnits++;
+    if(isComplete) completedLocs++;
     return `
       <div class="card" style="cursor:default;">
         <div class="card-body">
-          <p class="card-title">${escapeHtml(u.unitLabel)}</p>
+          <p class="card-title">${escapeHtml(u.label)}</p>
           <span class="badge ${isComplete?'badge-closed':'badge-open'}">${done}/${total} done</span>
+          ${inProgress.length ? `<div class="meta">In progress: ${inProgress.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
           ${pending.length ? `<div class="meta">Pending: ${pending.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
         </div>
       </div>`;
   }).join("");
   box.innerHTML = `
     <div class="section-label">Summary</div>
-    <div class="detail-row"><b>${completedUnits}</b> of <b>${unitPaths.length}</b> ${escapeHtml(lastLabel)}(s) fully completed &middot; <b>${unitPaths.length - completedUnits}</b> pending</div>
-    <div class="section-label" style="margin-top:14px;">By ${escapeHtml(lastLabel)}</div>
+    <div class="detail-row"><b>${completedLocs}</b> of <b>${locPaths.length}</b> item(s) fully completed &middot; <b>${locPaths.length - completedLocs}</b> pending</div>
+    <div class="section-label" style="margin-top:14px;">By item</div>
     ${rows}
   `;
 }
 
-// ---------- CUSTOMIZE (admin only) ----------
+// ---------- CUSTOMIZE (admin only) — free-form tree browser ----------
 $("prCustomizeBtn").addEventListener("click", ()=>{
   if(!isAdmin) return;
   prCustomizeBreadcrumb = [];
-  prJobsEditorUnitId = null;
+  prJobsEditorPath = null;
   $("prCustomizeError").textContent = "";
-  renderPrCustomizeLevels();
   renderPrTreeEditor();
   showModal("prCustomizeModal");
 });
@@ -4518,70 +4661,7 @@ async function prSaveTree(partial){
   }
 }
 
-function renderPrCustomizeLevels(){
-  const box = $("prLevelsList");
-  if(!box || !prTreeDoc) return;
-  const labels = prTreeDoc.levelLabels || [];
-  box.innerHTML = labels.map((lbl,i)=>`
-    <div class="field" style="display:flex;gap:8px;align-items:end;">
-      <div style="flex:1;">
-        <label>Level ${i+1}${i===labels.length-1 ? " (leads to job checklist)" : ""}</label>
-        <input type="text" class="pr-level-name" data-idx="${i}" value="${escapeHtml(lbl)}" />
-      </div>
-      ${labels.length>1 && i===labels.length-1 ? `<button class="btn btn-red pr-delete-level" style="padding:9px 12px;">Delete</button>` : ""}
-    </div>`).join("");
-  box.querySelectorAll(".pr-level-name").forEach(input=>{
-    input.addEventListener("change", async ()=>{
-      const idx = parseInt(input.getAttribute("data-idx"),10);
-      const labels2 = (prTreeDoc.levelLabels||[]).slice();
-      labels2[idx] = input.value.trim() || `Level ${idx+1}`;
-      await prSaveTree({ levelLabels: labels2 });
-    });
-  });
-  const delBtn = box.querySelector(".pr-delete-level");
-  if(delBtn){
-    delBtn.addEventListener("click", async ()=>{
-      if(labels.length<=1) return;
-      if(!(await confirmDelete(`Delete the last level "${labels[labels.length-1]}"? This removes all options and jobs recorded at that depth for every branch. This cannot be undone.`))) return;
-      await prDeleteLastLevel();
-    });
-  }
-}
-
-$("prAddLevelBtn").addEventListener("click", async ()=>{
-  if(!prTreeDoc) prTreeDoc = { levelLabels: prDefaultLevelLabels(), nodes: [] };
-  const name = prompt("Name for the new drop box level (added just before the job checklist):", "New Level");
-  if(name === null) return;
-  const labels2 = (prTreeDoc.levelLabels||[]).concat([name.trim() || "New Level"]);
-  await prSaveTree({ levelLabels: labels2 });
-});
-
-function prTruncateNodes(nodes, depthRemaining){
-  return nodes.map(n=>{
-    if(depthRemaining<=1){
-      const { children, ...rest } = n;
-      return rest;
-    }
-    return { ...n, children: prTruncateNodes(n.children||[], depthRemaining-1) };
-  });
-}
-
-async function prDeleteLastLevel(){
-  const labels = (prTreeDoc.levelLabels||[]).slice();
-  if(labels.length<=1) return;
-  labels.pop();
-  const newNodes = prTruncateNodes(prTreeDoc.nodes||[], labels.length);
-  await prSaveTree({ levelLabels: labels, nodes: newNodes });
-  try{
-    const snap = await getDocs(collection(db,"progressJobs"));
-    const mine = snap.docs.filter(d=> d.data().projectId === prCurrentProjectId);
-    await Promise.all(mine.map(d=> deleteDoc(doc(db,"progressJobs",d.id))));
-  }catch(err){ console.error("Could not clear jobs after level delete:", err); }
-  prCustomizeBreadcrumb = [];
-  renderPrTreeEditor();
-}
-
-function prCloneNodes(){ return JSON.parse(JSON.stringify(prTreeDoc.nodes||[])); }
+function prCloneNodes(){ return JSON.parse(JSON.stringify((prTreeDoc && prTreeDoc.nodes) || [])); }
 
 function prGetSiblingsRef(nodes, pathIds){
   let level = nodes;
@@ -4636,11 +4716,7 @@ function renderPrTreeEditor(){
   const crumbBox = $("prTreeBreadcrumb");
   const box = $("prTreeEditor");
   if(!box || !prTreeDoc) return;
-  const labels = prTreeDoc.levelLabels || [];
-  if(prCustomizeBreadcrumb.length >= labels.length){
-    prCustomizeBreadcrumb = prCustomizeBreadcrumb.slice(0, Math.max(0,labels.length-1));
-  }
-  const currentLevelLabel = labels[prCustomizeBreadcrumb.length] || "";
+
   const crumbNames = [];
   let nodesWalk = prTreeDoc.nodes || [];
   prCustomizeBreadcrumb.forEach(id=>{
@@ -4648,7 +4724,7 @@ function renderPrTreeEditor(){
     crumbNames.push(n ? n.label : "?");
     nodesWalk = n ? (n.children||[]) : [];
   });
-  crumbBox.innerHTML = `Editing: <b>${crumbNames.length ? escapeHtml(crumbNames.join(" / ")) : "(top level)"}</b> — showing <b>${escapeHtml(currentLevelLabel)}</b> options
+  crumbBox.innerHTML = `Editing: <b>${crumbNames.length ? escapeHtml(crumbNames.join(" / ")) : "(top level)"}</b>
     ${prCustomizeBreadcrumb.length ? ` <button class="btn btn-light" id="prBreadcrumbBackBtn" style="padding:3px 10px;font-size:12px;">&larr; Back</button>` : ""}`;
   if(prCustomizeBreadcrumb.length){
     document.getElementById("prBreadcrumbBackBtn").addEventListener("click", ()=>{
@@ -4658,19 +4734,31 @@ function renderPrTreeEditor(){
   }
 
   const siblings = nodesWalk;
-  const isLeafSelectorLevel = (prCustomizeBreadcrumb.length === labels.length-1);
+  const hereUnitPath = prCustomizeBreadcrumb.join(">");
+  const jobsHereCount = prCustomizeBreadcrumb.length ? prJobs.filter(j=> j.unitPath===hereUnitPath).length : 0;
 
-  box.innerHTML = siblings.map(n=>`
+  const jobsCard = prCustomizeBreadcrumb.length ? `
+    <div class="card" style="cursor:pointer;background:#f7f9fb;" id="prJobsHereBtn">
+      <div class="card-body">
+        <p class="card-title">Jobs attached here${jobsHereCount ? ` (${jobsHereCount})` : ""}</p>
+        <div class="meta">The job checklist for "${escapeHtml(crumbNames.join(" / "))}" itself</div>
+      </div>
+    </div>` : "";
+
+  box.innerHTML = jobsCard + siblings.map(n=> `
     <div class="card" style="cursor:default;">
       <div class="card-body">
         <div style="display:flex;gap:8px;align-items:center;">
           <input type="text" class="pr-node-name" data-id="${n.id}" value="${escapeHtml(n.label)}" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:8px;" />
-          ${!isLeafSelectorLevel ? `<button class="btn btn-light pr-node-drill" data-id="${n.id}" style="padding:8px 10px;">Open &rarr;</button>` : `<button class="btn btn-light pr-node-jobs" data-id="${n.id}" style="padding:8px 10px;">Jobs</button>`}
+          <button class="btn btn-light pr-node-drill" data-id="${n.id}" style="padding:8px 10px;">Open &rarr;</button>
           <button class="btn btn-red pr-node-delete" data-id="${n.id}" style="padding:8px 10px;">Delete</button>
         </div>
       </div>
-    </div>`).join("") + `<div class="modal-actions"><button class="btn btn-light" id="prAddNodeBtn" style="width:100%;">+ Add ${escapeHtml(currentLevelLabel)} option</button></div>`;
+    </div>`).join("") + `<div class="modal-actions"><button class="btn btn-light" id="prAddNodeBtn" style="width:100%;">+ Add item${crumbNames.length ? ` under "${escapeHtml(crumbNames[crumbNames.length-1])}"` : ""}</button></div>`;
 
+  if(prCustomizeBreadcrumb.length){
+    document.getElementById("prJobsHereBtn").addEventListener("click", ()=> prOpenJobsEditor(prCustomizeBreadcrumb.slice()));
+  }
   box.querySelectorAll(".pr-node-name").forEach(input=>{
     input.addEventListener("change", async ()=>{
       await prRenameNode(input.getAttribute("data-id"), input.value.trim() || "Untitled");
@@ -4682,43 +4770,40 @@ function renderPrTreeEditor(){
       renderPrTreeEditor();
     });
   });
-  box.querySelectorAll(".pr-node-jobs").forEach(btn=>{
-    btn.addEventListener("click", ()=> prOpenJobsEditor(btn.getAttribute("data-id")));
-  });
   box.querySelectorAll(".pr-node-delete").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
       const id = btn.getAttribute("data-id");
       const n = siblings.find(x=> x.id===id);
-      if(!(await confirmDelete(`Delete "${n?n.label:''}" and everything under it? This cannot be undone.`))) return;
+      if(!(await confirmDelete(`Delete "${n?n.label:''}" and everything under it (including its own jobs and any sub-items)? This cannot be undone.`))) return;
       await prDeleteNode(id);
     });
   });
   const addNodeBtn = document.getElementById("prAddNodeBtn");
   if(addNodeBtn){
     addNodeBtn.addEventListener("click", async ()=>{
-      const name = prompt(`New ${currentLevelLabel} name:`, "");
+      const name = prompt(`New item name${crumbNames.length ? ` under "${crumbNames[crumbNames.length-1]}"` : ""}:`, "");
       if(name === null) return;
       await prAddNode(name.trim() || "Untitled");
     });
   }
 }
 
-function prOpenJobsEditor(unitNodeId){
-  prJobsEditorUnitId = unitNodeId;
-  prJobsEditorPath = [...prCustomizeBreadcrumb, unitNodeId];
+function prOpenJobsEditor(path){
+  prJobsEditorPath = path.slice();
   const unitPath = prJobsEditorPath.join(">");
   const box = $("prTreeEditor");
   const crumbBox = $("prTreeBreadcrumb");
   const unitJobs = prJobs.filter(j=> j.unitPath===unitPath);
-  crumbBox.innerHTML = `Editing jobs for this unit <button class="btn btn-light" id="prJobsBackBtn" style="padding:3px 10px;font-size:12px;">&larr; Back</button>`;
-  document.getElementById("prJobsBackBtn").addEventListener("click", ()=>{ prJobsEditorUnitId=null; renderPrTreeEditor(); });
+  const labelParts = prPathLabels(prJobsEditorPath);
+  crumbBox.innerHTML = `Jobs for <b>${escapeHtml(labelParts.join(" / "))}</b> <button class="btn btn-light" id="prJobsBackBtn" style="padding:3px 10px;font-size:12px;">&larr; Back</button>`;
+  document.getElementById("prJobsBackBtn").addEventListener("click", ()=>{ prJobsEditorPath=null; renderPrTreeEditor(); });
 
-  box.innerHTML = unitJobs.map(j=>`
+  box.innerHTML = unitJobs.map(j=> `
     <div class="card" style="cursor:default;">
       <div class="card-body">
         <div style="display:flex;gap:8px;align-items:center;">
           <span style="flex:1;">${escapeHtml(j.jobLabel)}</span>
-          <span class="badge ${j.status==='done'?'badge-closed':'badge-open'}">${j.status==='done'?('Done — '+escapeHtml(j.assignee||'')):'Pending'}</span>
+          ${prStatusBadge(j.status)}
           <button class="btn btn-red pr-job-delete" data-id="${j.id}" style="padding:6px 10px;">Delete</button>
         </div>
       </div>
@@ -4726,7 +4811,7 @@ function prOpenJobsEditor(unitNodeId){
 
   box.querySelectorAll(".pr-job-delete").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
-      if(!(await confirmDelete("Delete this job item?"))) return;
+      if(!(await confirmDelete("Delete this job item? Its whole progress history will be lost."))) return;
       try{ await deleteDoc(doc(db,"progressJobs",btn.getAttribute("data-id"))); }
       catch(err){ console.error(err); alert("Could not delete."); }
     });
@@ -4736,18 +4821,14 @@ function prOpenJobsEditor(unitNodeId){
     addJobBtn.addEventListener("click", async ()=>{
       const name = prompt("New job name (e.g. Unit Mounting):", "");
       if(name === null || !name.trim()) return;
-      let nodesWalk2 = prTreeDoc.nodes || [];
-      const labelParts = [];
-      prJobsEditorPath.forEach(id=>{
-        const n = nodesWalk2.find(x=> x.id===id);
-        labelParts.push(n?n.label:"?");
-        nodesWalk2 = n ? (n.children||[]) : [];
-      });
       try{
         await addDoc(collection(db,"progressJobs"), {
           projectId: prCurrentProjectId,
           unitPath, unitLabel: labelParts.join(" / "),
-          jobLabel: name.trim(), status:"pending", assignee:null, completedAt:null,
+          jobLabel: name.trim(), status: "pending",
+          currentStaff: null, currentNote: null,
+          logs: [],
+          completedAt: null, completedBy: null, completedStaff: null, completedNote: null,
           createdAt: serverTimestamp(), createdBy: currentUser ? (currentUser.email||null) : null
         });
       }catch(err){ console.error(err); alert("Could not add job."); }
