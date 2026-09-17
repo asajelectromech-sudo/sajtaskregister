@@ -4593,7 +4593,7 @@ function renderPrJobsChecklist(){
   if(!box) return;
   // Don't wipe the box out from under someone who's mid-typing in a job form.
   if(box.contains(document.activeElement) &&
-     (document.activeElement.classList.contains("pr-job-staff") || document.activeElement.classList.contains("pr-job-note"))){
+     (document.activeElement.classList.contains("pr-job-staff") || document.activeElement.classList.contains("pr-job-note") || document.activeElement.classList.contains("pr-job-assign"))){
     return;
   }
   if(!prSelectedPath.length){
@@ -4626,10 +4626,20 @@ function prRenderJobCard(j){
           <p class="card-title" style="margin:0;">${escapeHtml(j.jobLabel)}</p>
           ${prStatusBadge(j.status)}
         </div>
+        ${j.assignedStaff ? `<div class="meta" style="color:var(--blue);font-weight:700;">Assigned to: ${escapeHtml(j.assignedStaff)}</div>` : ""}
         ${j.currentStaff ? `<div class="meta">Last: ${escapeHtml(j.currentStaff)}${j.currentNote ? " — "+escapeHtml(j.currentNote) : ""}</div>` : ""}
         ${j.status==="in_progress" && j.rejectionNote ? `<div class="meta" style="color:var(--red);">Sent back by admin: ${escapeHtml(j.rejectionNote)}</div>` : ""}
         ${expanded ? `
           <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
+            ${isAdmin ? `
+              <div class="field">
+                <label>Assign to staff</label>
+                <div style="display:flex;gap:8px;">
+                  <input type="text" class="pr-job-assign" data-id="${j.id}" value="${escapeHtml(j.assignedStaff||"")}" placeholder="Staff name" style="flex:1;" />
+                  <button class="btn btn-light pr-job-assign-save" data-id="${j.id}" style="flex:none;">${j.assignedStaff ? "Update" : "Assign"}</button>
+                </div>
+              </div>
+            ` : ""}
             ${canEdit ? `
               <div class="field"><label>Staff name</label><input type="text" class="pr-job-staff" data-id="${j.id}" value="${escapeHtml(draft.staff)}" placeholder="Who is doing this?" /></div>
               <div class="field"><label>Note</label><textarea class="pr-job-note" data-id="${j.id}" placeholder="What's today's update?">${escapeHtml(draft.note)}</textarea></div>
@@ -4697,6 +4707,7 @@ function prWireJobCards(box){
       prJobDrafts[id].note = inp.value;
     });
   });
+  box.querySelectorAll(".pr-job-assign-save").forEach(btn=> btn.addEventListener("click", ()=> prAssignJob(btn.getAttribute("data-id"))));
   box.querySelectorAll(".pr-job-save").forEach(btn=> btn.addEventListener("click", ()=> prSaveProgress(btn.getAttribute("data-id"))));
   box.querySelectorAll(".pr-job-complete").forEach(btn=> btn.addEventListener("click", ()=> prCompleteJob(btn.getAttribute("data-id"))));
   box.querySelectorAll(".pr-job-reset").forEach(btn=> btn.addEventListener("click", ()=> prResetToPending(btn.getAttribute("data-id"))));
@@ -4715,6 +4726,29 @@ function prReadDraft(jobId){
     staff: (staffInput ? staffInput.value : (prJobDrafts[jobId]||{}).staff || "").trim(),
     note: (noteInput ? noteInput.value : (prJobDrafts[jobId]||{}).note || "").trim()
   };
+}
+
+// Admin pre-assigns a job to a staff member, ahead of any actual progress
+// being logged. Kept as its own field (assignedStaff) separate from
+// currentStaff/submittedStaff/completedStaff, which only ever get filled in
+// after the fact by whoever clicks Progress/Completed — so "assigned to" and
+// "who actually did/finished it" can differ and both stay visible. Visible
+// to everyone (admin + staff) on the job card, including collapsed, so a
+// signed-in staff member sees it as soon as they open the app. Leaving the
+// input blank and clicking the button clears the assignment.
+async function prAssignJob(jobId){
+  if(!isAdmin) return;
+  const box = $("prJobsChecklist");
+  const input = box ? box.querySelector(`.pr-job-assign[data-id="${jobId}"]`) : null;
+  const name = (input ? input.value : "").trim();
+  try{
+    await updateDoc(doc(db,"progressJobs",jobId), {
+      assignedStaff: name || null,
+      assignedAt: name ? serverTimestamp() : null,
+      assignedBy: name ? (currentUser ? (currentUser.email||null) : null) : null,
+      updatedAt: serverTimestamp()
+    });
+  }catch(err){ console.error(err); alert("Could not assign. Check your connection and try again."); }
 }
 
 async function prSaveProgress(jobId){
