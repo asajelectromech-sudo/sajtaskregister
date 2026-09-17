@@ -218,6 +218,7 @@
   <div id="projectsView" style="display:none;">
     <div id="taskNotificationsBanner" style="display:none;"></div>
     <div id="progressApprovalBanner" style="display:none;"></div>
+    <div id="progressAssignedBanner" style="display:none;"></div>
     <div class="toolbar">
       <button class="btn btn-primary" id="newProjectBtn" style="display:none;">+ New Project</button>
     </div>
@@ -257,6 +258,7 @@
   <div class="modal">
     <button class="close-x" data-close="projectTasksModal" aria-label="Close">&times;</button>
     <h2 id="projectTasksTitle">Project</h2>
+    <div id="projectTasksAssignedBanner" style="display:none;"></div>
     <div class="chips" id="projectTaskViewChips" style="display:none;">
       <button class="chip active" data-task-view="active">Active</button>
       <button class="chip" data-task-view="archived">Archived</button>
@@ -708,12 +710,14 @@
     <div class="chips" id="prTabs">
       <button class="chip active" data-pr-tab="fill">Fill Progress</button>
       <button class="chip" data-pr-tab="report">Completion Report<span id="prSubmittedTabBadge"></span></button>
+      <button class="chip" data-pr-tab="notif">Notifications<span id="prNotifTabBadge"></span></button>
     </div>
     <div class="toolbar" id="prCustomizeRow" style="display:none;">
       <button class="btn btn-navy" id="prCustomizeBtn" style="width:100%;">Customize (admin)</button>
     </div>
     <div id="prFillView"></div>
     <div id="prReportView" style="display:none;"></div>
+    <div id="prNotifView" style="display:none;"></div>
   </div>
 </div>
 
@@ -781,6 +785,14 @@ let allProjectTasks = [];
 let allSubmittedProgressJobs = [];
 function prSubmittedCountForProject(projectId){
   return allSubmittedProgressJobs.filter(j=> j.projectId===projectId).length;
+}
+// Progress Report jobs that are admin-assigned to a staff member but not yet
+// done, across ALL projects — kept live at all times (like
+// allSubmittedProgressJobs above) so the landing-page "job assignments"
+// banner can show without needing a project opened first.
+let allAssignedProgressJobs = [];
+function prAssignedCountForProject(projectId){
+  return allAssignedProgressJobs.filter(j=> j.projectId===projectId).length;
 }
 function prBadgeHtml(count){
   return count>0 ? ` <span class="badge" style="background:var(--red);color:#fff;">${count}</span>` : "";
@@ -2771,6 +2783,18 @@ function startProjectListeners(){
       if(prJobsEditorPath) prOpenJobsEditor(prJobsEditorPath);
     }
   }, err=>console.error("Progress approval listener:", err));
+  // Always-on, project-wide — powers the "job assignments" notification
+  // banner on the landing page. A single-field "in" filter (no composite
+  // index needed); which of these are actually assigned is filtered
+  // client-side below.
+  const aq = query(collection(db, "progressJobs"), where("status", "in", ["pending","in_progress"]));
+  onSnapshot(aq, snap=>{
+    allAssignedProgressJobs = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(j=> !!j.assignedStaff);
+    renderProjectList();
+    if(document.getElementById("projectTasksModal") && document.getElementById("projectTasksModal").classList.contains("show")){
+      renderProjectTasksAssignedBanner();
+    }
+  }, err=>console.error("Progress assignment listener:", err));
 }
 
 function visibleProjects(){
@@ -2872,18 +2896,92 @@ function renderProgressApprovalBanner(){
       const pid = el.getAttribute("data-progress-notif-project");
       const project = allProjects.find(p=>p.id===pid);
       openProgressReport(pid, project ? (project.name||"Project") : "Project");
-      prActiveTab = "report";
       prReportFilter = "submitted";
-      $("prTabs").querySelectorAll(".chip").forEach(c=> c.classList.toggle("active", c.getAttribute("data-pr-tab")==="report"));
-      $("prFillView").style.display = "none";
-      $("prReportView").style.display = "block";
+      prSetActiveTab("report");
     });
+  });
+}
+
+// Shown to non-admin (staff) users whenever any project has a job
+// admin-assigned to a staff member that isn't done yet, so a signed-in
+// staff member sees "this is mine to do" right on the landing page instead
+// of only after drilling into a project's Fill Progress tab. Tapping an
+// entry opens that project's Progress Report on the new Notifications tab.
+function renderProgressAssignedBanner(){
+  const box = $("progressAssignedBanner");
+  if(!box) return;
+  if(isAdmin || !allAssignedProgressJobs.length){ box.style.display="none"; box.innerHTML=""; return; }
+
+  const items = allAssignedProgressJobs.map(j=>{
+    const project = allProjects.find(p=>p.id===j.projectId);
+    return {
+      projectId: j.projectId,
+      projectName: project ? (project.name||"Project") : "Project",
+      jobLabel: j.jobLabel || "Job",
+      unitLabel: j.unitLabel || "",
+      assignedStaff: j.assignedStaff
+    };
+  });
+
+  box.style.display="block";
+  box.innerHTML = `
+    <div class="card" style="border-left:4px solid var(--blue);margin-bottom:14px;cursor:default;">
+      <div class="card-body">
+        <p class="card-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span class="badge" style="background:var(--blue-bg);color:var(--blue);">Assigned</span>
+          Progress Report — job assignments
+        </p>
+        ${items.map(i=>`
+          <div class="detail-row" style="cursor:pointer;color:var(--blue);" data-assigned-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${escapeHtml(i.jobLabel)}${i.unitLabel ? " ("+escapeHtml(i.unitLabel)+")" : ""} — assigned to <b>${escapeHtml(i.assignedStaff)}</b></div>
+        `).join("")}
+      </div>
+    </div>`;
+
+  box.querySelectorAll("[data-assigned-notif-project]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const pid = el.getAttribute("data-assigned-notif-project");
+      const project = allProjects.find(p=>p.id===pid);
+      openProgressReport(pid, project ? (project.name||"Project") : "Project");
+      prSetActiveTab("notif");
+    });
+  });
+}
+
+// Inside the Project Tasks modal (opened by tapping a project card), shows
+// how many Progress Report jobs are currently assigned for THIS project —
+// separate from the task list above it, which only ever counted
+// Project Tasks, never Progress Report jobs. Tapping it closes this modal
+// and jumps straight into that project's Progress Report, Notifications
+// tab, so staff can go straight to completing the assigned job(s).
+function renderProjectTasksAssignedBanner(){
+  const box = $("projectTasksAssignedBanner");
+  if(!box || !currentProjectId) return;
+  const count = prAssignedCountForProject(currentProjectId);
+  if(!count){ box.style.display="none"; box.innerHTML=""; return; }
+  box.style.display="block";
+  box.innerHTML = `
+    <div class="card" style="border-left:4px solid var(--blue);margin:10px 0;cursor:pointer;" id="projectTasksAssignedCard">
+      <div class="card-body">
+        <p class="card-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:0;">
+          <span class="badge" style="background:var(--blue-bg);color:var(--blue);">Assigned</span>
+          ${count} Progress Report job(s) assigned
+        </p>
+        <div class="hint">Tap to open and complete</div>
+      </div>
+    </div>`;
+  const card = $("projectTasksAssignedCard");
+  if(card) card.addEventListener("click", ()=>{
+    const pid = currentProjectId, pname = currentProjectName;
+    hideModal("projectTasksModal");
+    openProgressReport(pid, pname);
+    prSetActiveTab("notif");
   });
 }
 
 function renderProjectList(){
   renderTaskNotificationsBanner();
   renderProgressApprovalBanner();
+  renderProgressAssignedBanner();
   const list = $("projectList");
   if(!list) return;
   const empty = $("projectEmptyState");
@@ -2920,7 +3018,7 @@ function renderProjectList(){
       <div class="thumb-placeholder">📁</div>
       <div class="card-body">
         <p class="card-title">${escapeHtml(p.name||"")}</p>
-        <p class="card-desc">${tasks.length} task(s)${!canManageProjects && allTasksForProject.some(t=>t.status === "approved") ? " · approved tasks hidden" : ""} &middot; Created by ${escapeHtml(p.createdByName || p.createdBy || "User")}</p>
+        <p class="card-desc">${tasks.length} task(s)${!canManageProjects && allTasksForProject.some(t=>t.status === "approved") ? " · approved tasks hidden" : ""}${prAssignedCountForProject(p.id) ? ` · ${prAssignedCountForProject(p.id)} job(s) assigned` : ""} &middot; Created by ${escapeHtml(p.createdByName || p.createdBy || "User")}</p>
         <div class="meta">Created ${fmtDate(p.createdAt)}</div>
         ${adminActions}
       </div>
@@ -2974,6 +3072,7 @@ function openProject(id){
   });
   renderCurrentProjectTasks();
   updateTaskSelectionLabel();
+  renderProjectTasksAssignedBanner();
   // Task creation from Project Reports is handled only by the bottom-right
   // + button. There is no separate + Add Task button inside this project modal.
   showModal("projectTasksModal");
@@ -4471,10 +4570,6 @@ function openProgressReport(projectId, projectName){
   prCurrentProjectName = projectName || "Project";
   $("prTitle").textContent = `Progress Report — ${prCurrentProjectName}`;
   $("prCustomizeRow").style.display = isAdmin ? "flex" : "none";
-  prActiveTab = "fill";
-  $("prTabs").querySelectorAll(".chip").forEach(c=> c.classList.toggle("active", c.getAttribute("data-pr-tab")==="fill"));
-  $("prFillView").style.display = "block";
-  $("prReportView").style.display = "none";
   prSelectedPath = [];
   prExpandedJobId = null;
   prJobDrafts = {};
@@ -4484,6 +4579,7 @@ function openProgressReport(projectId, projectName){
   prReportFilter = "all";
   prReportItemFilter = "all";
   startPrListeners();
+  prSetActiveTab("fill");
   showModal("prModal");
 }
 
@@ -4513,23 +4609,32 @@ function startPrListeners(){
     renderPrJobsChecklist();
     renderPrReportView();
     if(prJobsEditorPath) prOpenJobsEditor(prJobsEditorPath);
+    if(prActiveTab==="notif") renderPrNotifView();
     const tabBadge = document.getElementById("prSubmittedTabBadge");
     if(tabBadge){
       const n = prJobs.filter(j=> j.status==="submitted").length;
       tabBadge.innerHTML = n ? ` <span class="badge" style="background:var(--red);color:#fff;">${n}</span>` : "";
     }
+    const notifBadge = document.getElementById("prNotifTabBadge");
+    if(notifBadge){
+      const n = prNotifCount();
+      notifBadge.innerHTML = n ? ` <span class="badge" style="background:var(--red);color:#fff;">${n}</span>` : "";
+    }
   }, err=> console.error("progressJobs listener:", err));
 }
 
 // ---------- TABS ----------
+function prSetActiveTab(tab){
+  prActiveTab = tab;
+  $("prTabs").querySelectorAll(".chip").forEach(c=> c.classList.toggle("active", c.getAttribute("data-pr-tab")===tab));
+  $("prFillView").style.display = tab==="fill" ? "block" : "none";
+  $("prReportView").style.display = tab==="report" ? "block" : "none";
+  $("prNotifView").style.display = tab==="notif" ? "block" : "none";
+  if(tab==="report") renderPrReportView();
+  if(tab==="notif") renderPrNotifView();
+}
 $("prTabs").querySelectorAll(".chip").forEach(chip=>{
-  chip.addEventListener("click", ()=>{
-    prActiveTab = chip.getAttribute("data-pr-tab");
-    $("prTabs").querySelectorAll(".chip").forEach(c=> c.classList.toggle("active", c===chip));
-    $("prFillView").style.display = prActiveTab==="fill" ? "block" : "none";
-    $("prReportView").style.display = prActiveTab==="report" ? "block" : "none";
-    if(prActiveTab==="report") renderPrReportView();
-  });
+  chip.addEventListener("click", ()=> prSetActiveTab(chip.getAttribute("data-pr-tab")));
 });
 
 // ---------- FILL PROGRESS TAB (tap-through location browser) ----------
@@ -4586,6 +4691,71 @@ function prStatusBadge(status){
   if(status==="submitted") return `<span class="badge badge-assigned">Awaiting approval</span>`;
   if(status==="in_progress") return `<span class="badge" style="background:var(--blue-bg);color:var(--blue);">In progress</span>`;
   return `<span class="badge badge-open">Pending</span>`;
+}
+
+// A job counts as a notification if it's assigned to staff and not done,
+// sent back for rework (rejectionNote present), or — admin only — awaiting
+// approval. Shared by the tab badge and the tab's own render.
+function prNotifItems(){
+  const assigned = prJobs.filter(j=> j.assignedStaff && (j.status==="pending" || j.status==="in_progress"));
+  const rejected = prJobs.filter(j=> j.status==="in_progress" && j.rejectionNote);
+  const awaiting = isAdmin ? prJobs.filter(j=> j.status==="submitted") : [];
+  return { assigned, rejected, awaiting };
+}
+function prNotifCount(){
+  const { assigned, rejected, awaiting } = prNotifItems();
+  return assigned.length + rejected.length + awaiting.length;
+}
+
+function prNotifJobCard(j, opts){
+  return `
+    <div class="card" style="cursor:pointer;" data-notif-job="${j.id}">
+      <div class="card-body">
+        <p class="card-title" style="margin:0;">${escapeHtml(j.jobLabel)}</p>
+        ${j.unitLabel ? `<div class="meta">${escapeHtml(j.unitLabel)}</div>` : ""}
+        ${opts && opts.extra ? opts.extra : ""}
+      </div>
+    </div>`;
+}
+
+function renderPrNotifView(){
+  const box = $("prNotifView");
+  if(!box) return;
+  if(!prCurrentProjectId){ box.innerHTML = ""; return; }
+  const { assigned, rejected, awaiting } = prNotifItems();
+
+  if(!assigned.length && !rejected.length && !awaiting.length){
+    box.innerHTML = `<div class="hint" style="text-align:center;padding:30px 10px;">No notifications right now.</div>`;
+    return;
+  }
+
+  const section = (title, list, html)=> list.length ? `
+    <div class="section-label" style="margin-top:14px;">${title} (${list.length})</div>
+    ${list.map(html).join("")}
+  ` : "";
+
+  box.innerHTML =
+    section("Assigned to staff", assigned, j=> prNotifJobCard(j, {
+      extra: `<div class="meta" style="color:var(--blue);font-weight:700;">Assigned to: ${escapeHtml(j.assignedStaff)}</div>`
+    })) +
+    section("Sent back for rework", rejected, j=> prNotifJobCard(j, {
+      extra: `<div class="meta" style="color:var(--red);">${escapeHtml(j.rejectionNote||"")}</div>`
+    })) +
+    section("Awaiting your approval", awaiting, j=> prNotifJobCard(j, {
+      extra: `<div class="meta">Submitted by ${escapeHtml(j.submittedStaff || j.currentStaff || "")}</div>`
+    }));
+
+  box.querySelectorAll("[data-notif-job]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const jobId = el.getAttribute("data-notif-job");
+      const job = prJobs.find(j=> j.id===jobId);
+      if(!job) return;
+      prSelectedPath = job.unitPath ? job.unitPath.split(">") : [];
+      prExpandedJobId = jobId;
+      prSetActiveTab("fill");
+      renderPrFillView();
+    });
+  });
 }
 
 function renderPrJobsChecklist(){
