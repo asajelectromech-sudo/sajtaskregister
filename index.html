@@ -779,6 +779,17 @@ let editingProjectId = null;
 let editingProjectTaskId = null;
 let currentTaskFormColumns = []; // columns rendered in the currently-open task form (admin vs staff fields)
 let currentTaskFormMode = "admin"; // which form is currently open: "admin" | "staff" | "staffCreate"
+// True while a normal user is inside the Project Reports "+" quick flow
+// after the one-time Google identity check (no authorizedStaff approval
+// needed) — kept signed in just long enough to use Add Task and/or Progress
+// Report, then signed back out to anonymous once they leave that flow (see
+// maybeSignOutAfterFabFlow below), same as before this flag existed.
+let pendingFabSignOut = false;
+function maybeSignOutAfterFabFlow(){
+  if(!pendingFabSignOut) return;
+  pendingFabSignOut = false;
+  signOut(auth).catch(err=> console.error("Could not sign out after quick verification", err));
+}
 let taskSelectMode = false;
 let selectedProjectTaskIds = new Set();
 let projectTaskViewMode = "active"; // "active" | "archived" (approved tasks)
@@ -825,6 +836,12 @@ function hideModal(id){
 }
 document.querySelectorAll("[data-close]").forEach(btn=>{
   btn.addEventListener("click", ()=> hideModal(btn.getAttribute("data-close")));
+});
+// If a normal user backs out of the Project Reports + flow (cancels the
+// project picker or the Add Task form) without reaching Progress Report,
+// sign them back out to anonymous right away rather than waiting.
+document.querySelectorAll('[data-close="projectTaskProjectSelectModal"], [data-close="newProjectTaskModal"]').forEach(btn=>{
+  btn.addEventListener("click", maybeSignOutAfterFabFlow);
 });
 
 // Every delete anywhere in the app routes through this — a plain OK/Cancel
@@ -3473,22 +3490,46 @@ function openProjectTaskProjectSelector(createMode="staffCreate"){
       currentProjectId=id;
       currentProjectName=p.name||"Project";
       $("projectTaskProjectSelectError").textContent="";
-      hideModal("projectTaskProjectSelectModal");
 
       // Normal users arrive here after the Project Reports + Google identity
       // check and use the ordinary USER-created task flow. Admins and
       // admin-verified staff arrive here directly from the same + button and
-      // use the elevated assignment flow instead.
-      editingProjectTaskId=null;
-      $("projectTaskError").textContent="";
-      renderProjectTaskFields({}, createMode === "admin" ? "admin" : "staffCreate");
-      $("newProjectTaskTitle").textContent = createMode === "admin" ? "Assign Task" : "Add Task";
-      $("saveProjectTaskBtn").textContent="Save";
-      showModal("newProjectTaskModal");
+      // use the elevated assignment flow instead. Either way, let them pick
+      // Add Task or Progress Report for this project next.
+      prShowProjectActionChooser(p, createMode);
     });
   });
 
   showModal("projectTaskProjectSelectModal");
+}
+
+// Shown inside projectTaskProjectSelectModal right after a project is picked
+// from the + button flow — lets the user choose Add Task or Progress Report
+// for that project, instead of jumping straight into the Add Task form.
+function prShowProjectActionChooser(p, createMode){
+  const list = $("projectTaskProjectSelectList");
+  list.innerHTML = `
+    <div class="hint" style="margin-bottom:10px;">${escapeHtml(p.name||"Project")}</div>
+    <button type="button" class="btn btn-navy" id="ptaskChooseAddTask" style="display:block;width:100%;margin-bottom:8px;padding:12px;">${createMode === "admin" ? "Assign Task" : "Add Task"}</button>
+    <button type="button" class="btn btn-navy" id="ptaskChooseProgress" style="display:block;width:100%;margin-bottom:8px;padding:12px;">Progress Report</button>
+    <button type="button" class="btn btn-light" id="ptaskChooseBack" style="display:block;width:100%;padding:10px;">&larr; Back to projects</button>
+  `;
+  document.getElementById("ptaskChooseAddTask").addEventListener("click", ()=>{
+    hideModal("projectTaskProjectSelectModal");
+    editingProjectTaskId=null;
+    $("projectTaskError").textContent="";
+    renderProjectTaskFields({}, createMode === "admin" ? "admin" : "staffCreate");
+    $("newProjectTaskTitle").textContent = createMode === "admin" ? "Assign Task" : "Add Task";
+    $("saveProjectTaskBtn").textContent="Save";
+    showModal("newProjectTaskModal");
+  });
+  document.getElementById("ptaskChooseProgress").addEventListener("click", ()=>{
+    hideModal("projectTaskProjectSelectModal");
+    openProgressReport(p.id, p.name || "Project");
+  });
+  document.getElementById("ptaskChooseBack").addEventListener("click", ()=>{
+    openProjectTaskProjectSelector(createMode);
+  });
 }
 
 $("newProjectBtn").addEventListener("click",()=>{
@@ -3555,6 +3596,7 @@ $("saveProjectTaskBtn").addEventListener("click",async()=>{
       await addDoc(collection(db,"projecttasks"),{...payload,createdBy:currentUser.email||null,createdByUid:currentUser.uid,createdAt:serverTimestamp()});
     }
     editingProjectTaskId=null; $("saveProjectTaskBtn").textContent="Save"; hideModal("newProjectTaskModal");
+    maybeSignOutAfterFabFlow();
   }catch(err){console.error(err);$("projectTaskError").textContent="Could not save task. Check your connection and try again.";}
   $("saveProjectTaskBtn").disabled=false;
 });
@@ -3670,9 +3712,10 @@ $("fab").addEventListener("click", async ()=>{
 // emailVerified === true for Google accounts, so isVerifiedStaff (below)
 // and the isAuthorizedStaff() Firestore rule both work exactly as before.
 // Project Reports + quick-add Google check. This deliberately does NOT use
-// authorizedStaff or isVerifiedStaff. After Google sign-in, immediately sign back
-// out so the task remains a normal USER-created task, not an elevated/assigned
-// staff task. No admin approval is involved.
+// authorizedStaff (no admin allow-list approval needed — any Google account
+// qualifies). The session is kept signed in only for the duration of this
+// + flow (Add Task and/or Progress Report), then signed back out to
+// anonymous afterward — see pendingFabSignOut / maybeSignOutAfterFabFlow.
 $("projectTaskVerifyGoogleBtn").addEventListener("click", async ()=>{
   $("projectTaskVerifyError").textContent = "";
   $("projectTaskVerifyGoogleBtn").disabled = true;
@@ -3691,7 +3734,12 @@ $("projectTaskVerifyGoogleBtn").addEventListener("click", async ()=>{
         action: "Project Add Task (user)"
       });
     }catch(e){ console.error("Could not record project add-task verification", e); }
-    await signOut(auth);
+    // Stay signed in (Google-verified, not anonymous) just long enough to use
+    // Add Task and/or Progress Report from this flow — Progress Report needs
+    // a live Google-verified session to save. Signed back out automatically
+    // once the user leaves this flow (see maybeSignOutAfterFabFlow), so it
+    // still doesn't turn into a standing elevated/assigned staff session.
+    pendingFabSignOut = true;
     hideModal("projectTaskVerifyModal");
     openProjectTaskProjectSelector("staffCreate");
   }catch(err){
@@ -4366,7 +4414,7 @@ function prCleanupListeners(){
   if(prJobsListenerUnsub){ prJobsListenerUnsub(); prJobsListenerUnsub = null; }
 }
 const prModalCloseBtn = document.querySelector('#prModal [data-close="prModal"]');
-if(prModalCloseBtn) prModalCloseBtn.addEventListener("click", prCleanupListeners);
+if(prModalCloseBtn) prModalCloseBtn.addEventListener("click", ()=>{ prCleanupListeners(); maybeSignOutAfterFabFlow(); });
 
 function startPrListeners(){
   prCleanupListeners();
