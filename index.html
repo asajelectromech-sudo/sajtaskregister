@@ -5286,7 +5286,7 @@ function renderPrReportView(){
     const pending = u.jobs.filter(j=> j.status==="pending");
     const doneHere = u.jobs.filter(j=> j.status==="done");
     return `
-      <div class="card" style="cursor:default;">
+      <div class="card pr-report-item-card" data-report-item-path="${escapeHtml(path)}" style="cursor:pointer;">
         <div class="card-body">
           <p class="card-title">${escapeHtml(u.label)}</p>
           <span class="badge ${isComplete?'badge-closed':'badge-open'}">${done}/${total} done</span>
@@ -5319,6 +5319,19 @@ function renderPrReportView(){
   prReportBindFilterControls(box);
   const pdfBtn = document.getElementById("prDownloadPdfBtn");
   if(pdfBtn) pdfBtn.addEventListener("click", prDownloadPdf);
+  // Tapping a "By item" card jumps straight to that item in Fill Progress —
+  // same drill-down the tree browser itself produces — so admin/staff can
+  // go from "what's still pending here" straight into acting on it, instead
+  // of having to re-navigate the tree by hand.
+  box.querySelectorAll(".pr-report-item-card").forEach(card=>{
+    card.addEventListener("click", ()=>{
+      const path = card.getAttribute("data-report-item-path");
+      prSelectedPath = path ? path.split(">") : [];
+      prExpandedJobId = null;
+      prSetActiveTab("fill");
+      renderPrFillView();
+    });
+  });
 }
 
 // Wires up the item picker (toggle button + checkboxes), the date range
