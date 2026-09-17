@@ -217,6 +217,7 @@
 
   <div id="projectsView" style="display:none;">
     <div id="taskNotificationsBanner" style="display:none;"></div>
+    <div id="progressApprovalBanner" style="display:none;"></div>
     <div class="toolbar">
       <button class="btn btn-primary" id="newProjectBtn" style="display:none;">+ New Project</button>
     </div>
@@ -706,7 +707,7 @@
     <h2 id="prTitle">Project Progress Report</h2>
     <div class="chips" id="prTabs">
       <button class="chip active" data-pr-tab="fill">Fill Progress</button>
-      <button class="chip" data-pr-tab="report">Completion Report</button>
+      <button class="chip" data-pr-tab="report">Completion Report<span id="prSubmittedTabBadge"></span></button>
     </div>
     <div class="toolbar" id="prCustomizeRow" style="display:none;">
       <button class="btn btn-navy" id="prCustomizeBtn" style="width:100%;">Customize (admin)</button>
@@ -735,7 +736,7 @@ import {
   GoogleAuthProvider, signInWithPopup, EmailAuthProvider, linkWithCredential, updatePassword
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDoc, getDocs, setDoc, onSnapshot, query, orderBy, serverTimestamp, Timestamp, arrayUnion
+  getFirestore, collection, addDoc, updateDoc, deleteDoc, doc, getDoc, getDocs, setDoc, onSnapshot, query, orderBy, where, serverTimestamp, Timestamp, arrayUnion
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 
 // ---------- CONFIG ----------
@@ -771,6 +772,19 @@ let workFilters = { status: "all", site: "", search: "" };
 let activeTab = "snags";
 let allProjects = [];
 let allProjectTasks = [];
+// Progress Report jobs waiting on admin approval, across ALL projects —
+// kept live at all times (not just while the Progress Report modal is
+// open) so a small "awaiting approval" count can show up wherever a
+// Progress Report entry point appears: the project card button, the
+// Project Tasks modal button, and the Project Reports "+" chooser that
+// normal (non-admin) users go through — see prSubmittedCountForProject.
+let allSubmittedProgressJobs = [];
+function prSubmittedCountForProject(projectId){
+  return allSubmittedProgressJobs.filter(j=> j.projectId===projectId).length;
+}
+function prBadgeHtml(count){
+  return count>0 ? ` <span class="badge" style="background:var(--red);color:#fff;">${count}</span>` : "";
+}
 let projectListenerStarted = false;
 let projectTaskListenerStarted = false;
 let currentProjectId = null;
@@ -2746,6 +2760,17 @@ function startProjectListeners(){
     renderProjectList();
     renderCurrentProjectTasks();
   }, err=>console.error("Project task listener:", err));
+  // Always-on, project-wide — powers the "awaiting approval" notification
+  // banner (admin) and the small red count badge on every Progress Report
+  // entry point, admin and user-page alike.
+  const sq = query(collection(db, "progressJobs"), where("status", "==", "submitted"));
+  onSnapshot(sq, snap=>{
+    allSubmittedProgressJobs = snap.docs.map(d=>({id:d.id, ...d.data()}));
+    renderProjectList();
+    if(document.getElementById("prModal") && document.getElementById("prModal").classList.contains("show")){
+      if(prJobsEditorPath) prOpenJobsEditor(prJobsEditorPath);
+    }
+  }, err=>console.error("Progress approval listener:", err));
 }
 
 function visibleProjects(){
@@ -2808,8 +2833,57 @@ function renderTaskNotificationsBanner(){
   });
 }
 
+// Shown to EVERYONE (admin and normal users alike) whenever any project has
+// Progress Report jobs awaiting admin approval — admin gets a "review these"
+// call to action, everyone else just sees that something's pending so it
+// isn't a silent wait. Tapping an entry opens that project's Progress Report
+// on the Completion Report tab, already filtered to Awaiting Approval.
+function renderProgressApprovalBanner(){
+  const box = $("progressApprovalBanner");
+  if(!box) return;
+  if(!allSubmittedProgressJobs.length){ box.style.display="none"; box.innerHTML=""; return; }
+
+  const byProject = {};
+  allSubmittedProgressJobs.forEach(j=>{
+    if(!byProject[j.projectId]) byProject[j.projectId] = 0;
+    byProject[j.projectId]++;
+  });
+  const items = Object.keys(byProject).map(pid=>{
+    const project = allProjects.find(p=>p.id===pid);
+    return { projectId: pid, projectName: project ? (project.name||"Project") : "Project", count: byProject[pid] };
+  });
+
+  box.style.display="block";
+  box.innerHTML = `
+    <div class="card" style="border-left:4px solid var(--blue);margin-bottom:14px;cursor:default;">
+      <div class="card-body">
+        <p class="card-title" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span class="badge" style="background:var(--blue-bg);color:var(--blue);">${isAdmin ? "Action needed" : "In review"}</span>
+          Progress Report — awaiting approval
+        </p>
+        ${items.map(i=>`
+          <div class="detail-row" style="cursor:pointer;color:var(--blue);" data-progress-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${i.count} job(s) awaiting approval</div>
+        `).join("")}
+      </div>
+    </div>`;
+
+  box.querySelectorAll("[data-progress-notif-project]").forEach(el=>{
+    el.addEventListener("click", ()=>{
+      const pid = el.getAttribute("data-progress-notif-project");
+      const project = allProjects.find(p=>p.id===pid);
+      openProgressReport(pid, project ? (project.name||"Project") : "Project");
+      prActiveTab = "report";
+      prReportFilter = "submitted";
+      $("prTabs").querySelectorAll(".chip").forEach(c=> c.classList.toggle("active", c.getAttribute("data-pr-tab")==="report"));
+      $("prFillView").style.display = "none";
+      $("prReportView").style.display = "block";
+    });
+  });
+}
+
 function renderProjectList(){
   renderTaskNotificationsBanner();
+  renderProgressApprovalBanner();
   const list = $("projectList");
   if(!list) return;
   const empty = $("projectEmptyState");
@@ -3473,10 +3547,11 @@ function openProjectTaskProjectSelector(createMode="staffCreate"){
 
   list.innerHTML = projects.map(p=>{
     const taskCount = allProjectTasks.filter(t=>t.projectId===p.id && t.status!=="approved").length;
+    const submittedCount = prSubmittedCountForProject(p.id);
     return `<button type="button" class="btn btn-light project-task-project-option"
       data-project-id="${escapeHtml(p.id)}"
       style="display:block;width:100%;text-align:left;margin-bottom:8px;padding:12px;">
-      <span style="display:block;font-weight:700;color:var(--text);">${escapeHtml(p.name||"Project")}</span>
+      <span style="display:block;font-weight:700;color:var(--text);">${escapeHtml(p.name||"Project")}${prBadgeHtml(submittedCount)}</span>
       <span style="display:block;font-size:11px;color:var(--text-muted);margin-top:3px;">${taskCount} active task(s)</span>
     </button>`;
   }).join("");
@@ -3508,10 +3583,11 @@ function openProjectTaskProjectSelector(createMode="staffCreate"){
 // for that project, instead of jumping straight into the Add Task form.
 function prShowProjectActionChooser(p, createMode){
   const list = $("projectTaskProjectSelectList");
+  const submittedCount = prSubmittedCountForProject(p.id);
   list.innerHTML = `
     <div class="hint" style="margin-bottom:10px;">${escapeHtml(p.name||"Project")}</div>
     <button type="button" class="btn btn-navy" id="ptaskChooseAddTask" style="display:block;width:100%;margin-bottom:8px;padding:12px;">${createMode === "admin" ? "Assign Task" : "Add Task"}</button>
-    <button type="button" class="btn btn-navy" id="ptaskChooseProgress" style="display:block;width:100%;margin-bottom:8px;padding:12px;">Progress Report</button>
+    <button type="button" class="btn btn-navy" id="ptaskChooseProgress" style="display:block;width:100%;margin-bottom:8px;padding:12px;">Progress Report${prBadgeHtml(submittedCount)}</button>
     <button type="button" class="btn btn-light" id="ptaskChooseBack" style="display:block;width:100%;padding:10px;">&larr; Back to projects</button>
   `;
   document.getElementById("ptaskChooseAddTask").addEventListener("click", ()=>{
@@ -4405,6 +4481,7 @@ function openProgressReport(projectId, projectName){
   prCustomizeBreadcrumb = [];
   prJobsEditorPath = null;
   prCopyPanelOpen = false;
+  prReportFilter = "all";
   startPrListeners();
   showModal("prModal");
 }
@@ -4435,6 +4512,11 @@ function startPrListeners(){
     renderPrJobsChecklist();
     renderPrReportView();
     if(prJobsEditorPath) prOpenJobsEditor(prJobsEditorPath);
+    const tabBadge = document.getElementById("prSubmittedTabBadge");
+    if(tabBadge){
+      const n = prJobs.filter(j=> j.status==="submitted").length;
+      tabBadge.innerHTML = n ? ` <span class="badge" style="background:var(--red);color:#fff;">${n}</span>` : "";
+    }
   }, err=> console.error("progressJobs listener:", err));
 }
 
@@ -4554,6 +4636,7 @@ function prRenderJobCard(j){
                 <button class="btn btn-light pr-job-save" data-id="${j.id}">Save Progress</button>
                 <button class="btn btn-green pr-job-complete" data-id="${j.id}">Submit as Completed</button>
               </div>
+              ${j.status==="in_progress" ? `<button class="btn btn-light pr-job-reset" data-id="${j.id}" style="width:100%;margin-top:6px;color:var(--text-muted);">Reset to Pending (opened by accident)</button>` : ""}
             ` : (j.status==="submitted" ? `
               <div class="detail-row"><b>Submitted by:</b> ${escapeHtml(j.submittedStaff || j.currentStaff || "")}</div>
               ${j.submittedNote ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(j.submittedNote)}</div>` : ""}
@@ -4615,6 +4698,7 @@ function prWireJobCards(box){
   });
   box.querySelectorAll(".pr-job-save").forEach(btn=> btn.addEventListener("click", ()=> prSaveProgress(btn.getAttribute("data-id"))));
   box.querySelectorAll(".pr-job-complete").forEach(btn=> btn.addEventListener("click", ()=> prCompleteJob(btn.getAttribute("data-id"))));
+  box.querySelectorAll(".pr-job-reset").forEach(btn=> btn.addEventListener("click", ()=> prResetToPending(btn.getAttribute("data-id"))));
   box.querySelectorAll(".pr-job-reopen").forEach(btn=> btn.addEventListener("click", ()=> prReopenJob(btn.getAttribute("data-id"))));
   box.querySelectorAll(".pr-job-approve").forEach(btn=> btn.addEventListener("click", ()=> prApproveJob(btn.getAttribute("data-id"))));
   box.querySelectorAll(".pr-job-reject").forEach(btn=> btn.addEventListener("click", ()=> prRejectJob(btn.getAttribute("data-id"))));
@@ -4728,6 +4812,23 @@ async function prRejectJob(jobId){
   }catch(err){ console.error(err); alert("Could not reject. Check your connection and try again."); }
 }
 
+// Lets whoever opened a job by accident undo it — back to Pending, as if
+// nothing happened — instead of it sitting in "In progress" with no way
+// back short of asking the admin to reopen it. Only available while it's
+// still In Progress (not yet submitted/approved).
+async function prResetToPending(jobId){
+  if(!confirm("Reset this job back to Pending? Today's draft note will be cleared.")) return;
+  try{
+    await updateDoc(doc(db,"progressJobs",jobId), {
+      status: "pending",
+      currentStaff: null, currentNote: null,
+      rejectionNote: null, rejectedBy: null, rejectedAt: null,
+      updatedAt: serverTimestamp()
+    });
+    delete prJobDrafts[jobId];
+  }catch(err){ console.error(err); alert("Could not reset. Check your connection and try again."); }
+}
+
 async function prReopenJob(jobId){
   if(!isAdmin) return;
   const job = prJobs.find(j=> j.id===jobId);
@@ -4773,6 +4874,15 @@ async function prDeleteLog(jobId, idx){
 }
 
 // ---------- COMPLETION REPORT TAB ----------
+let prReportFilter = "all"; // all | pending | in_progress | submitted | done — filters both the on-screen list and the PDF export
+const PR_FILTERS = [
+  { key: "all", label: "All" },
+  { key: "pending", label: "Pending" },
+  { key: "in_progress", label: "In Progress" },
+  { key: "submitted", label: "Awaiting Approval" },
+  { key: "done", label: "Completed" }
+];
+
 function prProgressBarRow(label, count, pct, color){
   return `<div style="margin-bottom:8px;">
     <div style="display:flex;justify-content:space-between;font-size:12px;margin-bottom:3px;">
@@ -4784,36 +4894,54 @@ function prProgressBarRow(label, count, pct, color){
   </div>`;
 }
 
+// Applies prReportFilter to the full job list, returning only the jobs that
+// match (or all of them, for "all") — shared by the on-screen list and the
+// PDF export so the PDF always matches whatever's currently filtered in.
+function prFilteredJobs(){
+  if(prReportFilter === "all") return prJobs;
+  return prJobs.filter(j=> j.status === prReportFilter);
+}
+
 function renderPrReportView(){
   const box = $("prReportView");
   if(!box || !prTreeDoc) return;
-  const byLoc = {};
-  prJobs.forEach(j=>{
-    if(!byLoc[j.unitPath]) byLoc[j.unitPath] = { label: j.unitLabel || j.unitPath, jobs: [] };
-    byLoc[j.unitPath].jobs.push(j);
-  });
-  const locPaths = Object.keys(byLoc);
-  const totalJobs = prJobs.length;
-  if(!totalJobs){
+  if(!prJobs.length){
     box.innerHTML = `<div class="hint" style="padding:16px 0;">No jobs recorded yet.</div>`;
     return;
   }
+
+  // Overall percentages always reflect the WHOLE project, regardless of
+  // filter — the filter only narrows down the "By item" list (and the PDF)
+  // below it, so admin can e.g. pull up just the pending items to chase.
+  const totalJobs = prJobs.length;
   const doneN = prJobs.filter(j=> j.status==="done").length;
   const submittedN = prJobs.filter(j=> j.status==="submitted").length;
   const progressN = prJobs.filter(j=> j.status==="in_progress").length;
   const pendingN = prJobs.filter(j=> j.status==="pending").length;
   const pct = n=> totalJobs ? Math.round((n/totalJobs)*100) : 0;
 
+  const filterChips = PR_FILTERS.map(f=> `<button type="button" class="chip pr-report-filter${prReportFilter===f.key ? ' active' : ''}" data-filter="${f.key}">${f.label}</button>`).join("");
+
+  const filteredJobs = prFilteredJobs();
+  const byLoc = {};
+  filteredJobs.forEach(j=>{
+    if(!byLoc[j.unitPath]) byLoc[j.unitPath] = { label: j.unitLabel || j.unitPath, jobs: [] };
+    byLoc[j.unitPath].jobs.push(j);
+  });
+  const locPaths = Object.keys(byLoc);
+
   let completedLocs = 0;
   const rows = locPaths.map(path=>{
     const u = byLoc[path];
-    const total = u.jobs.length;
-    const done = u.jobs.filter(j=> j.status==="done").length;
+    const allJobsHere = prJobs.filter(j=> j.unitPath===path);
+    const total = allJobsHere.length;
+    const done = allJobsHere.filter(j=> j.status==="done").length;
+    const isComplete = done===total;
+    if(isComplete) completedLocs++;
     const submitted = u.jobs.filter(j=> j.status==="submitted");
     const inProgress = u.jobs.filter(j=> j.status==="in_progress");
     const pending = u.jobs.filter(j=> j.status==="pending");
-    const isComplete = done===total;
-    if(isComplete) completedLocs++;
+    const doneHere = u.jobs.filter(j=> j.status==="done");
     return `
       <div class="card" style="cursor:default;">
         <div class="card-body">
@@ -4822,6 +4950,7 @@ function renderPrReportView(){
           ${submitted.length ? `<div class="meta">Awaiting approval: ${submitted.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
           ${inProgress.length ? `<div class="meta">In progress: ${inProgress.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
           ${pending.length ? `<div class="meta">Pending: ${pending.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
+          ${prReportFilter==="done" && doneHere.length ? `<div class="meta">Completed: ${doneHere.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
         </div>
       </div>`;
   }).join("");
@@ -4830,7 +4959,7 @@ function renderPrReportView(){
     <div class="section-label">Overall progress</div>
     <div class="card" style="cursor:default;flex-direction:column;align-items:stretch;">
       <div class="card-body" style="width:100%;">
-        <div class="detail-row"><b>${completedLocs}</b> of <b>${locPaths.length}</b> item(s) fully completed</div>
+        <div class="detail-row"><b>${completedLocs}</b> of <b>${Object.keys(prJobs.reduce((m,j)=>{m[j.unitPath]=1;return m;},{})).length}</b> item(s) fully completed</div>
         <div style="margin-top:10px;">
           ${prProgressBarRow("Completed", doneN, pct(doneN), "var(--green)")}
           ${prProgressBarRow("Awaiting approval", submittedN, pct(submittedN), "var(--blue)")}
@@ -4839,19 +4968,32 @@ function renderPrReportView(){
         </div>
       </div>
     </div>
-    ${isAdmin ? `<button class="btn btn-navy" id="prDownloadPdfBtn" style="width:100%;margin:10px 0;">Download PDF Report</button>` : ""}
+    ${isAdmin ? `<button class="btn btn-navy" id="prDownloadPdfBtn" style="width:100%;margin:10px 0;">Download PDF Report${prReportFilter!=="all" ? ` (${PR_FILTERS.find(f=>f.key===prReportFilter).label})` : ""}</button>` : ""}
     <div class="section-label" style="margin-top:14px;">By item</div>
-    ${rows}
+    <div class="chips" style="margin-bottom:10px;">${filterChips}</div>
+    ${locPaths.length ? rows : `<div class="hint" style="padding:10px 0;">No items match this filter.</div>`}
   `;
+  box.querySelectorAll(".pr-report-filter").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      prReportFilter = btn.getAttribute("data-filter");
+      renderPrReportView();
+    });
+  });
   const pdfBtn = document.getElementById("prDownloadPdfBtn");
   if(pdfBtn) pdfBtn.addEventListener("click", prDownloadPdf);
 }
 
-// PDF export is admin-only, matching the app's other report exports.
+// PDF export is admin-only, matching the app's other report exports. It
+// honors whatever filter is currently selected on the Completion Report tab
+// (All / Pending / In Progress / Awaiting Approval / Completed) — the
+// summary numbers at the top always cover the whole project, but the
+// itemized list below only includes what's currently filtered in.
 function prDownloadPdf(){
   if(!isAdmin) return;
+  const filterLabel = PR_FILTERS.find(f=> f.key===prReportFilter).label;
+  const filteredJobs = prFilteredJobs();
   const byLoc = {};
-  prJobs.forEach(j=>{
+  filteredJobs.forEach(j=>{
     if(!byLoc[j.unitPath]) byLoc[j.unitPath] = { label: j.unitLabel || j.unitPath, jobs: [] };
     byLoc[j.unitPath].jobs.push(j);
   });
@@ -4875,9 +5017,14 @@ function prDownloadPdf(){
   pdf.text(`Project: ${prCurrentProjectName}`, margin, y);
   y += 18;
   pdf.text(`Generated: ${new Date().toLocaleString("en-GB")}`, margin, y);
-  y += 26;
+  y += 18;
+  if(prReportFilter !== "all"){
+    pdf.text(`Filter: ${filterLabel} only`, margin, y);
+    y += 18;
+  }
+  y += 8;
   pdf.setFontSize(13);
-  pdf.text("Summary", margin, y);
+  pdf.text("Summary (whole project)", margin, y);
   y += 18;
   pdf.setFontSize(10);
   [
@@ -4888,6 +5035,15 @@ function prDownloadPdf(){
     `Pending: ${pendingN} (${pct(pendingN)}%)`
   ].forEach(line=>{ pdf.text(line, margin, y); y += lineHeight; });
   y += 16;
+
+  pdf.setFontSize(13);
+  pdf.text(prReportFilter==="all" ? "By item" : `By item — ${filterLabel} only`, margin, y);
+  y += 20;
+
+  if(!locPaths.length){
+    pdf.setFontSize(10);
+    pdf.text("No items match this filter.", margin, y);
+  }
 
   locPaths.forEach(path=>{
     const u = byLoc[path];
@@ -5230,13 +5386,13 @@ function prInjectProjectCardButtons(){
   if(!(isAdmin || isVerifiedStaff)) return;
   document.querySelectorAll('#projectList .card[data-project-id]').forEach(card=>{
     if(card.querySelector(".pr-open-btn")) return;
+    const pid = card.getAttribute("data-project-id");
     const actionsRow = card.querySelector('.card-body > div[style*="flex-wrap"]');
     const btn = document.createElement("button");
     btn.className = "btn btn-navy pr-open-btn";
-    btn.textContent = "Progress Report";
+    btn.innerHTML = "Progress Report" + prBadgeHtml(prSubmittedCountForProject(pid));
     btn.addEventListener("click", (e)=>{
       e.stopPropagation();
-      const pid = card.getAttribute("data-project-id");
       const proj = allProjects.find(p=> p.id===pid);
       openProgressReport(pid, proj ? (proj.name||"Project") : "Project");
     });
@@ -5268,7 +5424,7 @@ function prInjectTasksModalButton(){
     btn.style.cssText = "display:block;width:100%;margin:8px 0;";
     titleEl.insertAdjacentElement("afterend", btn);
   }
-  btn.textContent = "Open Progress Report";
+  btn.innerHTML = "Open Progress Report" + prBadgeHtml(prSubmittedCountForProject(currentProjectId));
   btn.onclick = ()=> openProgressReport(currentProjectId, currentProjectName);
 }
 const prTasksModalEl = document.getElementById("projectTasksModal");
