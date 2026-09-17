@@ -5466,6 +5466,27 @@ function prDownloadPdf(){
       if(y > 770){ pdf.addPage(); y = 50; }
       pdf.text(wrapped, margin+10, y);
       y += lineHeight * wrapped.length;
+
+      // In Progress and Completed jobs also get their full day-by-day
+      // history printed underneath — date, who, and the note for each entry
+      // — so this doubles as a proper work report for the staff group
+      // instead of just a status snapshot.
+      if((j.status==="in_progress" || j.status==="done") && j.logs && j.logs.length){
+        pdf.setFontSize(8);
+        const historyEntries = j.logs.slice().reverse(); // newest first, matching the on-screen History list
+        historyEntries.forEach(l=>{
+          let hLine = `${l.date||""} - ${l.staffName||""}`;
+          if(l.completion) hLine += " (Submitted as completed)";
+          if(l.approved) hLine += " (Approved)";
+          if(l.rejected) hLine += " (Rejected)";
+          if(l.note) hLine += `: ${l.note}`;
+          const wrappedH = pdf.splitTextToSize(hLine, 480);
+          if(y > 775){ pdf.addPage(); y = 50; }
+          pdf.text(wrappedH, margin+22, y);
+          y += lineHeight * wrappedH.length;
+        });
+        pdf.setFontSize(9);
+      }
     });
     y += 10;
   });
