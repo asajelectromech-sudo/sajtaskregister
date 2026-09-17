@@ -709,7 +709,7 @@
     <h2 id="prTitle">Project Progress Report</h2>
     <div class="chips" id="prTabs">
       <button class="chip active" data-pr-tab="fill">Fill Progress</button>
-      <button class="chip" data-pr-tab="report">Completion Report<span id="prSubmittedTabBadge"></span></button>
+      <button class="chip" data-pr-tab="report">Completion Report</button>
       <button class="chip" data-pr-tab="notif">Notifications<span id="prNotifTabBadge"></span></button>
     </div>
     <div class="toolbar" id="prCustomizeRow" style="display:none;">
@@ -4610,11 +4610,6 @@ function startPrListeners(){
     renderPrReportView();
     if(prJobsEditorPath) prOpenJobsEditor(prJobsEditorPath);
     if(prActiveTab==="notif") renderPrNotifView();
-    const tabBadge = document.getElementById("prSubmittedTabBadge");
-    if(tabBadge){
-      const n = prJobs.filter(j=> j.status==="submitted").length;
-      tabBadge.innerHTML = n ? ` <span class="badge" style="background:var(--red);color:#fff;">${n}</span>` : "";
-    }
     const notifBadge = document.getElementById("prNotifTabBadge");
     if(notifBadge){
       const n = prNotifCount();
