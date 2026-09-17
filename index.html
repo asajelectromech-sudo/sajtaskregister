@@ -771,7 +771,8 @@ const db = getFirestore(app);
 // ---------- STATE ----------
 let currentUser = null;
 let isAdmin = false;
-let isVerifiedStaff = false; // signed in with a real, admin-authorized email (not anonymous, not admin) via the email-link flow
+let isVerifiedStaff = false; // signed in with a real, non-anonymous, non-admin email — this can ALSO be true for an unapproved Google account mid-way through the Progress Report "Continue with Google" flow (that flow intentionally skips the authorizedStaff check), so don't use this alone to gate anything beyond what any signed-in Google account should get.
+let isAuthorizedStaffVerified = false; // narrower: true only once we've confirmed THIS exact email is on the admin's authorizedStaff allow-list (mirrors the isAuthorizedStaff() Firestore rule). Used for the couple of Progress Report actions the admin wants open to admin-approved staff specifically (assigning a job, downloading the PDF) but not to just any Google account that's only there to fill in progress.
 let loggedThisSession = false; // guards against recording more than one staffLogins entry per page load
 let allSnags = [];
 let listenerStarted = false;
@@ -975,6 +976,19 @@ onAuthStateChanged(auth, async (user)=>{
   // granting any elevated write, so this client-side flag is purely for
   // deciding what UI to show.
   isVerifiedStaff = !isAdmin && !user.isAnonymous && !!user.email && !!user.emailVerified;
+
+  // Confirm (server-side allow-list, same check the Firestore rules make)
+  // whether this exact email is one the admin actually approved, rather
+  // than just any Google account that's verified enough to fill in
+  // progress. A cheap single-doc read, only needed while isVerifiedStaff.
+  if(isVerifiedStaff){
+    try{
+      const staffSnap = await getDoc(doc(db, "authorizedStaff", user.email.toLowerCase()));
+      isAuthorizedStaffVerified = staffSnap.exists();
+    }catch(e){ console.error("Could not check authorizedStaff status", e); isAuthorizedStaffVerified = false; }
+  } else {
+    isAuthorizedStaffVerified = false;
+  }
 
   // Record a login event the first time we see a verified-staff session
   // this page load, so the admin has a reference of who signed in when —
@@ -4845,7 +4859,7 @@ function prRenderJobCard(j){
         ${j.status==="in_progress" && j.rejectionNote ? `<div class="meta" style="color:var(--red);">Sent back by admin: ${escapeHtml(j.rejectionNote)}</div>` : ""}
         ${expanded ? `
           <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
-            ${isAdmin ? `
+            ${(isAdmin || isAuthorizedStaffVerified) ? `
               <div class="field">
                 <label>Assign to staff</label>
                 <div style="display:flex;gap:8px;">
@@ -4942,16 +4956,19 @@ function prReadDraft(jobId){
   };
 }
 
-// Admin pre-assigns a job to a staff member, ahead of any actual progress
-// being logged. Kept as its own field (assignedStaff) separate from
-// currentStaff/submittedStaff/completedStaff, which only ever get filled in
-// after the fact by whoever clicks Progress/Completed — so "assigned to" and
-// "who actually did/finished it" can differ and both stay visible. Visible
-// to everyone (admin + staff) on the job card, including collapsed, so a
-// signed-in staff member sees it as soon as they open the app. Leaving the
-// input blank and clicking the button clears the assignment.
+// Admin, or admin-approved staff, pre-assigns a job to a staff member,
+// ahead of any actual progress being logged. Kept as its own field
+// (assignedStaff) separate from currentStaff/submittedStaff/completedStaff,
+// which only ever get filled in after the fact by whoever clicks
+// Progress/Completed — so "assigned to" and "who actually did/finished it"
+// can differ and both stay visible. Visible to everyone (admin + staff) on
+// the job card, including collapsed, so a signed-in staff member sees it as
+// soon as they open the app. Leaving the input blank and clicking the
+// button clears the assignment. The Firestore rule enforces the same
+// admin-approved-only restriction server-side (field-limited to the
+// assignment keys, same as here).
 async function prAssignJob(jobId){
-  if(!isAdmin) return;
+  if(!isAdmin && !isAuthorizedStaffVerified) return;
   const box = $("prJobsChecklist");
   const input = box ? box.querySelector(`.pr-job-assign[data-id="${jobId}"]`) : null;
   const name = (input ? input.value : "").trim();
@@ -5294,7 +5311,7 @@ function renderPrReportView(){
         </div>
       </div>
     </div>
-    ${isAdmin ? `<button class="btn btn-navy" id="prDownloadPdfBtn" style="width:100%;margin:10px 0;">Download PDF Report${anyFilterActive ? ` (filtered)` : ""}</button>` : ""}
+    ${(isAdmin || isAuthorizedStaffVerified) ? `<button class="btn btn-navy" id="prDownloadPdfBtn" style="width:100%;margin:10px 0;">Download PDF Report${anyFilterActive ? ` (filtered)` : ""}</button>` : ""}
     <div class="section-label" style="margin-top:14px;">By item</div>
     <div class="chips" style="margin-bottom:10px;">${filterChips}</div>
     ${locPaths.length ? rows : `<div class="hint" style="padding:10px 0;">No items match this filter.</div>`}
@@ -5339,14 +5356,15 @@ function prReportBindFilterControls(box){
   });
 }
 
-// PDF export is admin-only, matching the app's other report exports. It
-// honors ALL filters currently selected on the Completion Report tab: the
-// item filter (scopes everything, including the summary, to the picked
-// item(s) and all their sub-items), the date filter (scopes the summary the
-// same way, by each job's last-activity date), and the status filter
-// (further narrows just the itemized list, same as on screen).
+// PDF export is admin or admin-approved-staff only, matching the app's
+// other report exports. It honors ALL filters currently selected on the
+// Completion Report tab: the item filter (scopes everything, including the
+// summary, to the picked item(s) and all their sub-items), the date filter
+// (scopes the summary the same way, by each job's last-activity date), and
+// the status filter (further narrows just the itemized list, same as on
+// screen).
 function prDownloadPdf(){
-  if(!isAdmin) return;
+  if(!isAdmin && !isAuthorizedStaffVerified) return;
   const statusFilterLabel = prReportFilter.size===0 ? "All" : PR_FILTERS.filter(f=> prReportFilter.has(f.key)).map(f=> f.label).join(", ");
   const allItems = prFlattenTree();
   const pickedLabels = allItems.filter(u=> prReportItemFilters.has(u.unitPath)).map(u=> u.leafLabel);
