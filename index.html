@@ -4447,21 +4447,21 @@ function prPathLabels(path){
   }
   return labels;
 }
-// Flattens the whole tree into a single list of {unitPath, label} — every
-// node at every depth, with its full "Building / Floor / Unit" label — used
-// by the job-sharing picker so a job set (e.g. Brazing, Pressure Test) can be
-// copied onto other units, including ones in a different branch/building.
+// Flattens the whole tree into a single list of {unitPath, label, depth,
+// leafLabel} — every node at every depth, with its full "Building / Floor /
+// Unit" label — used by the job-sharing picker (copy a job set onto other
+// units) and by the Completion Report's item filter dropdown.
 function prFlattenTree(){
   const out = [];
-  function walk(nodes, path, labels){
+  function walk(nodes, path, labels, depth){
     (nodes||[]).forEach(n=>{
       const p = [...path, n.id];
       const l = [...labels, n.label];
-      out.push({ unitPath: p.join(">"), label: l.join(" / ") });
-      walk(n.children||[], p, l);
+      out.push({ unitPath: p.join(">"), label: l.join(" / "), depth, leafLabel: n.label });
+      walk(n.children||[], p, l, depth+1);
     });
   }
-  walk((prTreeDoc && prTreeDoc.nodes) || [], [], []);
+  walk((prTreeDoc && prTreeDoc.nodes) || [], [], [], 0);
   return out;
 }
 
@@ -4482,6 +4482,7 @@ function openProgressReport(projectId, projectName){
   prJobsEditorPath = null;
   prCopyPanelOpen = false;
   prReportFilter = "all";
+  prReportItemFilter = "all";
   startPrListeners();
   showModal("prModal");
 }
@@ -4875,6 +4876,7 @@ async function prDeleteLog(jobId, idx){
 
 // ---------- COMPLETION REPORT TAB ----------
 let prReportFilter = "all"; // all | pending | in_progress | submitted | done — filters both the on-screen list and the PDF export
+let prReportItemFilter = "all"; // "all" or a unitPath — scopes the report to that item AND all of its sub-items
 const PR_FILTERS = [
   { key: "all", label: "All" },
   { key: "pending", label: "Pending" },
@@ -4894,12 +4896,22 @@ function prProgressBarRow(label, count, pct, color){
   </div>`;
 }
 
-// Applies prReportFilter to the full job list, returning only the jobs that
-// match (or all of them, for "all") — shared by the on-screen list and the
-// PDF export so the PDF always matches whatever's currently filtered in.
+// Scopes a job list down to the selected item AND every one of its
+// sub-items (a job's unitPath is a ">"-joined chain of node ids, so a
+// descendant's path always starts with the parent's path + ">"). "all"
+// means no scoping at all.
+function prJobsInItemScope(jobs){
+  if(prReportItemFilter === "all") return jobs;
+  return jobs.filter(j=> j.unitPath === prReportItemFilter || (j.unitPath||"").startsWith(prReportItemFilter + ">"));
+}
+
+// Applies BOTH the item filter and the status filter, in that order —
+// shared by the on-screen list and the PDF export so the PDF always matches
+// whatever's currently filtered in.
 function prFilteredJobs(){
-  if(prReportFilter === "all") return prJobs;
-  return prJobs.filter(j=> j.status === prReportFilter);
+  let jobs = prJobsInItemScope(prJobs);
+  if(prReportFilter !== "all") jobs = jobs.filter(j=> j.status === prReportFilter);
+  return jobs;
 }
 
 function renderPrReportView(){
@@ -4910,16 +4922,33 @@ function renderPrReportView(){
     return;
   }
 
-  // Overall percentages always reflect the WHOLE project, regardless of
-  // filter — the filter only narrows down the "By item" list (and the PDF)
-  // below it, so admin can e.g. pull up just the pending items to chase.
-  const totalJobs = prJobs.length;
-  const doneN = prJobs.filter(j=> j.status==="done").length;
-  const submittedN = prJobs.filter(j=> j.status==="submitted").length;
-  const progressN = prJobs.filter(j=> j.status==="in_progress").length;
-  const pendingN = prJobs.filter(j=> j.status==="pending").length;
+  // The item filter narrows EVERYTHING below — including the overall
+  // percentages — down to that item and all of its sub-items (so picking
+  // "M9 Building" also pulls in Rooftop, Unit 002, Unit 003, etc). The
+  // status filter then narrows the "By item" list (and the PDF) further
+  // within that scope, without affecting the overall percentages.
+  const scopedJobs = prJobsInItemScope(prJobs);
+  const allItems = prFlattenTree();
+  const itemFilterLabel = prReportItemFilter==="all" ? "" : ((allItems.find(u=> u.unitPath===prReportItemFilter)||{}).label || "");
+
+  if(!scopedJobs.length){
+    const itemOptionsEmpty = `<option value="all">All items</option>` + allItems.map(u=> `<option value="${escapeHtml(u.unitPath)}" ${prReportItemFilter===u.unitPath?'selected':''}>${"— ".repeat(u.depth)}${escapeHtml(u.leafLabel)}</option>`).join("");
+    box.innerHTML = `
+      <div class="field"><label>Item</label><select id="prReportItemSelect">${itemOptionsEmpty}</select></div>
+      <div class="hint" style="padding:16px 0;">No jobs under this item.</div>`;
+    const sel = document.getElementById("prReportItemSelect");
+    if(sel) sel.addEventListener("change", ()=>{ prReportItemFilter = sel.value; renderPrReportView(); });
+    return;
+  }
+
+  const totalJobs = scopedJobs.length;
+  const doneN = scopedJobs.filter(j=> j.status==="done").length;
+  const submittedN = scopedJobs.filter(j=> j.status==="submitted").length;
+  const progressN = scopedJobs.filter(j=> j.status==="in_progress").length;
+  const pendingN = scopedJobs.filter(j=> j.status==="pending").length;
   const pct = n=> totalJobs ? Math.round((n/totalJobs)*100) : 0;
 
+  const itemOptions = `<option value="all">All items</option>` + allItems.map(u=> `<option value="${escapeHtml(u.unitPath)}" ${prReportItemFilter===u.unitPath?'selected':''}>${"— ".repeat(u.depth)}${escapeHtml(u.leafLabel)}</option>`).join("");
   const filterChips = PR_FILTERS.map(f=> `<button type="button" class="chip pr-report-filter${prReportFilter===f.key ? ' active' : ''}" data-filter="${f.key}">${f.label}</button>`).join("");
 
   const filteredJobs = prFilteredJobs();
@@ -4933,7 +4962,7 @@ function renderPrReportView(){
   let completedLocs = 0;
   const rows = locPaths.map(path=>{
     const u = byLoc[path];
-    const allJobsHere = prJobs.filter(j=> j.unitPath===path);
+    const allJobsHere = scopedJobs.filter(j=> j.unitPath===path);
     const total = allJobsHere.length;
     const done = allJobsHere.filter(j=> j.status==="done").length;
     const isComplete = done===total;
@@ -4956,10 +4985,11 @@ function renderPrReportView(){
   }).join("");
 
   box.innerHTML = `
-    <div class="section-label">Overall progress</div>
+    <div class="field"><label>Item${itemFilterLabel ? ` — showing ${escapeHtml(itemFilterLabel)} and its sub-items` : ""}</label><select id="prReportItemSelect">${itemOptions}</select></div>
+    <div class="section-label" style="margin-top:10px;">Overall progress</div>
     <div class="card" style="cursor:default;flex-direction:column;align-items:stretch;">
       <div class="card-body" style="width:100%;">
-        <div class="detail-row"><b>${completedLocs}</b> of <b>${Object.keys(prJobs.reduce((m,j)=>{m[j.unitPath]=1;return m;},{})).length}</b> item(s) fully completed</div>
+        <div class="detail-row"><b>${completedLocs}</b> of <b>${Object.keys(scopedJobs.reduce((m,j)=>{m[j.unitPath]=1;return m;},{})).length}</b> item(s) fully completed</div>
         <div style="margin-top:10px;">
           ${prProgressBarRow("Completed", doneN, pct(doneN), "var(--green)")}
           ${prProgressBarRow("Awaiting approval", submittedN, pct(submittedN), "var(--blue)")}
@@ -4968,11 +4998,13 @@ function renderPrReportView(){
         </div>
       </div>
     </div>
-    ${isAdmin ? `<button class="btn btn-navy" id="prDownloadPdfBtn" style="width:100%;margin:10px 0;">Download PDF Report${prReportFilter!=="all" ? ` (${PR_FILTERS.find(f=>f.key===prReportFilter).label})` : ""}</button>` : ""}
+    ${isAdmin ? `<button class="btn btn-navy" id="prDownloadPdfBtn" style="width:100%;margin:10px 0;">Download PDF Report${(prReportFilter!=="all"||prReportItemFilter!=="all") ? ` (filtered)` : ""}</button>` : ""}
     <div class="section-label" style="margin-top:14px;">By item</div>
     <div class="chips" style="margin-bottom:10px;">${filterChips}</div>
     ${locPaths.length ? rows : `<div class="hint" style="padding:10px 0;">No items match this filter.</div>`}
   `;
+  const itemSel = document.getElementById("prReportItemSelect");
+  if(itemSel) itemSel.addEventListener("change", ()=>{ prReportItemFilter = itemSel.value; renderPrReportView(); });
   box.querySelectorAll(".pr-report-filter").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       prReportFilter = btn.getAttribute("data-filter");
@@ -4984,13 +5016,16 @@ function renderPrReportView(){
 }
 
 // PDF export is admin-only, matching the app's other report exports. It
-// honors whatever filter is currently selected on the Completion Report tab
-// (All / Pending / In Progress / Awaiting Approval / Completed) — the
-// summary numbers at the top always cover the whole project, but the
-// itemized list below only includes what's currently filtered in.
+// honors BOTH filters currently selected on the Completion Report tab: the
+// item filter (scopes everything, including the summary, to that item and
+// all its sub-items) and the status filter (further narrows just the
+// itemized list, same as on screen).
 function prDownloadPdf(){
   if(!isAdmin) return;
-  const filterLabel = PR_FILTERS.find(f=> f.key===prReportFilter).label;
+  const statusFilterLabel = PR_FILTERS.find(f=> f.key===prReportFilter).label;
+  const allItems = prFlattenTree();
+  const itemFilterLabel = prReportItemFilter==="all" ? "" : ((allItems.find(u=> u.unitPath===prReportItemFilter)||{}).label || "");
+  const scopedJobs = prJobsInItemScope(prJobs);
   const filteredJobs = prFilteredJobs();
   const byLoc = {};
   filteredJobs.forEach(j=>{
@@ -4998,11 +5033,11 @@ function prDownloadPdf(){
     byLoc[j.unitPath].jobs.push(j);
   });
   const locPaths = Object.keys(byLoc);
-  const totalJobs = prJobs.length;
-  const doneN = prJobs.filter(j=> j.status==="done").length;
-  const submittedN = prJobs.filter(j=> j.status==="submitted").length;
-  const progressN = prJobs.filter(j=> j.status==="in_progress").length;
-  const pendingN = prJobs.filter(j=> j.status==="pending").length;
+  const totalJobs = scopedJobs.length;
+  const doneN = scopedJobs.filter(j=> j.status==="done").length;
+  const submittedN = scopedJobs.filter(j=> j.status==="submitted").length;
+  const progressN = scopedJobs.filter(j=> j.status==="in_progress").length;
+  const pendingN = scopedJobs.filter(j=> j.status==="pending").length;
   const pct = n=> totalJobs ? Math.round((n/totalJobs)*100) : 0;
 
   const { jsPDF } = window.jspdf;
@@ -5018,13 +5053,18 @@ function prDownloadPdf(){
   y += 18;
   pdf.text(`Generated: ${new Date().toLocaleString("en-GB")}`, margin, y);
   y += 18;
+  if(itemFilterLabel){
+    const wrappedItem = pdf.splitTextToSize(`Item: ${itemFilterLabel} (includes all sub-items)`, 515);
+    pdf.text(wrappedItem, margin, y);
+    y += lineHeight * wrappedItem.length;
+  }
   if(prReportFilter !== "all"){
-    pdf.text(`Filter: ${filterLabel} only`, margin, y);
+    pdf.text(`Status filter: ${statusFilterLabel} only`, margin, y);
     y += 18;
   }
   y += 8;
   pdf.setFontSize(13);
-  pdf.text("Summary (whole project)", margin, y);
+  pdf.text(itemFilterLabel ? "Summary (selected item)" : "Summary (whole project)", margin, y);
   y += 18;
   pdf.setFontSize(10);
   [
@@ -5037,7 +5077,7 @@ function prDownloadPdf(){
   y += 16;
 
   pdf.setFontSize(13);
-  pdf.text(prReportFilter==="all" ? "By item" : `By item — ${filterLabel} only`, margin, y);
+  pdf.text(prReportFilter==="all" ? "By item" : `By item — ${statusFilterLabel} only`, margin, y);
   y += 20;
 
   if(!locPaths.length){
