@@ -2896,7 +2896,7 @@ function renderProgressApprovalBanner(){
       const pid = el.getAttribute("data-progress-notif-project");
       const project = allProjects.find(p=>p.id===pid);
       openProgressReport(pid, project ? (project.name||"Project") : "Project");
-      prReportFilter = "submitted";
+      prReportFilter = new Set(["submitted"]);
       prSetActiveTab("report");
     });
   });
@@ -4576,8 +4576,11 @@ function openProgressReport(projectId, projectName){
   prCustomizeBreadcrumb = [];
   prJobsEditorPath = null;
   prCopyPanelOpen = false;
-  prReportFilter = "all";
-  prReportItemFilter = "all";
+  prReportFilter = new Set();
+  prReportItemFilters = new Set();
+  prReportDateFrom = "";
+  prReportDateTo = "";
+  prReportItemPickerOpen = false;
   startPrListeners();
   prSetActiveTab("fill");
   showModal("prModal");
@@ -5074,8 +5077,11 @@ async function prDeleteLog(jobId, idx){
 }
 
 // ---------- COMPLETION REPORT TAB ----------
-let prReportFilter = "all"; // all | pending | in_progress | submitted | done — filters both the on-screen list and the PDF export
-let prReportItemFilter = "all"; // "all" or a unitPath — scopes the report to that item AND all of its sub-items
+let prReportFilter = new Set(); // empty = All statuses; otherwise a Set of any of pending/in_progress/submitted/done — filters both the on-screen list and the PDF export
+let prReportItemFilters = new Set(); // empty = All items; otherwise a Set of unitPaths — scopes the report to those items AND all of their sub-items
+let prReportItemPickerOpen = false; // whether the multi-select item checklist is expanded
+let prReportDateFrom = ""; // "YYYY-MM-DD" or "" — filters both the on-screen list and the PDF export by each job's last-activity date
+let prReportDateTo = ""; // "YYYY-MM-DD" or ""
 const PR_FILTERS = [
   { key: "all", label: "All" },
   { key: "pending", label: "Pending" },
@@ -5095,21 +5101,41 @@ function prProgressBarRow(label, count, pct, color){
   </div>`;
 }
 
-// Scopes a job list down to the selected item AND every one of its
+// Scopes a job list down to the selected item(s) AND every one of their
 // sub-items (a job's unitPath is a ">"-joined chain of node ids, so a
-// descendant's path always starts with the parent's path + ">"). "all"
-// means no scoping at all.
+// descendant's path always starts with the parent's path + ">"). An empty
+// selection means no scoping at all (every item counts as picked).
 function prJobsInItemScope(jobs){
-  if(prReportItemFilter === "all") return jobs;
-  return jobs.filter(j=> j.unitPath === prReportItemFilter || (j.unitPath||"").startsWith(prReportItemFilter + ">"));
+  if(prReportItemFilters.size === 0) return jobs;
+  return jobs.filter(j=> {
+    const path = j.unitPath || "";
+    for(const picked of prReportItemFilters){
+      if(path === picked || path.startsWith(picked + ">")) return true;
+    }
+    return false;
+  });
 }
 
-// Applies BOTH the item filter and the status filter, in that order —
-// shared by the on-screen list and the PDF export so the PDF always matches
-// whatever's currently filtered in.
+// Date range applies to each job's last-activity date — updatedAt if it's
+// ever been touched, otherwise createdAt — so jobs that moved (or were
+// created) within the picked window show up, inclusive of both ends.
+function prJobDateInScope(j){
+  if(!prReportDateFrom && !prReportDateTo) return true;
+  const ts = j.updatedAt || j.createdAt;
+  const d = ts && ts.toDate ? ts.toDate() : (ts ? new Date(ts) : null);
+  if(!d) return false;
+  if(prReportDateFrom && d < new Date(prReportDateFrom + "T00:00:00")) return false;
+  if(prReportDateTo && d > new Date(prReportDateTo + "T23:59:59")) return false;
+  return true;
+}
+
+// Applies the item filter, the status filter and the date filter, in that
+// order — shared by the on-screen list and the PDF export so the PDF always
+// matches whatever's currently filtered in.
 function prFilteredJobs(){
   let jobs = prJobsInItemScope(prJobs);
-  if(prReportFilter !== "all") jobs = jobs.filter(j=> j.status === prReportFilter);
+  if(prReportFilter.size > 0) jobs = jobs.filter(j=> prReportFilter.has(j.status));
+  jobs = jobs.filter(prJobDateInScope);
   return jobs;
 }
 
@@ -5122,21 +5148,45 @@ function renderPrReportView(){
   }
 
   // The item filter narrows EVERYTHING below — including the overall
-  // percentages — down to that item and all of its sub-items (so picking
-  // "M9 Building" also pulls in Rooftop, Unit 002, Unit 003, etc). The
-  // status filter then narrows the "By item" list (and the PDF) further
-  // within that scope, without affecting the overall percentages.
-  const scopedJobs = prJobsInItemScope(prJobs);
+  // percentages — down to the picked item(s) and all of their sub-items (so
+  // picking "M9 Building" also pulls in Rooftop, Unit 002, Unit 003, etc).
+  // The date filter scopes the overall percentages the same way, by each
+  // job's last-activity date. The status filter then narrows the "By item"
+  // list (and the PDF) further within that scope, without affecting the
+  // overall percentages.
   const allItems = prFlattenTree();
-  const itemFilterLabel = prReportItemFilter==="all" ? "" : ((allItems.find(u=> u.unitPath===prReportItemFilter)||{}).label || "");
+  const scopedJobs = prJobsInItemScope(prJobs).filter(prJobDateInScope);
+  const pickedLabels = allItems.filter(u=> prReportItemFilters.has(u.unitPath)).map(u=> u.leafLabel);
+  const itemFilterLabel = pickedLabels.length === 0 ? "" : pickedLabels.join(", ");
+  const itemButtonLabel = prReportItemFilters.size === 0 ? "All items"
+    : prReportItemFilters.size === 1 ? pickedLabels[0]
+    : `${prReportItemFilters.size} items selected`;
+  const dateFilterActive = !!(prReportDateFrom || prReportDateTo);
+  const anyFilterActive = prReportFilter.size > 0 || prReportItemFilters.size > 0 || dateFilterActive;
+
+  const itemPickerHtml = `
+    <div class="field">
+      <label>Item${itemFilterLabel ? ` — showing ${escapeHtml(itemFilterLabel)} and sub-items` : ""}</label>
+      <button type="button" class="btn btn-light" id="prReportItemPickerBtn" style="width:100%;text-align:left;">${escapeHtml(itemButtonLabel)} ${prReportItemPickerOpen ? "▲" : "▼"}</button>
+      ${prReportItemPickerOpen ? `
+        <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;">
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;cursor:pointer;">
+            <input type="checkbox" class="pr-report-item-check" data-unit="all" ${prReportItemFilters.size===0 ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" /> <b>All items</b>
+          </label>
+          ${allItems.map(u=> `
+            <label style="display:flex;align-items:center;gap:8px;padding:5px 0 5px ${8+u.depth*14}px;font-size:13px;cursor:pointer;">
+              <input type="checkbox" class="pr-report-item-check" data-unit="${escapeHtml(u.unitPath)}" ${prReportItemFilters.has(u.unitPath) ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" /> ${escapeHtml(u.leafLabel)}
+            </label>`).join("")}
+        </div>` : ""}
+    </div>
+    <div style="display:flex;gap:10px;">
+      <div class="field" style="flex:1;"><label>From date</label><input type="date" id="prReportDateFrom" value="${escapeHtml(prReportDateFrom)}" /></div>
+      <div class="field" style="flex:1;"><label>To date</label><input type="date" id="prReportDateTo" value="${escapeHtml(prReportDateTo)}" /></div>
+    </div>`;
 
   if(!scopedJobs.length){
-    const itemOptionsEmpty = `<option value="all">All items</option>` + allItems.map(u=> `<option value="${escapeHtml(u.unitPath)}" ${prReportItemFilter===u.unitPath?'selected':''}>${"— ".repeat(u.depth)}${escapeHtml(u.leafLabel)}</option>`).join("");
-    box.innerHTML = `
-      <div class="field"><label>Item</label><select id="prReportItemSelect">${itemOptionsEmpty}</select></div>
-      <div class="hint" style="padding:16px 0;">No jobs under this item.</div>`;
-    const sel = document.getElementById("prReportItemSelect");
-    if(sel) sel.addEventListener("change", ()=>{ prReportItemFilter = sel.value; renderPrReportView(); });
+    box.innerHTML = itemPickerHtml + `<div class="hint" style="padding:16px 0;">No jobs match this filter.</div>`;
+    prReportBindFilterControls(box);
     return;
   }
 
@@ -5147,8 +5197,10 @@ function renderPrReportView(){
   const pendingN = scopedJobs.filter(j=> j.status==="pending").length;
   const pct = n=> totalJobs ? Math.round((n/totalJobs)*100) : 0;
 
-  const itemOptions = `<option value="all">All items</option>` + allItems.map(u=> `<option value="${escapeHtml(u.unitPath)}" ${prReportItemFilter===u.unitPath?'selected':''}>${"— ".repeat(u.depth)}${escapeHtml(u.leafLabel)}</option>`).join("");
-  const filterChips = PR_FILTERS.map(f=> `<button type="button" class="chip pr-report-filter${prReportFilter===f.key ? ' active' : ''}" data-filter="${f.key}">${f.label}</button>`).join("");
+  const filterChips = PR_FILTERS.map(f=> {
+    const active = f.key==="all" ? prReportFilter.size===0 : prReportFilter.has(f.key);
+    return `<button type="button" class="chip pr-report-filter${active ? ' active' : ''}" data-filter="${f.key}">${f.label}</button>`;
+  }).join("");
 
   const filteredJobs = prFilteredJobs();
   const byLoc = {};
@@ -5178,13 +5230,12 @@ function renderPrReportView(){
           ${submitted.length ? `<div class="meta">Awaiting approval: ${submitted.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
           ${inProgress.length ? `<div class="meta">In progress: ${inProgress.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
           ${pending.length ? `<div class="meta">Pending: ${pending.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
-          ${prReportFilter==="done" && doneHere.length ? `<div class="meta">Completed: ${doneHere.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
+          ${prReportFilter.has("done") && doneHere.length ? `<div class="meta">Completed: ${doneHere.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
         </div>
       </div>`;
   }).join("");
 
-  box.innerHTML = `
-    <div class="field"><label>Item${itemFilterLabel ? ` — showing ${escapeHtml(itemFilterLabel)} and its sub-items` : ""}</label><select id="prReportItemSelect">${itemOptions}</select></div>
+  box.innerHTML = itemPickerHtml + `
     <div class="section-label" style="margin-top:10px;">Overall progress</div>
     <div class="card" style="cursor:default;flex-direction:column;align-items:stretch;">
       <div class="card-body" style="width:100%;">
@@ -5197,34 +5248,67 @@ function renderPrReportView(){
         </div>
       </div>
     </div>
-    ${isAdmin ? `<button class="btn btn-navy" id="prDownloadPdfBtn" style="width:100%;margin:10px 0;">Download PDF Report${(prReportFilter!=="all"||prReportItemFilter!=="all") ? ` (filtered)` : ""}</button>` : ""}
+    ${isAdmin ? `<button class="btn btn-navy" id="prDownloadPdfBtn" style="width:100%;margin:10px 0;">Download PDF Report${anyFilterActive ? ` (filtered)` : ""}</button>` : ""}
     <div class="section-label" style="margin-top:14px;">By item</div>
     <div class="chips" style="margin-bottom:10px;">${filterChips}</div>
     ${locPaths.length ? rows : `<div class="hint" style="padding:10px 0;">No items match this filter.</div>`}
   `;
-  const itemSel = document.getElementById("prReportItemSelect");
-  if(itemSel) itemSel.addEventListener("change", ()=>{ prReportItemFilter = itemSel.value; renderPrReportView(); });
-  box.querySelectorAll(".pr-report-filter").forEach(btn=>{
-    btn.addEventListener("click", ()=>{
-      prReportFilter = btn.getAttribute("data-filter");
-      renderPrReportView();
-    });
-  });
+  prReportBindFilterControls(box);
   const pdfBtn = document.getElementById("prDownloadPdfBtn");
   if(pdfBtn) pdfBtn.addEventListener("click", prDownloadPdf);
 }
 
+// Wires up the item picker (toggle button + checkboxes), the date range
+// inputs, and the status chips. Shared by both the normal render and the
+// "no jobs match" early-return render, since both include the item picker
+// and date fields.
+function prReportBindFilterControls(box){
+  const pickerBtn = document.getElementById("prReportItemPickerBtn");
+  if(pickerBtn) pickerBtn.addEventListener("click", ()=>{ prReportItemPickerOpen = !prReportItemPickerOpen; renderPrReportView(); });
+  box.querySelectorAll(".pr-report-item-check").forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      const unit = cb.getAttribute("data-unit");
+      if(unit === "all"){
+        prReportItemFilters = new Set();
+      } else {
+        if(cb.checked) prReportItemFilters.add(unit); else prReportItemFilters.delete(unit);
+      }
+      renderPrReportView();
+    });
+  });
+  const fromInput = document.getElementById("prReportDateFrom");
+  if(fromInput) fromInput.addEventListener("change", ()=>{ prReportDateFrom = fromInput.value; renderPrReportView(); });
+  const toInput = document.getElementById("prReportDateTo");
+  if(toInput) toInput.addEventListener("change", ()=>{ prReportDateTo = toInput.value; renderPrReportView(); });
+  box.querySelectorAll(".pr-report-filter").forEach(btn=>{
+    btn.addEventListener("click", ()=>{
+      const key = btn.getAttribute("data-filter");
+      if(key === "all"){
+        prReportFilter = new Set();
+      } else {
+        if(prReportFilter.has(key)) prReportFilter.delete(key); else prReportFilter.add(key);
+      }
+      renderPrReportView();
+    });
+  });
+}
+
 // PDF export is admin-only, matching the app's other report exports. It
-// honors BOTH filters currently selected on the Completion Report tab: the
-// item filter (scopes everything, including the summary, to that item and
-// all its sub-items) and the status filter (further narrows just the
-// itemized list, same as on screen).
+// honors ALL filters currently selected on the Completion Report tab: the
+// item filter (scopes everything, including the summary, to the picked
+// item(s) and all their sub-items), the date filter (scopes the summary the
+// same way, by each job's last-activity date), and the status filter
+// (further narrows just the itemized list, same as on screen).
 function prDownloadPdf(){
   if(!isAdmin) return;
-  const statusFilterLabel = PR_FILTERS.find(f=> f.key===prReportFilter).label;
+  const statusFilterLabel = prReportFilter.size===0 ? "All" : PR_FILTERS.filter(f=> prReportFilter.has(f.key)).map(f=> f.label).join(", ");
   const allItems = prFlattenTree();
-  const itemFilterLabel = prReportItemFilter==="all" ? "" : ((allItems.find(u=> u.unitPath===prReportItemFilter)||{}).label || "");
-  const scopedJobs = prJobsInItemScope(prJobs);
+  const pickedLabels = allItems.filter(u=> prReportItemFilters.has(u.unitPath)).map(u=> u.leafLabel);
+  const itemFilterLabel = pickedLabels.join(", ");
+  const dateFilterLabel = (prReportDateFrom || prReportDateTo)
+    ? `${prReportDateFrom || "the start"} to ${prReportDateTo || "now"}`
+    : "";
+  const scopedJobs = prJobsInItemScope(prJobs).filter(prJobDateInScope);
   const filteredJobs = prFilteredJobs();
   const byLoc = {};
   filteredJobs.forEach(j=>{
@@ -5253,17 +5337,21 @@ function prDownloadPdf(){
   pdf.text(`Generated: ${new Date().toLocaleString("en-GB")}`, margin, y);
   y += 18;
   if(itemFilterLabel){
-    const wrappedItem = pdf.splitTextToSize(`Item: ${itemFilterLabel} (includes all sub-items)`, 515);
+    const wrappedItem = pdf.splitTextToSize(`Item(s): ${itemFilterLabel} (includes all sub-items)`, 515);
     pdf.text(wrappedItem, margin, y);
     y += lineHeight * wrappedItem.length;
   }
-  if(prReportFilter !== "all"){
+  if(dateFilterLabel){
+    pdf.text(`Date filter: ${dateFilterLabel}`, margin, y);
+    y += 18;
+  }
+  if(prReportFilter.size > 0){
     pdf.text(`Status filter: ${statusFilterLabel} only`, margin, y);
     y += 18;
   }
   y += 8;
   pdf.setFontSize(13);
-  pdf.text(itemFilterLabel ? "Summary (selected item)" : "Summary (whole project)", margin, y);
+  pdf.text((itemFilterLabel || dateFilterLabel) ? "Summary (filtered)" : "Summary (whole project)", margin, y);
   y += 18;
   pdf.setFontSize(10);
   [
@@ -5276,7 +5364,7 @@ function prDownloadPdf(){
   y += 16;
 
   pdf.setFontSize(13);
-  pdf.text(prReportFilter==="all" ? "By item" : `By item — ${statusFilterLabel} only`, margin, y);
+  pdf.text(prReportFilter.size===0 ? "By item" : `By item — ${statusFilterLabel} only`, margin, y);
   y += 20;
 
   if(!locPaths.length){
