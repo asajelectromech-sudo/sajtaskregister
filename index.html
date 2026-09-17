@@ -646,6 +646,13 @@
     <div id="staffEmailList"></div>
 
     <div class="section-label" style="margin-top:18px;">Recent staff logins</div>
+    <div class="hint">Deleting removes the underlying records — this can't be undone.</div>
+    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin:8px 0;">
+      <div class="field" style="flex:1;min-width:130px;margin:0;"><label>From date</label><input type="date" id="staffLoginDeleteFrom" /></div>
+      <div class="field" style="flex:1;min-width:130px;margin:0;"><label>To date</label><input type="date" id="staffLoginDeleteTo" /></div>
+      <button class="btn btn-red" id="deleteStaffLoginsByDateBtn" style="white-space:nowrap;">Delete in range</button>
+    </div>
+    <button class="btn btn-red" id="deleteAllStaffLoginsBtn" style="width:100%;margin-bottom:10px;">Delete all login history</button>
     <div id="staffLoginLogList"></div>
   </div>
 </div>
@@ -1543,18 +1550,20 @@ $("addStaffEmailBtn").addEventListener("click", async ()=>{
   $("addStaffEmailBtn").disabled = false;
 });
 
+let staffLoginDocs = []; // full result of the last renderStaffLoginLog() fetch, WITH doc ids — so the delete-all/delete-in-range buttons below can act on everything, not just the 50 shown on screen
+
 async function renderStaffLoginLog(){
   const box = $("staffLoginLogList");
   box.innerHTML = `<div class="hint">Loading…</div>`;
   try{
     const snap = await getDocs(query(collection(db, "staffLogins"), orderBy("verifiedAt", "desc")));
-    if(snap.empty){
+    staffLoginDocs = [];
+    snap.forEach(d=> staffLoginDocs.push({ id: d.id, ...d.data() }));
+    if(!staffLoginDocs.length){
       box.innerHTML = `<div class="hint">No staff logins recorded yet.</div>`;
       return;
     }
-    const rows = [];
-    snap.forEach(d=> rows.push(d.data()));
-    box.innerHTML = rows.slice(0, 50).map(r=>
+    box.innerHTML = staffLoginDocs.slice(0, 50).map(r=>
       `<div class="detail-row">${escapeHtml(r.email||"Unknown")} — <b>${escapeHtml(r.action||"Verified Staff")}</b> — ${escapeHtml(fmtDate(r.verifiedAt))}</div>`
     ).join("");
   }catch(err){
@@ -1562,6 +1571,43 @@ async function renderStaffLoginLog(){
     box.innerHTML = `<div class="error-text">Could not load login history. Check your connection and try again.</div>`;
   }
 }
+
+async function prDeleteStaffLoginDocs(records, btn){
+  btn.disabled = true;
+  try{
+    await Promise.all(records.map(r=> deleteDoc(doc(db, "staffLogins", r.id))));
+    await renderStaffLoginLog();
+  }catch(err){
+    console.error(err);
+    alert("Could not delete login history. Check your connection and try again.");
+  }
+  btn.disabled = false;
+}
+
+$("deleteAllStaffLoginsBtn").addEventListener("click", async ()=>{
+  if(!staffLoginDocs.length){ alert("No login history to delete."); return; }
+  if(!(await confirmDelete(`Delete all ${staffLoginDocs.length} login history record(s)? This cannot be undone.`))) return;
+  prDeleteStaffLoginDocs(staffLoginDocs, $("deleteAllStaffLoginsBtn"));
+});
+
+$("deleteStaffLoginsByDateBtn").addEventListener("click", async ()=>{
+  const fromVal = $("staffLoginDeleteFrom").value;
+  const toVal = $("staffLoginDeleteTo").value;
+  if(!fromVal && !toVal){ alert("Pick a from date, a to date, or both."); return; }
+  const from = fromVal ? new Date(fromVal + "T00:00:00") : null;
+  const to = toVal ? new Date(toVal + "T23:59:59") : null;
+  const matches = staffLoginDocs.filter(r=>{
+    const ts = r.verifiedAt;
+    const d = ts && ts.toDate ? ts.toDate() : (ts ? new Date(ts) : null);
+    if(!d) return false;
+    if(from && d < from) return false;
+    if(to && d > to) return false;
+    return true;
+  });
+  if(!matches.length){ alert("No login records fall in that date range."); return; }
+  if(!(await confirmDelete(`Delete ${matches.length} login history record(s) in this date range? This cannot be undone.`))) return;
+  prDeleteStaffLoginDocs(matches, $("deleteStaffLoginsByDateBtn"));
+});
 
 $("loginSubmit").addEventListener("click", async ()=>{
   const email = $("loginEmail").value.trim();
