@@ -5308,7 +5308,14 @@ function renderPrReportView(){
     if(!byLoc[j.unitPath]) byLoc[j.unitPath] = { label: j.unitLabel || j.unitPath, jobs: [] };
     byLoc[j.unitPath].jobs.push(j);
   });
-  const locPaths = Object.keys(byLoc);
+  // Firestore doesn't return jobs in any particular order, so without this
+  // the "By item" list jumps around in whatever order the jobs happen to
+  // come back in. Sort by each item's position in the tree instead — the
+  // same depth-first order Fill Progress and the item picker above use
+  // (first item, then its first sub-item, then that sub-item's jobs, etc).
+  const treeOrderIndex = {};
+  allItems.forEach((u,idx)=>{ treeOrderIndex[u.unitPath] = idx; });
+  const locPaths = Object.keys(byLoc).sort((a,b)=> (treeOrderIndex[a] ?? Infinity) - (treeOrderIndex[b] ?? Infinity));
 
   let completedLocs = 0;
   const rows = locPaths.map(path=>{
@@ -5429,7 +5436,12 @@ function prDownloadPdf(){
     if(!byLoc[j.unitPath]) byLoc[j.unitPath] = { label: j.unitLabel || j.unitPath, jobs: [] };
     byLoc[j.unitPath].jobs.push(j);
   });
-  const locPaths = Object.keys(byLoc);
+  // Same tree-order sort as the on-screen report, so the PDF lists items in
+  // the same first-item-then-its-first-sub-item order, not Firestore's
+  // arbitrary return order.
+  const treeOrderIndex = {};
+  allItems.forEach((u,idx)=>{ treeOrderIndex[u.unitPath] = idx; });
+  const locPaths = Object.keys(byLoc).sort((a,b)=> (treeOrderIndex[a] ?? Infinity) - (treeOrderIndex[b] ?? Infinity));
   const totalJobs = scopedJobs.length;
   const doneN = scopedJobs.filter(j=> j.status==="done").length;
   const submittedN = scopedJobs.filter(j=> j.status==="submitted").length;
