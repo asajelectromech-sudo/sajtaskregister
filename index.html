@@ -4891,6 +4891,7 @@ function prRenderJobCard(j){
               ${j.completedNote ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(j.completedNote)}</div>` : ""}
               ${isAdmin ? `<button class="btn btn-red pr-job-reopen" data-id="${j.id}" style="width:100%;margin-top:6px;">Reopen</button>` : ""}
             ` : `<div class="hint">Sign in with your Google account to update this job.</div>`))}
+            ${isAdmin && j.status!=="done" ? `<button class="btn btn-red pr-job-admin-close" data-id="${j.id}" style="width:100%;margin-top:8px;">Close job (admin)</button>` : ""}
             ${logs.length ? `
               <div class="section-label" style="margin-top:12px;">History</div>
               ${logs.map(l=> prRenderLogEntry(j.id, l)).join("")}
@@ -4902,7 +4903,7 @@ function prRenderJobCard(j){
 }
 
 function prRenderLogEntry(jobId, l){
-  const label = `${escapeHtml(l.date||"")} &middot; <b>${escapeHtml(l.staffName||"")}</b>${l.completion ? " (Submitted as completed)" : ""}${l.approved ? " (Approved)" : ""}${l.rejected ? " (Rejected)" : ""}${l.note ? " — "+escapeHtml(l.note) : ""}`;
+  const label = `${escapeHtml(l.date||"")} &middot; <b>${escapeHtml(l.staffName||"")}</b>${l.completion ? " (Submitted as completed)" : ""}${l.approved ? " (Approved)" : ""}${l.rejected ? " (Rejected)" : ""}${l.adminClosed ? " (Closed by admin)" : ""}${l.note ? " — "+escapeHtml(l.note) : ""}`;
   if(!isAdmin) return `<div class="detail-row">${label}</div>`;
   return `<div class="detail-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
     <span style="flex:1;">${label}</span>
@@ -4942,6 +4943,7 @@ function prWireJobCards(box){
   box.querySelectorAll(".pr-job-reopen").forEach(btn=> btn.addEventListener("click", ()=> prReopenJob(btn.getAttribute("data-id"))));
   box.querySelectorAll(".pr-job-approve").forEach(btn=> btn.addEventListener("click", ()=> prApproveJob(btn.getAttribute("data-id"))));
   box.querySelectorAll(".pr-job-reject").forEach(btn=> btn.addEventListener("click", ()=> prRejectJob(btn.getAttribute("data-id"))));
+  box.querySelectorAll(".pr-job-admin-close").forEach(btn=> btn.addEventListener("click", ()=> prAdminCloseJob(btn.getAttribute("data-id"))));
   box.querySelectorAll(".pr-log-edit").forEach(btn=> btn.addEventListener("click", ()=> prEditLog(btn.getAttribute("data-job"), parseInt(btn.getAttribute("data-idx"),10))));
   box.querySelectorAll(".pr-log-delete").forEach(btn=> btn.addEventListener("click", ()=> prDeleteLog(btn.getAttribute("data-job"), parseInt(btn.getAttribute("data-idx"),10))));
 }
@@ -5053,6 +5055,38 @@ async function prApproveJob(jobId){
       updatedAt: serverTimestamp()
     });
   }catch(err){ console.error(err); alert("Could not approve. Check your connection and try again."); }
+}
+
+// Lets admin close a job outright, from any state short of already-done —
+// no staff name, no note, no waiting on a staff submission or a separate
+// approval step. Goes straight to Done and clears anything left over from
+// a submit/reject in progress, so the job doesn't end up in a confusing
+// mixed state. Drops one "Closed by admin" line into History so it's clear
+// this one didn't go through the normal staff/approval cycle.
+async function prAdminCloseJob(jobId){
+  if(!isAdmin) return;
+  const job = prJobs.find(j=> j.id===jobId);
+  if(!job) return;
+  if(!confirm(`Close "${job.jobLabel}" as done? This skips staff name/note and marks it as closed by admin.`)) return;
+  const entry = {
+    date: new Date().toISOString().slice(0,10),
+    staffName: "Admin", note: "",
+    savedBy: currentUser ? (currentUser.email||null) : null,
+    savedAt: Timestamp.now(),
+    adminClosed: true
+  };
+  try{
+    await updateDoc(doc(db,"progressJobs",jobId), {
+      status: "done",
+      completedStaff: "Admin", completedNote: "Closed by admin",
+      completedAt: serverTimestamp(),
+      completedBy: currentUser ? (currentUser.email||null) : null,
+      submittedStaff: null, submittedNote: null, submittedAt: null, submittedBy: null,
+      rejectionNote: null, rejectedBy: null, rejectedAt: null,
+      logs: arrayUnion(entry),
+      updatedAt: serverTimestamp()
+    });
+  }catch(err){ console.error(err); alert("Could not close job. Check your connection and try again."); }
 }
 
 async function prRejectJob(jobId){
@@ -5479,6 +5513,7 @@ function prDownloadPdf(){
           if(l.completion) hLine += " (Submitted as completed)";
           if(l.approved) hLine += " (Approved)";
           if(l.rejected) hLine += " (Rejected)";
+          if(l.adminClosed) hLine += " (Closed by admin)";
           if(l.note) hLine += `: ${l.note}`;
           const wrappedH = pdf.splitTextToSize(hLine, 480);
           if(y > 775){ pdf.addPage(); y = 50; }
