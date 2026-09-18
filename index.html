@@ -4891,7 +4891,7 @@ function prRenderJobCard(j){
               ${j.completedNote ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(j.completedNote)}</div>` : ""}
               ${isAdmin ? `<button class="btn btn-red pr-job-reopen" data-id="${j.id}" style="width:100%;margin-top:6px;">Reopen</button>` : ""}
             ` : `<div class="hint">Sign in with your Google account to update this job.</div>`))}
-            ${isAdmin && j.status!=="done" ? `<button class="btn btn-red pr-job-admin-close" data-id="${j.id}" style="width:100%;margin-top:8px;">Close job (admin)</button>` : ""}
+            ${(isAdmin || isAuthorizedStaffVerified) && j.status!=="done" ? `<button class="btn btn-red pr-job-admin-close" data-id="${j.id}" style="width:100%;margin-top:8px;">Close job (admin)</button>` : ""}
             ${logs.length ? `
               <div class="section-label" style="margin-top:12px;">History</div>
               ${logs.map(l=> prRenderLogEntry(j.id, l)).join("")}
@@ -5064,7 +5064,7 @@ async function prApproveJob(jobId){
 // mixed state. Drops one "Closed by admin" line into History so it's clear
 // this one didn't go through the normal staff/approval cycle.
 async function prAdminCloseJob(jobId){
-  if(!isAdmin) return;
+  if(!isAdmin && !isAuthorizedStaffVerified) return;
   const job = prJobs.find(j=> j.id===jobId);
   if(!job) return;
   if(!confirm(`Close "${job.jobLabel}" as done? This skips staff name/note and marks it as closed by admin.`)) return;
@@ -5623,6 +5623,32 @@ async function prDeleteNode(id){
   }catch(err){ console.error("Could not clean up jobs for deleted node:", err); }
 }
 
+// Same as prDeleteNode, but for several checked items at once — one tree
+// save instead of one per item, and a single sweep through progressJobs to
+// clean up everything under all of them together.
+async function prDeleteNodesBulk(ids){
+  if(!ids.length) return;
+  const nodes = prCloneNodes();
+  const siblings = prGetSiblingsRef(nodes, prCustomizeBreadcrumb);
+  if(!siblings) return;
+  const idSet = new Set(ids);
+  const deletedPrefixes = siblings.filter(n=> idSet.has(n.id)).map(n=> [...prCustomizeBreadcrumb, n.id].join(">"));
+  for(let i=siblings.length-1;i>=0;i--){
+    if(idSet.has(siblings[i].id)) siblings.splice(i,1);
+  }
+  await prSaveTree({ nodes });
+  try{
+    const snap = await getDocs(collection(db,"progressJobs"));
+    const toDelete = snap.docs.filter(d=>{
+      const data = d.data();
+      if(data.projectId !== prCurrentProjectId) return false;
+      const up = data.unitPath || "";
+      return deletedPrefixes.some(prefix=> up === prefix || up.startsWith(prefix + ">"));
+    });
+    await Promise.all(toDelete.map(d=> deleteDoc(doc(db,"progressJobs",d.id))));
+  }catch(err){ console.error("Could not clean up jobs for deleted nodes:", err); }
+}
+
 function renderPrTreeEditor(){
   const crumbBox = $("prTreeBreadcrumb");
   const box = $("prTreeEditor");
@@ -5660,12 +5686,14 @@ function renderPrTreeEditor(){
     <div class="card" style="cursor:default;">
       <div class="card-body">
         <div style="display:flex;gap:8px;align-items:center;">
+          <input type="checkbox" class="pr-node-select" data-id="${n.id}" style="width:17px;height:17px;flex-shrink:0;" />
           <input type="text" class="pr-node-name" data-id="${n.id}" value="${escapeHtml(n.label)}" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:8px;" />
           <button class="btn btn-light pr-node-drill" data-id="${n.id}" style="padding:8px 10px;">Open &rarr;</button>
           <button class="btn btn-red pr-node-delete" data-id="${n.id}" style="padding:8px 10px;">Delete</button>
         </div>
       </div>
-    </div>`).join("") + `<div class="modal-actions"><button class="btn btn-light" id="prAddNodeBtn" style="width:100%;">+ Add item${crumbNames.length ? ` under "${escapeHtml(crumbNames[crumbNames.length-1])}"` : ""}</button></div>`;
+    </div>`).join("") + `<div class="modal-actions"><button class="btn btn-light" id="prAddNodeBtn" style="width:100%;">+ Add item${crumbNames.length ? ` under "${escapeHtml(crumbNames[crumbNames.length-1])}"` : ""}</button></div>`
+    + (siblings.length ? `<button class="btn btn-red" id="prDeleteSelectedNodesBtn" style="width:100%;margin-top:6px;">Delete selected</button>` : "");
 
   if(prCustomizeBreadcrumb.length){
     document.getElementById("prJobsHereBtn").addEventListener("click", ()=> prOpenJobsEditor(prCustomizeBreadcrumb.slice()));
@@ -5673,6 +5701,26 @@ function renderPrTreeEditor(){
   box.querySelectorAll(".pr-node-name").forEach(input=>{
     input.addEventListener("change", async ()=>{
       await prRenameNode(input.getAttribute("data-id"), input.value.trim() || "Untitled");
+    });
+  });
+  // Tab/Enter jumps straight to the next (or, with Shift, the previous)
+  // name box — skipping the Open/Delete buttons and checkbox in between —
+  // so typing a whole batch of names (e.g. after "+ Add item" x50) is just
+  // type -> Tab -> type -> Tab... without reaching for the mouse.
+  const nameInputs = Array.from(box.querySelectorAll(".pr-node-name"));
+  nameInputs.forEach((input, idx)=>{
+    input.addEventListener("keydown", (e)=>{
+      if(e.key === "Enter"){
+        e.preventDefault();
+        const next = nameInputs[idx+1];
+        if(next){ next.focus(); next.select(); }
+        else input.blur();
+      } else if(e.key === "Tab"){
+        e.preventDefault();
+        const target = e.shiftKey ? nameInputs[idx-1] : nameInputs[idx+1];
+        if(target){ target.focus(); target.select(); }
+        else input.blur();
+      }
     });
   });
   box.querySelectorAll(".pr-node-drill").forEach(btn=>{
@@ -5689,6 +5737,18 @@ function renderPrTreeEditor(){
       await prDeleteNode(id);
     });
   });
+  const deleteSelectedNodesBtn = document.getElementById("prDeleteSelectedNodesBtn");
+  if(deleteSelectedNodesBtn){
+    deleteSelectedNodesBtn.addEventListener("click", async ()=>{
+      const ids = Array.from(box.querySelectorAll(".pr-node-select:checked")).map(el=> el.getAttribute("data-id"));
+      if(!ids.length){ alert("Check at least one item to delete."); return; }
+      const names = siblings.filter(n=> ids.includes(n.id)).map(n=> n.label);
+      const namesPreview = names.length <= 5 ? ` (${names.join(", ")})` : "";
+      if(!(await confirmDelete(`Delete ${ids.length} item(s)${namesPreview} and everything under them (including their own jobs and any sub-items)? This cannot be undone.`))) return;
+      deleteSelectedNodesBtn.disabled = true;
+      await prDeleteNodesBulk(ids);
+    });
+  }
   const addNodeBtn = document.getElementById("prAddNodeBtn");
   if(addNodeBtn){
     addNodeBtn.addEventListener("click", async ()=>{
@@ -5720,7 +5780,7 @@ function prOpenJobsEditor(path){
     <div class="card" style="cursor:default;">
       <div class="card-body">
         <div style="display:flex;gap:8px;align-items:center;">
-          <input type="checkbox" class="pr-job-copy-check" data-id="${j.id}" checked style="width:17px;height:17px;flex-shrink:0;" />
+          <input type="checkbox" class="pr-job-copy-check" data-id="${j.id}" style="width:17px;height:17px;flex-shrink:0;" />
           <span style="flex:1;">${escapeHtml(j.jobLabel)}</span>
           ${prStatusBadge(j.status)}
           <button class="btn btn-red pr-job-delete" data-id="${j.id}" style="padding:6px 10px;">Delete</button>
@@ -5754,8 +5814,10 @@ function prOpenJobsEditor(path){
       </div>`;
   })() : "";
 
-  box.innerHTML = jobRows
+  box.innerHTML = (unitJobs.length ? `<div class="hint" style="margin-bottom:8px;">Check the job(s) you want, then Delete selected or Copy jobs to other units below.</div>` : "")
+    + jobRows
     + `<div class="modal-actions"><button class="btn btn-light" id="prAddJobBtn" style="width:100%;">+ Add job</button></div>`
+    + (unitJobs.length ? `<button class="btn btn-red" id="prDeleteSelectedJobsBtn" style="width:100%;margin-top:6px;">Delete selected</button>` : "")
     + (unitJobs.length ? `<button class="btn btn-navy" id="prCopyJobsBtn" style="width:100%;margin-top:6px;">${prCopyPanelOpen ? "Hide copy panel" : "Copy jobs to other units"}</button>` : "")
     + copyPanelHtml;
 
@@ -5766,6 +5828,24 @@ function prOpenJobsEditor(path){
       catch(err){ console.error(err); alert("Could not delete."); }
     });
   });
+  const deleteSelectedJobsBtn = document.getElementById("prDeleteSelectedJobsBtn");
+  if(deleteSelectedJobsBtn){
+    deleteSelectedJobsBtn.addEventListener("click", async ()=>{
+      const ids = Array.from(box.querySelectorAll(".pr-job-copy-check:checked")).map(el=> el.getAttribute("data-id"));
+      if(!ids.length){ alert("Check at least one job above to delete."); return; }
+      const names = unitJobs.filter(j=> ids.includes(j.id)).map(j=> j.jobLabel);
+      const namesPreview = names.length <= 5 ? ` (${names.join(", ")})` : "";
+      if(!(await confirmDelete(`Delete ${ids.length} job(s)${namesPreview}? Their whole progress history will be lost. This cannot be undone.`))) return;
+      deleteSelectedJobsBtn.disabled = true;
+      try{
+        await Promise.all(ids.map(id=> deleteDoc(doc(db,"progressJobs",id))));
+      }catch(err){
+        console.error(err);
+        alert("Could not delete selected jobs. Check your connection and try again.");
+        deleteSelectedJobsBtn.disabled = false;
+      }
+    });
+  }
   const addJobBtn = document.getElementById("prAddJobBtn");
   if(addJobBtn){
     addJobBtn.addEventListener("click", async ()=>{
