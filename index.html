@@ -5245,6 +5245,25 @@ function prFilteredJobs(){
   return jobs;
 }
 
+// Renders a job's full day-by-day history (date, staff, note) as the same
+// compact lines the PDF prints — used on screen only while a search is
+// active, so search results show the actual notes/history that matched
+// instead of just a status summary.
+function prJobHistoryHtml(j){
+  if(!Array.isArray(j.logs) || !j.logs.length) return "";
+  const entries = j.logs.slice().reverse(); // newest first, matching the History list elsewhere
+  const lines = entries.map(l=>{
+    let line = `${l.date||""} — ${l.staffName||""}`;
+    if(l.completion) line += " (Submitted as completed)";
+    if(l.approved) line += " (Approved)";
+    if(l.rejected) line += " (Rejected)";
+    if(l.adminClosed) line += " (Closed by admin)";
+    if(l.note) line += `: ${l.note}`;
+    return `<div class="meta" style="padding-left:12px;">${escapeHtml(line)}</div>`;
+  }).join("");
+  return `<div class="meta" style="margin-top:4px;"><b>${escapeHtml(j.jobLabel||"")} history:</b></div>${lines}`;
+}
+
 function renderPrReportView(){
   const box = $("prReportView");
   if(!box || !prTreeDoc) return;
@@ -5320,6 +5339,7 @@ function renderPrReportView(){
   }).join("");
 
   const filteredJobs = prFilteredJobs();
+  const searchActive = !!prReportSearchTerm.trim();
   const byLoc = {};
   filteredJobs.forEach(j=>{
     if(!byLoc[j.unitPath]) byLoc[j.unitPath] = { label: j.unitLabel || j.unitPath, jobs: [] };
@@ -5355,6 +5375,7 @@ function renderPrReportView(){
           ${inProgress.length ? `<div class="meta">In progress: ${inProgress.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
           ${pending.length ? `<div class="meta">Pending: ${pending.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
           ${prReportFilter.has("done") && doneHere.length ? `<div class="meta">Completed: ${doneHere.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
+          ${searchActive ? u.jobs.map(prJobHistoryHtml).join("") : ""}
         </div>
       </div>`;
   }).join("");
