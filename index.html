@@ -4644,6 +4644,7 @@ function openProgressReport(projectId, projectName){
   prReportDateFrom = "";
   prReportDateTo = "";
   prReportItemPickerOpen = false;
+  prReportItemSearch = "";
   startPrListeners();
   prSetActiveTab("fill");
   showModal("prModal");
@@ -5180,6 +5181,7 @@ async function prDeleteLog(jobId, idx){
 let prReportFilter = new Set(); // empty = All statuses; otherwise a Set of any of pending/in_progress/submitted/done — filters both the on-screen list and the PDF export
 let prReportItemFilters = new Set(); // empty = All items; otherwise a Set of unitPaths — scopes the report to those items AND all of their sub-items
 let prReportItemPickerOpen = false; // whether the multi-select item checklist is expanded
+let prReportItemSearch = ""; // live filter text typed into the item picker's search box
 let prReportDateFrom = ""; // "YYYY-MM-DD" or "" — filters both the on-screen list and the PDF export by each job's last-activity date
 let prReportDateTo = ""; // "YYYY-MM-DD" or ""
 const PR_FILTERS = [
@@ -5264,19 +5266,30 @@ function renderPrReportView(){
   const dateFilterActive = !!(prReportDateFrom || prReportDateTo);
   const anyFilterActive = prReportFilter.size > 0 || prReportItemFilters.size > 0 || dateFilterActive;
 
+  const itemSearchTerm = prReportItemSearch.trim().toLowerCase();
+  // Matches on the item's own location label (Building / Floor / Unit) OR on
+  // the name of any job recorded against that exact item (e.g. typing
+  // "pressure test" finds the unit(s) that have a Pressure Test job), so the
+  // search box works for both "where is this unit" and "who has this job".
+  const visibleItems = itemSearchTerm ? allItems.filter(u=>
+    u.label.toLowerCase().includes(itemSearchTerm) ||
+    prJobs.some(j=> j.unitPath === u.unitPath && (j.jobLabel||"").toLowerCase().includes(itemSearchTerm))
+  ) : allItems;
+
   const itemPickerHtml = `
     <div class="field">
       <label>Item${itemFilterLabel ? ` — showing ${escapeHtml(itemFilterLabel)} and sub-items` : ""}</label>
       <button type="button" class="btn btn-light" id="prReportItemPickerBtn" style="width:100%;text-align:left;">${escapeHtml(itemButtonLabel)} ${prReportItemPickerOpen ? "▲" : "▼"}</button>
       ${prReportItemPickerOpen ? `
+        <input type="text" id="prReportItemSearchInput" placeholder="Search items..." value="${escapeHtml(prReportItemSearch)}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;margin-top:6px;" />
         <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;">
           <label style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;cursor:pointer;">
             <input type="checkbox" class="pr-report-item-check" data-unit="all" ${prReportItemFilters.size===0 ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" /> <b>All items</b>
           </label>
-          ${allItems.map(u=> `
-            <label style="display:flex;align-items:center;gap:8px;padding:5px 0 5px ${8+u.depth*14}px;font-size:13px;cursor:pointer;">
-              <input type="checkbox" class="pr-report-item-check" data-unit="${escapeHtml(u.unitPath)}" ${prReportItemFilters.has(u.unitPath) ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" /> ${escapeHtml(u.leafLabel)}
-            </label>`).join("")}
+          ${visibleItems.length ? visibleItems.map(u=> `
+            <label style="display:flex;align-items:center;gap:8px;padding:5px 0 5px ${itemSearchTerm ? 8 : 8+u.depth*14}px;font-size:13px;cursor:pointer;">
+              <input type="checkbox" class="pr-report-item-check" data-unit="${escapeHtml(u.unitPath)}" ${prReportItemFilters.has(u.unitPath) ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" /> ${escapeHtml(itemSearchTerm ? u.label : u.leafLabel)}
+            </label>`).join("") : `<div class="hint" style="padding:6px 0;">No items match "${escapeHtml(prReportItemSearch)}".</div>`}
         </div>` : ""}
     </div>
     <div style="display:flex;gap:10px;">
@@ -5385,6 +5398,22 @@ function renderPrReportView(){
 function prReportBindFilterControls(box){
   const pickerBtn = document.getElementById("prReportItemPickerBtn");
   if(pickerBtn) pickerBtn.addEventListener("click", ()=>{ prReportItemPickerOpen = !prReportItemPickerOpen; renderPrReportView(); });
+  const searchInput = document.getElementById("prReportItemSearchInput");
+  if(searchInput){
+    searchInput.addEventListener("input", ()=>{
+      prReportItemSearch = searchInput.value;
+      renderPrReportView();
+      // renderPrReportView() just rebuilt this input from scratch to show
+      // the filtered results, which would normally drop focus/cursor mid-
+      // keystroke. Grab the fresh element and restore both immediately.
+      const freshInput = document.getElementById("prReportItemSearchInput");
+      if(freshInput){
+        freshInput.focus();
+        const pos = freshInput.value.length;
+        freshInput.setSelectionRange(pos, pos);
+      }
+    });
+  }
   box.querySelectorAll(".pr-report-item-check").forEach(cb=>{
     cb.addEventListener("change", ()=>{
       const unit = cb.getAttribute("data-unit");
