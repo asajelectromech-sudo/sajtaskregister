@@ -718,6 +718,7 @@
       <button class="chip active" data-pr-tab="fill">Fill Progress</button>
       <button class="chip" data-pr-tab="report">Completion Report</button>
       <button class="chip" data-pr-tab="notif">Notifications<span id="prNotifTabBadge"></span></button>
+      <button class="chip" data-pr-tab="search">Search Jobs</button>
     </div>
     <div class="toolbar" id="prCustomizeRow" style="display:none;">
       <button class="btn btn-navy" id="prCustomizeBtn" style="width:100%;">Customize (admin)</button>
@@ -725,6 +726,7 @@
     <div id="prFillView"></div>
     <div id="prReportView" style="display:none;"></div>
     <div id="prNotifView" style="display:none;"></div>
+    <div id="prSearchView" style="display:none;"></div>
   </div>
 </div>
 
@@ -4575,6 +4577,7 @@ let prActiveTab = "fill";
 let prCustomizeBreadcrumb = [];  // node ids drilled into, inside the Customize tree editor
 let prJobsEditorPath = null;     // when set (array of node ids), Customize is showing that node's job list instead of its children
 let prExpandedJobId = null;      // which job card is expanded in the Fill Progress tab
+let prJobSearchTerm = "";        // standalone "Search Jobs" tab — matches on jobLabel across every item in the project
 let prJobDrafts = {};            // jobId -> {staff, note} — unsaved text typed into a job's form
 let prCopyPanelOpen = false;     // whether the "copy jobs to other units" picker is showing in the Jobs editor
 let prJobsSelectedIds = new Set();  // job ids checked in Customize > Jobs — kept in memory (not just the DOM) so a live update from someone else's activity elsewhere doesn't silently wipe selections while checking boxes one by one. Cleared when navigating to a different item's job list.
@@ -4645,6 +4648,7 @@ function openProgressReport(projectId, projectName){
   prReportDateTo = "";
   prReportItemPickerOpen = false;
   prReportItemSearch = "";
+  prJobSearchTerm = "";
   startPrListeners();
   prSetActiveTab("fill");
   showModal("prModal");
@@ -4677,6 +4681,7 @@ function startPrListeners(){
     renderPrReportView();
     if(prJobsEditorPath) prOpenJobsEditor(prJobsEditorPath);
     if(prActiveTab==="notif") renderPrNotifView();
+    if(prActiveTab==="search") renderPrSearchView();
     const notifBadge = document.getElementById("prNotifTabBadge");
     if(notifBadge){
       const n = prNotifCount();
@@ -4692,8 +4697,10 @@ function prSetActiveTab(tab){
   $("prFillView").style.display = tab==="fill" ? "block" : "none";
   $("prReportView").style.display = tab==="report" ? "block" : "none";
   $("prNotifView").style.display = tab==="notif" ? "block" : "none";
+  $("prSearchView").style.display = tab==="search" ? "block" : "none";
   if(tab==="report") renderPrReportView();
   if(tab==="notif") renderPrNotifView();
+  if(tab==="search") renderPrSearchView();
 }
 $("prTabs").querySelectorAll(".chip").forEach(chip=>{
   chip.addEventListener("click", ()=> prSetActiveTab(chip.getAttribute("data-pr-tab")));
@@ -5572,6 +5579,83 @@ function prDownloadPdf(){
 
   const filename = `SAJ_Progress_Report_${sanitizeForFilename(prCurrentProjectName)}_${fmtDateOnly()}.pdf`;
   pdf.save(filename);
+}
+
+// ---------- SEARCH JOBS TAB (standalone — finds a job by name across the whole project) ----------
+// Who's currently "on" a job, matching the same fallback order used elsewhere
+// (submitted-by for jobs awaiting approval, completed-by once done, else
+// whoever last saved progress).
+function prJobStaffLabel(j){
+  if(j.status==="submitted") return j.submittedStaff || j.currentStaff || "";
+  if(j.status==="done") return j.completedStaff || j.currentStaff || "";
+  return j.currentStaff || "";
+}
+
+function renderPrSearchView(){
+  const box = $("prSearchView");
+  const term = prJobSearchTerm.trim().toLowerCase();
+  const matches = term ? prJobs.filter(j=> (j.jobLabel||"").toLowerCase().includes(term)) : [];
+
+  // Sort matches in the same tree order as everywhere else, so results read
+  // top-to-bottom the way the project itself is laid out (Building > Floor >
+  // Unit), not in whatever order Firestore happened to return them.
+  const allItems = prFlattenTree();
+  const treeOrderIndex = {};
+  allItems.forEach((u,idx)=>{ treeOrderIndex[u.unitPath] = idx; });
+  matches.sort((a,b)=> (treeOrderIndex[a.unitPath] ?? Infinity) - (treeOrderIndex[b.unitPath] ?? Infinity));
+
+  const resultsHtml = !term
+    ? `<div class="hint" style="padding:16px 0;">Type a job name (e.g. "Pressure Test") to find every unit that has it, anywhere in this project.</div>`
+    : !matches.length
+    ? `<div class="hint" style="padding:16px 0;">No jobs match "${escapeHtml(prJobSearchTerm)}".</div>`
+    : matches.map(j=> `
+        <div class="card pr-search-job-card" data-job-id="${escapeHtml(j.id)}" data-unit-path="${escapeHtml(j.unitPath||"")}" style="cursor:pointer;">
+          <div class="card-body">
+            <p class="card-title">${escapeHtml(j.jobLabel||"")}</p>
+            <div class="meta">${escapeHtml(j.unitLabel||j.unitPath||"")}</div>
+            ${prStatusBadge(j.status)}
+            ${prJobStaffLabel(j) ? `<div class="meta">Staff: ${escapeHtml(prJobStaffLabel(j))}</div>` : ""}
+          </div>
+        </div>`).join("");
+
+  box.innerHTML = `
+    <div class="field">
+      <label>Job name</label>
+      <input type="text" id="prJobSearchInput" placeholder="Search jobs..." value="${escapeHtml(prJobSearchTerm)}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;" />
+    </div>
+    ${term ? `<div class="hint" style="padding:4px 0 10px;">${matches.length} job(s) match</div>` : ""}
+    ${resultsHtml}`;
+
+  const searchInput = document.getElementById("prJobSearchInput");
+  if(searchInput){
+    searchInput.addEventListener("input", ()=>{
+      prJobSearchTerm = searchInput.value;
+      renderPrSearchView();
+      // renderPrSearchView() just rebuilt this input from scratch, which
+      // would otherwise drop focus/cursor mid-keystroke — restore both.
+      const freshInput = document.getElementById("prJobSearchInput");
+      if(freshInput){
+        freshInput.focus();
+        const pos = freshInput.value.length;
+        freshInput.setSelectionRange(pos, pos);
+      }
+    });
+  }
+
+  // Tapping a result jumps straight into Fill Progress at that job's unit,
+  // with that exact job expanded — same "jump to it" pattern the Completion
+  // Report's "By item" cards already use, just landing on the specific job
+  // instead of the unit's whole checklist.
+  box.querySelectorAll(".pr-search-job-card").forEach(card=>{
+    card.addEventListener("click", ()=>{
+      const path = card.getAttribute("data-unit-path");
+      const jobId = card.getAttribute("data-job-id");
+      prSelectedPath = path ? path.split(">") : [];
+      prExpandedJobId = jobId || null;
+      prSetActiveTab("fill");
+      renderPrFillView();
+    });
+  });
 }
 
 // ---------- CUSTOMIZE (admin only) — free-form tree browser ----------
