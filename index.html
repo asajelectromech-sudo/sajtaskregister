@@ -5689,7 +5689,6 @@ function renderPrTreeEditor(){
           <input type="checkbox" class="pr-node-select" data-id="${n.id}" style="width:17px;height:17px;flex-shrink:0;" />
           <input type="text" class="pr-node-name" data-id="${n.id}" value="${escapeHtml(n.label)}" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:8px;" />
           <button class="btn btn-light pr-node-drill" data-id="${n.id}" style="padding:8px 10px;">Open &rarr;</button>
-          <button class="btn btn-red pr-node-delete" data-id="${n.id}" style="padding:8px 10px;">Delete</button>
         </div>
       </div>
     </div>`).join("") + `<div class="modal-actions"><button class="btn btn-light" id="prAddNodeBtn" style="width:100%;">+ Add item${crumbNames.length ? ` under "${escapeHtml(crumbNames[crumbNames.length-1])}"` : ""}</button></div>`
@@ -5727,14 +5726,6 @@ function renderPrTreeEditor(){
     btn.addEventListener("click", ()=>{
       prCustomizeBreadcrumb.push(btn.getAttribute("data-id"));
       renderPrTreeEditor();
-    });
-  });
-  box.querySelectorAll(".pr-node-delete").forEach(btn=>{
-    btn.addEventListener("click", async ()=>{
-      const id = btn.getAttribute("data-id");
-      const n = siblings.find(x=> x.id===id);
-      if(!(await confirmDelete(`Delete "${n?n.label:''}" and everything under it (including its own jobs and any sub-items)? This cannot be undone.`))) return;
-      await prDeleteNode(id);
     });
   });
   const deleteSelectedNodesBtn = document.getElementById("prDeleteSelectedNodesBtn");
@@ -5783,7 +5774,6 @@ function prOpenJobsEditor(path){
           <input type="checkbox" class="pr-job-copy-check" data-id="${j.id}" style="width:17px;height:17px;flex-shrink:0;" />
           <span style="flex:1;">${escapeHtml(j.jobLabel)}</span>
           ${prStatusBadge(j.status)}
-          <button class="btn btn-red pr-job-delete" data-id="${j.id}" style="padding:6px 10px;">Delete</button>
         </div>
       </div>
     </div>`).join("");
@@ -5821,13 +5811,6 @@ function prOpenJobsEditor(path){
     + (unitJobs.length ? `<button class="btn btn-navy" id="prCopyJobsBtn" style="width:100%;margin-top:6px;">${prCopyPanelOpen ? "Hide copy panel" : "Copy jobs to other units"}</button>` : "")
     + copyPanelHtml;
 
-  box.querySelectorAll(".pr-job-delete").forEach(btn=>{
-    btn.addEventListener("click", async ()=>{
-      if(!(await confirmDelete("Delete this job item? Its whole progress history will be lost."))) return;
-      try{ await deleteDoc(doc(db,"progressJobs",btn.getAttribute("data-id"))); }
-      catch(err){ console.error(err); alert("Could not delete."); }
-    });
-  });
   const deleteSelectedJobsBtn = document.getElementById("prDeleteSelectedJobsBtn");
   if(deleteSelectedJobsBtn){
     deleteSelectedJobsBtn.addEventListener("click", async ()=>{
