@@ -4577,6 +4577,9 @@ let prJobsEditorPath = null;     // when set (array of node ids), Customize is s
 let prExpandedJobId = null;      // which job card is expanded in the Fill Progress tab
 let prJobDrafts = {};            // jobId -> {staff, note} — unsaved text typed into a job's form
 let prCopyPanelOpen = false;     // whether the "copy jobs to other units" picker is showing in the Jobs editor
+let prJobsSelectedIds = new Set();  // job ids checked in Customize > Jobs — kept in memory (not just the DOM) so a live update from someone else's activity elsewhere doesn't silently wipe selections while checking boxes one by one. Cleared when navigating to a different item's job list.
+let prNodesSelectedIds = new Set(); // same idea, for the Customize > Items (tree) checkboxes. Cleared when navigating to a different tree level.
+let prTreeEditorLastPath = null;    // last breadcrumb path (as a ">"-joined key) the tree editor rendered, so it can tell a real navigation apart from a reactive re-render of the same level.
 
 function prNodeIdGen(){ return "n_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2,7); }
 
@@ -5654,6 +5657,18 @@ function renderPrTreeEditor(){
   const box = $("prTreeEditor");
   if(!box || !prTreeDoc) return;
 
+  // Only clear the checked selection when we've actually navigated to a
+  // different level — NOT on every re-render, since this function also runs
+  // reactively (e.g. a live update from someone else's activity elsewhere)
+  // and re-renders the same list from scratch each time. Without this, a
+  // selection built up by checking boxes one by one could get silently
+  // wiped mid-way by an unrelated update.
+  const pathKey = prCustomizeBreadcrumb.join(">");
+  if(prTreeEditorLastPath !== pathKey){
+    prNodesSelectedIds = new Set();
+    prTreeEditorLastPath = pathKey;
+  }
+
   const crumbNames = [];
   let nodesWalk = prTreeDoc.nodes || [];
   prCustomizeBreadcrumb.forEach(id=>{
@@ -5682,11 +5697,17 @@ function renderPrTreeEditor(){
       </div>
     </div>` : "";
 
-  box.innerHTML = jobsCard + siblings.map(n=> `
+  const allNodesSelected = siblings.length>0 && siblings.every(n=> prNodesSelectedIds.has(n.id));
+  const selectAllNodesHtml = siblings.length ? `
+    <label style="display:flex;align-items:center;gap:8px;padding:4px 0 10px;font-size:13px;cursor:pointer;">
+      <input type="checkbox" id="prNodesSelectAll" ${allNodesSelected ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" /> <b>Select all</b>
+    </label>` : "";
+
+  box.innerHTML = jobsCard + selectAllNodesHtml + siblings.map(n=> `
     <div class="card" style="cursor:default;">
       <div class="card-body">
         <div style="display:flex;gap:8px;align-items:center;">
-          <input type="checkbox" class="pr-node-select" data-id="${n.id}" style="width:17px;height:17px;flex-shrink:0;" />
+          <input type="checkbox" class="pr-node-select" data-id="${n.id}" ${prNodesSelectedIds.has(n.id) ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" />
           <input type="text" class="pr-node-name" data-id="${n.id}" value="${escapeHtml(n.label)}" style="flex:1;padding:8px;border:1px solid var(--border);border-radius:8px;" />
           <button class="btn btn-light pr-node-drill" data-id="${n.id}" style="padding:8px 10px;">Open &rarr;</button>
         </div>
@@ -5697,6 +5718,20 @@ function renderPrTreeEditor(){
   if(prCustomizeBreadcrumb.length){
     document.getElementById("prJobsHereBtn").addEventListener("click", ()=> prOpenJobsEditor(prCustomizeBreadcrumb.slice()));
   }
+  const selectAllNodesCb = document.getElementById("prNodesSelectAll");
+  if(selectAllNodesCb){
+    selectAllNodesCb.addEventListener("change", ()=>{
+      if(selectAllNodesCb.checked) siblings.forEach(n=> prNodesSelectedIds.add(n.id));
+      else siblings.forEach(n=> prNodesSelectedIds.delete(n.id));
+      renderPrTreeEditor();
+    });
+  }
+  box.querySelectorAll(".pr-node-select").forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      const id = cb.getAttribute("data-id");
+      if(cb.checked) prNodesSelectedIds.add(id); else prNodesSelectedIds.delete(id);
+    });
+  });
   box.querySelectorAll(".pr-node-name").forEach(input=>{
     input.addEventListener("change", async ()=>{
       await prRenameNode(input.getAttribute("data-id"), input.value.trim() || "Untitled");
@@ -5731,12 +5766,13 @@ function renderPrTreeEditor(){
   const deleteSelectedNodesBtn = document.getElementById("prDeleteSelectedNodesBtn");
   if(deleteSelectedNodesBtn){
     deleteSelectedNodesBtn.addEventListener("click", async ()=>{
-      const ids = Array.from(box.querySelectorAll(".pr-node-select:checked")).map(el=> el.getAttribute("data-id"));
+      const ids = siblings.filter(n=> prNodesSelectedIds.has(n.id)).map(n=> n.id);
       if(!ids.length){ alert("Check at least one item to delete."); return; }
       const names = siblings.filter(n=> ids.includes(n.id)).map(n=> n.label);
       const namesPreview = names.length <= 5 ? ` (${names.join(", ")})` : "";
       if(!(await confirmDelete(`Delete ${ids.length} item(s)${namesPreview} and everything under them (including their own jobs and any sub-items)? This cannot be undone.`))) return;
       deleteSelectedNodesBtn.disabled = true;
+      prNodesSelectedIds = new Set();
       await prDeleteNodesBulk(ids);
     });
   }
@@ -5758,6 +5794,14 @@ function renderPrTreeEditor(){
 }
 
 function prOpenJobsEditor(path){
+  const newUnitPath = path.join(">");
+  // Same reasoning as the Items list above: only clear the selection when
+  // actually switching to a different item's job list, not on every
+  // reactive re-render of this same list (e.g. someone else saving
+  // progress elsewhere triggers this to re-run with the same path).
+  if(prJobsEditorPath === null || prJobsEditorPath.join(">") !== newUnitPath){
+    prJobsSelectedIds = new Set();
+  }
   prJobsEditorPath = path.slice();
   const unitPath = prJobsEditorPath.join(">");
   const box = $("prTreeEditor");
@@ -5771,7 +5815,7 @@ function prOpenJobsEditor(path){
     <div class="card" style="cursor:default;">
       <div class="card-body">
         <div style="display:flex;gap:8px;align-items:center;">
-          <input type="checkbox" class="pr-job-copy-check" data-id="${j.id}" style="width:17px;height:17px;flex-shrink:0;" />
+          <input type="checkbox" class="pr-job-copy-check" data-id="${j.id}" ${prJobsSelectedIds.has(j.id) ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" />
           <span style="flex:1;">${escapeHtml(j.jobLabel)}</span>
           ${prStatusBadge(j.status)}
         </div>
@@ -5804,23 +5848,45 @@ function prOpenJobsEditor(path){
       </div>`;
   })() : "";
 
+  const allJobsSelected = unitJobs.length>0 && unitJobs.every(j=> prJobsSelectedIds.has(j.id));
+  const selectAllJobsHtml = unitJobs.length ? `
+    <label style="display:flex;align-items:center;gap:8px;padding:4px 0 6px;font-size:13px;cursor:pointer;">
+      <input type="checkbox" id="prJobsSelectAll" ${allJobsSelected ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" /> <b>Select all</b>
+    </label>` : "";
+
   box.innerHTML = (unitJobs.length ? `<div class="hint" style="margin-bottom:8px;">Check the job(s) you want, then Delete selected or Copy jobs to other units below.</div>` : "")
+    + selectAllJobsHtml
     + jobRows
     + `<div class="modal-actions"><button class="btn btn-light" id="prAddJobBtn" style="width:100%;">+ Add job</button></div>`
     + (unitJobs.length ? `<button class="btn btn-red" id="prDeleteSelectedJobsBtn" style="width:100%;margin-top:6px;">Delete selected</button>` : "")
     + (unitJobs.length ? `<button class="btn btn-navy" id="prCopyJobsBtn" style="width:100%;margin-top:6px;">${prCopyPanelOpen ? "Hide copy panel" : "Copy jobs to other units"}</button>` : "")
     + copyPanelHtml;
 
+  const selectAllJobsCb = document.getElementById("prJobsSelectAll");
+  if(selectAllJobsCb){
+    selectAllJobsCb.addEventListener("change", ()=>{
+      if(selectAllJobsCb.checked) unitJobs.forEach(j=> prJobsSelectedIds.add(j.id));
+      else unitJobs.forEach(j=> prJobsSelectedIds.delete(j.id));
+      prOpenJobsEditor(prJobsEditorPath);
+    });
+  }
+  box.querySelectorAll(".pr-job-copy-check").forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      const id = cb.getAttribute("data-id");
+      if(cb.checked) prJobsSelectedIds.add(id); else prJobsSelectedIds.delete(id);
+    });
+  });
   const deleteSelectedJobsBtn = document.getElementById("prDeleteSelectedJobsBtn");
   if(deleteSelectedJobsBtn){
     deleteSelectedJobsBtn.addEventListener("click", async ()=>{
-      const ids = Array.from(box.querySelectorAll(".pr-job-copy-check:checked")).map(el=> el.getAttribute("data-id"));
+      const ids = unitJobs.filter(j=> prJobsSelectedIds.has(j.id)).map(j=> j.id);
       if(!ids.length){ alert("Check at least one job above to delete."); return; }
       const names = unitJobs.filter(j=> ids.includes(j.id)).map(j=> j.jobLabel);
       const namesPreview = names.length <= 5 ? ` (${names.join(", ")})` : "";
       if(!(await confirmDelete(`Delete ${ids.length} job(s)${namesPreview}? Their whole progress history will be lost. This cannot be undone.`))) return;
       deleteSelectedJobsBtn.disabled = true;
       try{
+        prJobsSelectedIds = new Set();
         await Promise.all(ids.map(id=> deleteDoc(doc(db,"progressJobs",id))));
       }catch(err){
         console.error(err);
@@ -5865,7 +5931,7 @@ function prOpenJobsEditor(path){
   const copyConfirmBtn = document.getElementById("prCopyConfirmBtn");
   if(copyConfirmBtn){
     copyConfirmBtn.addEventListener("click", async ()=>{
-      const selectedJobIds = Array.from(box.querySelectorAll(".pr-job-copy-check:checked")).map(el=> el.getAttribute("data-id"));
+      const selectedJobIds = unitJobs.filter(j=> prJobsSelectedIds.has(j.id)).map(j=> j.id);
       const selectedTargets = Array.from(box.querySelectorAll(".pr-copy-target:checked")).map(el=> el.getAttribute("data-unit"));
       if(!selectedJobIds.length || !selectedTargets.length){
         alert("Check at least one job above and at least one target unit below.");
