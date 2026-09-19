@@ -4963,7 +4963,7 @@ function prRenderJobCard(j){
 
 function prRenderLogEntry(jobId, l){
   const label = `${escapeHtml(l.date||"")} &middot; <b>${escapeHtml(l.staffName||"")}</b>${l.savedBy ? ` <span style="color:var(--text-muted);font-weight:400;">(${escapeHtml(l.savedBy)})</span>` : ""}${l.completion ? " (Submitted as completed)" : ""}${l.approved ? " (Approved)" : ""}${l.rejected ? " (Rejected)" : ""}${l.adminClosed ? " (Closed by admin)" : ""}${l.note ? " — "+escapeHtml(l.note) : ""}`;
-  const photoHtml = l.photo ? `<div style="margin-top:4px;"><a href="${l.photo}" target="_blank" rel="noopener"><img src="${l.photo}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--border);" /></a></div>` : "";
+  const photoHtml = l.photo ? `<div style="margin-top:4px;"><a href="${l.photo}" download="job-photo-${escapeHtml(l.date||"photo")}.jpg" target="_blank" rel="noopener"><img src="${l.photo}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--border);" /></a></div>` : "";
   if(!isAdmin) return `<div class="detail-row">${label}${photoHtml}</div>`;
   return `<div class="detail-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
     <span style="flex:1;">${label}${photoHtml}</span>
@@ -5426,7 +5426,7 @@ function prJobHistoryHtml(j){
     if(l.rejected) line += " (Rejected)";
     if(l.adminClosed) line += " (Closed by admin)";
     if(l.note) line += `: ${l.note}`;
-    const photoHtml = l.photo ? `<div style="padding-left:12px;margin:2px 0 4px;"><a href="${l.photo}" target="_blank" rel="noopener"><img src="${l.photo}" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--border);" /></a></div>` : "";
+    const photoHtml = l.photo ? `<div style="padding-left:12px;margin:2px 0 4px;"><a href="${l.photo}" download="job-photo-${escapeHtml(l.date||"photo")}.jpg" target="_blank" rel="noopener"><img src="${l.photo}" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--border);" /></a></div>` : "";
     return `<div class="meta" style="padding-left:12px;">${escapeHtml(line)}</div>${photoHtml}`;
   }).join("");
   return `<div class="meta" style="margin-top:4px;"><b>${escapeHtml(j.jobLabel||"")} history:</b></div>${lines}`;
@@ -5780,6 +5780,7 @@ function prDownloadPdf(){
         const historyEntries = j.logs.slice().reverse(); // newest first, matching the on-screen History list
         historyEntries.forEach(l=>{
           let hLine = `${l.date||""} - ${l.staffName||""}`;
+          if(l.savedBy) hLine += ` (${l.savedBy})`;
           if(l.completion) hLine += " (Submitted as completed)";
           if(l.approved) hLine += " (Approved)";
           if(l.rejected) hLine += " (Rejected)";
@@ -5789,6 +5790,18 @@ function prDownloadPdf(){
           if(y > 775){ pdf.addPage(); y = 50; }
           pdf.text(wrappedH, margin+22, y);
           y += lineHeight * wrappedH.length;
+
+          // Before/after-style evidence photos attached to this entry (see
+          // the "photo required" job setting) get embedded right under
+          // their line, not just referenced — this is what makes the PDF a
+          // real standalone record instead of one that's missing the actual
+          // evidence whenever a job required a photo.
+          if(l.photo){
+            const imgSize = 70;
+            if(y + imgSize > 780){ pdf.addPage(); y = 50; }
+            try{ pdf.addImage(l.photo, "JPEG", margin+22, y, imgSize, imgSize); }catch(e){ /* skip a malformed image rather than fail the whole export */ }
+            y += imgSize + 8;
+          }
         });
         pdf.setFontSize(9);
       }
