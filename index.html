@@ -1077,7 +1077,7 @@ document.querySelectorAll("#mainTabs .tab-btn").forEach(btn=>{
     $("snagsView").style.display = activeTab === "snags" ? "block" : "none";
     $("workView").style.display = activeTab === "work" ? "block" : "none";
     $("projectsView").style.display = activeTab === "projects" ? "block" : "none";
-    $("newProjectBtn").style.display = (activeTab === "projects" && (isAdmin || isVerifiedStaff)) ? "inline-block" : "none";
+    $("newProjectBtn").style.display = (activeTab === "projects" && (isAdmin || isAuthorizedStaffVerified)) ? "inline-block" : "none";
     renderProjectList();
     updateFabVisibility();
   });
@@ -1111,7 +1111,7 @@ function renderAuthBox(){
       showModal("loginModal");
     });
   }
-  $("newProjectBtn").style.display = (activeTab === "projects" && (isAdmin || isVerifiedStaff)) ? "inline-block" : "none";
+  $("newProjectBtn").style.display = (activeTab === "projects" && (isAdmin || isAuthorizedStaffVerified)) ? "inline-block" : "none";
 }
 
 function normalizeProjectColumns(raw){
@@ -2752,7 +2752,7 @@ function openNewSnagFlow(prefillName){
 }
 
 function downloadProjectPdf(projectId, taskIdsFilter){
-  if(!isAdmin && !isVerifiedStaff) return;
+  if(!isAdmin && !isAuthorizedStaffVerified) return;
   const p=allProjects.find(x=>x.id===projectId);
   if(!p) return;
   let tasks=allProjectTasks.filter(t=>t.projectId===projectId);
@@ -3045,7 +3045,7 @@ function renderProjectList(){
   const list = $("projectList");
   if(!list) return;
   const empty = $("projectEmptyState");
-  const canManageProjects = isAdmin || isVerifiedStaff;
+  const canManageProjects = isAdmin || isAuthorizedStaffVerified;
 
   const projects = allProjects.filter(p=>{
     if(canManageProjects) return true;
@@ -3117,7 +3117,7 @@ function openProject(id){
   $("taskSelectModeBtn").textContent = "Select";
   $("taskSelectModeBtn").classList.remove("btn-navy");
   $("taskSelectAllRow").style.display = "none";
-  $("taskSelectToolbar").style.display = (isAdmin || isVerifiedStaff) ? "flex" : "none";
+  $("taskSelectToolbar").style.display = (isAdmin || isAuthorizedStaffVerified) ? "flex" : "none";
   // Always reopen on the Active view — Archived (approved) tasks are a
   // deliberate extra step to reach, not the default landing view.
   projectTaskViewMode = "active";
@@ -3126,7 +3126,7 @@ function openProject(id){
   $("archiveSearchInput").value = "";
   $("archiveSearchDate").value = "";
   $("archiveSearchRow").style.display = "none";
-  $("projectTaskViewChips").style.display = (isAdmin || isVerifiedStaff) ? "flex" : "none";
+  $("projectTaskViewChips").style.display = (isAdmin || isAuthorizedStaffVerified) ? "flex" : "none";
   $("projectTaskViewChips").querySelectorAll(".chip").forEach(c=>{
     c.classList.toggle("active", c.getAttribute("data-task-view")==="active");
   });
@@ -3204,7 +3204,7 @@ function taskMatchesArchiveSearch(t){
 // date search. Used both for rendering and for "Select all", so selecting
 // all only ever selects what's actually on screen, not the whole project.
 function getVisibleProjectTasks(){
-  const canManageTasks = isAdmin || isVerifiedStaff;
+  const canManageTasks = isAdmin || isAuthorizedStaffVerified;
   const allTasks = allProjectTasks.filter(t=>t.projectId===currentProjectId);
   if(canManageTasks){
     if(projectTaskViewMode === "archived"){
@@ -3218,7 +3218,7 @@ function getVisibleProjectTasks(){
 function renderCurrentProjectTasks(){
   const list = $("projectTasksList");
   if(!list || !currentProjectId) return;
-  const canManageTasks = isAdmin || isVerifiedStaff;
+  const canManageTasks = isAdmin || isAuthorizedStaffVerified;
   const allTasks = allProjectTasks.filter(t=>t.projectId===currentProjectId);
   // Approved tasks move to a separate "Archived" view for admin/verified
   // staff, out of the way of the day-to-day pending/rejected list, with a
@@ -3324,7 +3324,7 @@ function renderCurrentProjectTasks(){
         // created/assigned it and its staff fields are still incomplete.
         taskActionButtons = `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button><button class="btn btn-red reject-project-task" data-task-id="${t.id}">Reject</button>`;
       }
-    } else if(isVerifiedStaff){
+    } else if(isAuthorizedStaffVerified){
       if(t.status === "approved"){
         taskActionButtons = `<button class="btn btn-light revert-project-task" data-task-id="${t.id}">Call back</button>`;
       } else if(t.status === "rejected"){
@@ -3361,15 +3361,15 @@ function renderCurrentProjectTasks(){
   }).join("");
 
   list.querySelectorAll(".approve-project-task").forEach(btn=>btn.addEventListener("click",e=>{
-    e.stopPropagation(); if(!isAdmin && !isVerifiedStaff) return;
+    e.stopPropagation(); if(!isAdmin && !isAuthorizedStaffVerified) return;
     openTaskDecisionNoteModal(btn.getAttribute("data-task-id"), "approve");
   }));
   list.querySelectorAll(".reject-project-task").forEach(btn=>btn.addEventListener("click",e=>{
-    e.stopPropagation(); if(!isAdmin && !isVerifiedStaff) return;
+    e.stopPropagation(); if(!isAdmin && !isAuthorizedStaffVerified) return;
     openTaskDecisionNoteModal(btn.getAttribute("data-task-id"), "reject");
   }));
   list.querySelectorAll(".revert-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
-    e.stopPropagation(); if(!isAdmin && !isVerifiedStaff) return;
+    e.stopPropagation(); if(!isAdmin && !isAuthorizedStaffVerified) return;
     if(!confirm("Move this task back to Pending approval?")) return;
     const id=btn.getAttribute("data-task-id"); btn.disabled=true;
     try{ await updateDoc(doc(db,"projecttasks",id),{status:"pending",approvedBy:null,approvedAt:null,approvedByName:null,rejectedBy:null,rejectedAt:null,rejectedByName:null,rating:null,approvalNote:null,rejectionNote:null}); }
@@ -3912,12 +3912,18 @@ $("workVerifyGoogleBtn").addEventListener("click", async ()=>{
 $("fab").addEventListener("click", async ()=>{
   if(activeTab === "projects"){
     // The same Project Reports + button serves two separate purposes:
-    // 1) Admin / admin-verified staff: assign a task directly, with no extra
-    //    Google verification because they already have elevated access.
-    // 2) Normal users: require the one-time Google identity check, then create
-    //    a normal USER task. This does NOT make them verified staff and does
-    //    NOT require admin approval.
-    if(isAdmin || isVerifiedStaff){
+    // 1) Admin / Authorized Staff (isAuthorizedStaffVerified — on the admin's
+    //    allow-list): assign a task directly, with no extra Google
+    //    verification because they already have elevated access.
+    // 2) Everyone else, including any merely Google-verified account
+    //    (isVerifiedStaff) that isn't on the allow-list: require the
+    //    one-time Google identity check, then create a normal USER task.
+    //    This does NOT grant elevated access and does NOT require admin
+    //    approval. Do not swap this for isVerifiedStaff — that flag is also
+    //    true mid-way through the open, no-approval-needed Progress Report
+    //    flow, and using it here would let an unapproved account straight
+    //    into the admin "Assign Task" form (this was a real bug, now fixed).
+    if(isAdmin || isAuthorizedStaffVerified){
       openProjectTaskProjectSelector("admin");
     }else{
       $("projectTaskVerifyError").textContent = "";
@@ -3931,8 +3937,9 @@ $("fab").addEventListener("click", async ()=>{
     return;
   }
 
-  // Snags tab
-  if(isAdmin || isVerifiedStaff){
+  // Snags tab — same isAuthorizedStaffVerified-only gate as above; opening a
+  // snag is admin/authorized-staff-only per the Firestore rules.
+  if(isAdmin || isAuthorizedStaffVerified){
     openNewSnagFlow("");
     return;
   }
