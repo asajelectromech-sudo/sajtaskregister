@@ -5543,7 +5543,7 @@ function renderPrReportView(){
           ${inProgress.length ? `<div class="meta">In progress: ${inProgress.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
           ${pending.length ? `<div class="meta">Pending: ${pending.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
           ${prReportFilter.has("done") && doneHere.length ? `<div class="meta">Completed: ${doneHere.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
-          ${searchActive ? u.jobs.map(prJobHistoryHtml).join("") : ""}
+          ${u.jobs.filter(j=> searchActive || ((j.status==="submitted" || j.status==="done") && prReportFilter.has(j.status))).map(prJobHistoryHtml).join("")}
         </div>
       </div>`;
   }).join("");
@@ -5771,11 +5771,11 @@ function prDownloadPdf(){
       pdf.text(wrapped, margin+10, y);
       y += lineHeight * wrapped.length;
 
-      // In Progress and Completed jobs also get their full day-by-day
+      // In Progress, Awaiting Approval and Completed jobs also get their full day-by-day
       // history printed underneath — date, who, and the note for each entry
       // — so this doubles as a proper work report for the staff group
       // instead of just a status snapshot.
-      if((j.status==="in_progress" || j.status==="done") && j.logs && j.logs.length){
+      if((j.status==="in_progress" || j.status==="submitted" || j.status==="done") && j.logs && j.logs.length){
         pdf.setFontSize(8);
         const historyEntries = j.logs.slice().reverse(); // newest first, matching the on-screen History list
         historyEntries.forEach(l=>{
