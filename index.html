@@ -4837,7 +4837,7 @@ function renderPrNotifView(){
       extra: `<div class="meta" style="color:var(--red);">${escapeHtml(j.rejectionNote||"")}</div>`
     })) +
     section("Awaiting your approval", awaiting, j=> prNotifJobCard(j, {
-      extra: `<div class="meta">Submitted by ${escapeHtml(j.submittedStaff || j.currentStaff || "")}</div>`
+      extra: `<div class="meta">Submitted by ${escapeHtml(j.submittedStaff || j.currentStaff || "")}${j.submittedBy ? ` (${escapeHtml(j.submittedBy)})` : ""}</div>`
     }));
 
   box.querySelectorAll("[data-notif-job]").forEach(el=>{
@@ -4935,7 +4935,7 @@ function prRenderJobCard(j){
               </div>
               ${j.status==="in_progress" ? `<button class="btn btn-light pr-job-reset" data-id="${j.id}" style="width:100%;margin-top:6px;color:var(--text-muted);">Reset to Pending (opened by accident)</button>` : ""}
             ` : (j.status==="submitted" ? `
-              <div class="detail-row"><b>Submitted by:</b> ${escapeHtml(j.submittedStaff || j.currentStaff || "")}</div>
+              <div class="detail-row"><b>Submitted by:</b> ${escapeHtml(j.submittedStaff || j.currentStaff || "")}${j.submittedBy ? ` <span style="color:var(--text-muted);font-weight:400;">(${escapeHtml(j.submittedBy)})</span>` : ""}</div>
               ${j.submittedNote ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(j.submittedNote)}</div>` : ""}
               ${isAdmin ? `
                 <div class="hint">Waiting on your review.</div>
@@ -4945,7 +4945,7 @@ function prRenderJobCard(j){
                 </div>
               ` : `<div class="hint">Awaiting admin approval.</div>`}
             ` : (j.status==="done" ? `
-              <div class="detail-row"><b>Completed by:</b> ${escapeHtml(j.completedStaff || j.currentStaff || "")}</div>
+              <div class="detail-row"><b>Completed by:</b> ${escapeHtml(j.completedStaff || j.currentStaff || "")}${j.completedBy ? ` <span style="color:var(--text-muted);font-weight:400;">(${escapeHtml(j.completedBy)})</span>` : ""}</div>
               ${j.completedNote ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(j.completedNote)}</div>` : ""}
               ${isAdmin ? `<button class="btn btn-red pr-job-reopen" data-id="${j.id}" style="width:100%;margin-top:6px;">Reopen</button>` : ""}
             ` : `<div class="hint">Sign in with your Google account to update this job.</div>`))}
