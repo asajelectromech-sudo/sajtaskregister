@@ -4607,6 +4607,7 @@ let prJobsEditorPath = null;     // when set (array of node ids), Customize is s
 let prExpandedJobId = null;      // which job card is expanded in the Fill Progress tab
 let prReportSearchTerm = "";     // Completion Report — free-text search across job name, unit, staff and notes; narrows "By item" + the PDF
 let prJobDrafts = {};            // jobId -> {staff, note} — unsaved text typed into a job's form
+let prJobPendingPhoto = {};      // jobId -> compressed photo dataURL, captured but not yet saved with a progress entry
 let prCopyPanelOpen = false;     // whether the "copy jobs to other units" picker is showing in the Jobs editor
 let prJobsSelectedIds = new Set();  // job ids checked in Customize > Jobs — kept in memory (not just the DOM) so a live update from someone else's activity elsewhere doesn't silently wipe selections while checking boxes one by one. Cleared when navigating to a different item's job list.
 let prNodesSelectedIds = new Set(); // same idea, for the Customize > Items (tree) checkboxes. Cleared when navigating to a different tree level.
@@ -4878,6 +4879,27 @@ function renderPrJobsChecklist(){
   prWireJobCards(box);
 }
 
+function prRenderJobPhotoPicker(jobId){
+  const pending = prJobPendingPhoto[jobId];
+  return `
+    <div class="field">
+      <label>Photo (required for this job)</label>
+      ${pending ? `
+        <div style="position:relative;display:inline-block;">
+          <img src="${pending}" style="width:90px;height:90px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block;" />
+          <button type="button" class="btn btn-red pr-job-photo-remove" data-id="${jobId}" style="position:absolute;top:-8px;right:-8px;width:22px;height:22px;padding:0;border-radius:50%;font-size:12px;line-height:1;">&times;</button>
+        </div>
+      ` : `
+        <div style="display:flex;gap:8px;">
+          <button type="button" class="btn btn-light pr-job-photo-camera" data-id="${jobId}" style="flex:1;">📷 Take Photo</button>
+          <button type="button" class="btn btn-light pr-job-photo-gallery" data-id="${jobId}" style="flex:1;">🖼️ Gallery</button>
+        </div>
+        <input type="file" accept="image/*" capture="environment" class="pr-job-photo-camera-input" data-id="${jobId}" style="display:none;" />
+        <input type="file" accept="image/*" class="pr-job-photo-gallery-input" data-id="${jobId}" style="display:none;" />
+      `}
+    </div>`;
+}
+
 function prRenderJobCard(j){
   const expanded = prExpandedJobId === j.id;
   const draft = prJobDrafts[j.id] || { staff: j.currentStaff||"", note: j.currentNote||"" };
@@ -4927,6 +4949,7 @@ function prRenderJobCard(j){
               ${j.completedNote ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(j.completedNote)}</div>` : ""}
               ${isAdmin ? `<button class="btn btn-red pr-job-reopen" data-id="${j.id}" style="width:100%;margin-top:6px;">Reopen</button>` : ""}
             ` : `<div class="hint">Sign in with your Google account to update this job.</div>`))}
+            ${j.photoRequired && j.status!=="done" && (canEdit || isAdmin || isAuthorizedStaffVerified) ? prRenderJobPhotoPicker(j.id) : ""}
             ${(isAdmin || isAuthorizedStaffVerified) && j.status!=="done" ? `<button class="btn btn-red pr-job-admin-close" data-id="${j.id}" style="width:100%;margin-top:8px;">Close job (admin)</button>` : ""}
             ${logs.length ? `
               <div class="section-label" style="margin-top:12px;">History</div>
@@ -4939,10 +4962,11 @@ function prRenderJobCard(j){
 }
 
 function prRenderLogEntry(jobId, l){
-  const label = `${escapeHtml(l.date||"")} &middot; <b>${escapeHtml(l.staffName||"")}</b>${l.completion ? " (Submitted as completed)" : ""}${l.approved ? " (Approved)" : ""}${l.rejected ? " (Rejected)" : ""}${l.adminClosed ? " (Closed by admin)" : ""}${l.note ? " — "+escapeHtml(l.note) : ""}`;
-  if(!isAdmin) return `<div class="detail-row">${label}</div>`;
+  const label = `${escapeHtml(l.date||"")} &middot; <b>${escapeHtml(l.staffName||"")}</b>${l.savedBy ? ` <span style="color:var(--text-muted);font-weight:400;">(${escapeHtml(l.savedBy)})</span>` : ""}${l.completion ? " (Submitted as completed)" : ""}${l.approved ? " (Approved)" : ""}${l.rejected ? " (Rejected)" : ""}${l.adminClosed ? " (Closed by admin)" : ""}${l.note ? " — "+escapeHtml(l.note) : ""}`;
+  const photoHtml = l.photo ? `<div style="margin-top:4px;"><a href="${l.photo}" target="_blank" rel="noopener"><img src="${l.photo}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--border);" /></a></div>` : "";
+  if(!isAdmin) return `<div class="detail-row">${label}${photoHtml}</div>`;
   return `<div class="detail-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-    <span style="flex:1;">${label}</span>
+    <span style="flex:1;">${label}${photoHtml}</span>
     <span style="display:flex;gap:4px;flex-shrink:0;">
       <button class="btn btn-light pr-log-edit" data-job="${jobId}" data-idx="${l._idx}" style="padding:3px 8px;font-size:11px;">Edit</button>
       <button class="btn btn-red pr-log-delete" data-job="${jobId}" data-idx="${l._idx}" style="padding:3px 8px;font-size:11px;">Delete</button>
@@ -4982,6 +5006,32 @@ function prWireJobCards(box){
   box.querySelectorAll(".pr-job-admin-close").forEach(btn=> btn.addEventListener("click", ()=> prAdminCloseJob(btn.getAttribute("data-id"))));
   box.querySelectorAll(".pr-log-edit").forEach(btn=> btn.addEventListener("click", ()=> prEditLog(btn.getAttribute("data-job"), parseInt(btn.getAttribute("data-idx"),10))));
   box.querySelectorAll(".pr-log-delete").forEach(btn=> btn.addEventListener("click", ()=> prDeleteLog(btn.getAttribute("data-job"), parseInt(btn.getAttribute("data-idx"),10))));
+  box.querySelectorAll(".pr-job-photo-camera").forEach(btn=> btn.addEventListener("click", ()=>{
+    const id = btn.getAttribute("data-id");
+    const input = box.querySelector(`.pr-job-photo-camera-input[data-id="${id}"]`);
+    if(input) input.click();
+  }));
+  box.querySelectorAll(".pr-job-photo-gallery").forEach(btn=> btn.addEventListener("click", ()=>{
+    const id = btn.getAttribute("data-id");
+    const input = box.querySelector(`.pr-job-photo-gallery-input[data-id="${id}"]`);
+    if(input) input.click();
+  }));
+  box.querySelectorAll(".pr-job-photo-camera-input, .pr-job-photo-gallery-input").forEach(inp=>{
+    inp.addEventListener("change", async ()=>{
+      const id = inp.getAttribute("data-id");
+      const file = inp.files && inp.files[0];
+      inp.value = "";
+      if(!file) return;
+      try{
+        prJobPendingPhoto[id] = await prCompressImageFile(file);
+        renderPrJobsChecklist();
+      }catch(err){ console.error(err); alert("Could not process that photo. Please try again."); }
+    });
+  });
+  box.querySelectorAll(".pr-job-photo-remove").forEach(btn=> btn.addEventListener("click", ()=>{
+    delete prJobPendingPhoto[btn.getAttribute("data-id")];
+    renderPrJobsChecklist();
+  }));
 }
 
 function prReadDraft(jobId){
@@ -5020,15 +5070,49 @@ async function prAssignJob(jobId){
   }catch(err){ console.error(err); alert("Could not assign. Check your connection and try again."); }
 }
 
+// Reads a photo (from the camera or gallery), scales it down to a max
+// dimension of 800px and re-encodes it as JPEG at reduced quality — this is
+// what keeps a photo attached to a job's history down to roughly tens of KB
+// instead of the multi-MB a raw phone photo would be, since these live
+// directly inside the progressJobs document alongside potentially many
+// other log entries.
+function prCompressImageFile(file, maxDim=800, quality=0.55){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onload = ()=>{
+        const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.max(1, Math.round(img.width * scale));
+        canvas.height = Math.max(1, Math.round(img.height * scale));
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.onerror = ()=> reject(new Error("Could not read that image."));
+      img.src = reader.result;
+    };
+    reader.onerror = ()=> reject(new Error("Could not read that file."));
+    reader.readAsDataURL(file);
+  });
+}
+
 async function prSaveProgress(jobId){
+  const job = prJobs.find(j=> j.id===jobId);
   const { staff, note } = prReadDraft(jobId);
   if(!staff || !note){ alert("Please enter both a staff name and a note before saving progress."); return; }
+  if(job && job.photoRequired && !prJobPendingPhoto[jobId]){
+    alert("This job requires a photo — take one or choose one from your gallery before saving progress.");
+    return;
+  }
   const entry = {
     date: new Date().toISOString().slice(0,10),
     staffName: staff, note,
     savedBy: currentUser ? (currentUser.email||null) : null,
     savedAt: Timestamp.now()
   };
+  if(job && job.photoRequired && prJobPendingPhoto[jobId]) entry.photo = prJobPendingPhoto[jobId];
   try{
     await updateDoc(doc(db,"progressJobs",jobId), {
       status: "in_progress",
@@ -5037,12 +5121,18 @@ async function prSaveProgress(jobId){
       updatedAt: serverTimestamp()
     });
     delete prJobDrafts[jobId];
+    delete prJobPendingPhoto[jobId];
   }catch(err){ console.error(err); alert("Could not save. Check your connection and try again."); }
 }
 
 async function prCompleteJob(jobId){
+  const job = prJobs.find(j=> j.id===jobId);
   const { staff, note } = prReadDraft(jobId);
   if(!staff || !note){ alert("Please enter both a staff name and a note to submit this as completed."); return; }
+  if(job && job.photoRequired && !prJobPendingPhoto[jobId]){
+    alert("This job requires a photo — take one or choose one from your gallery before submitting.");
+    return;
+  }
   const entry = {
     date: new Date().toISOString().slice(0,10),
     staffName: staff, note,
@@ -5050,6 +5140,7 @@ async function prCompleteJob(jobId){
     savedAt: Timestamp.now(),
     completion: true
   };
+  if(job && job.photoRequired && prJobPendingPhoto[jobId]) entry.photo = prJobPendingPhoto[jobId];
   try{
     // Submitting doesn't close the job by itself — it goes to "submitted"
     // and waits for admin approval (Approve -> done, Reject -> back to
@@ -5065,6 +5156,7 @@ async function prCompleteJob(jobId){
       updatedAt: serverTimestamp()
     });
     delete prJobDrafts[jobId];
+    delete prJobPendingPhoto[jobId];
   }catch(err){ console.error(err); alert("Could not save. Check your connection and try again."); }
 }
 
@@ -5103,7 +5195,14 @@ async function prAdminCloseJob(jobId){
   if(!isAdmin && !isAuthorizedStaffVerified) return;
   const job = prJobs.find(j=> j.id===jobId);
   if(!job) return;
-  if(!confirm(`Close "${job.jobLabel}" as done? This skips staff name/note and marks it as closed by admin.`)) return;
+  if(!confirm(`Close "${job.jobLabel}" as done? This skips staff name/note${job.photoRequired ? "/photo" : ""} and marks it as closed by admin.`)) return;
+  // "Admin" alone doesn't say WHO — and this button is also available to
+  // Authorized Staff, not just admin — so completedStaff (the "Completed
+  // by" summary line on the card) carries the actual signed-in email. The
+  // log entry itself stays plain "Admin"; savedBy already carries the email
+  // and prRenderLogEntry/prJobHistoryHtml show it generically for every
+  // entry type, not just this one.
+  const closerName = currentUser && currentUser.email ? `Admin (${currentUser.email})` : "Admin";
   const entry = {
     date: new Date().toISOString().slice(0,10),
     staffName: "Admin", note: "",
@@ -5111,10 +5210,11 @@ async function prAdminCloseJob(jobId){
     savedAt: Timestamp.now(),
     adminClosed: true
   };
+  if(job.photoRequired && prJobPendingPhoto[jobId]) entry.photo = prJobPendingPhoto[jobId];
   try{
     await updateDoc(doc(db,"progressJobs",jobId), {
       status: "done",
-      completedStaff: "Admin", completedNote: "Closed by admin",
+      completedStaff: closerName, completedNote: "Closed by admin",
       completedAt: serverTimestamp(),
       completedBy: currentUser ? (currentUser.email||null) : null,
       submittedStaff: null, submittedNote: null, submittedAt: null, submittedBy: null,
@@ -5122,6 +5222,7 @@ async function prAdminCloseJob(jobId){
       logs: arrayUnion(entry),
       updatedAt: serverTimestamp()
     });
+    delete prJobPendingPhoto[jobId];
   }catch(err){ console.error(err); alert("Could not close job. Check your connection and try again."); }
 }
 
@@ -5131,8 +5232,9 @@ async function prRejectJob(jobId){
   if(note === null) return;
   const entry = {
     date: new Date().toISOString().slice(0,10),
-    staffName: currentUser ? (currentUser.email||"Admin") : "Admin",
+    staffName: "Admin",
     note: note.trim() || "Rejected — needs rework",
+    savedBy: currentUser ? (currentUser.email||null) : null,
     savedAt: Timestamp.now(),
     rejected: true
   };
@@ -5318,13 +5420,14 @@ function prJobHistoryHtml(j){
   if(!Array.isArray(j.logs) || !j.logs.length) return "";
   const entries = j.logs.slice().reverse(); // newest first, matching the History list elsewhere
   const lines = entries.map(l=>{
-    let line = `${l.date||""} — ${l.staffName||""}`;
+    let line = `${l.date||""} — ${l.staffName||""}${l.savedBy ? ` (${l.savedBy})` : ""}`;
     if(l.completion) line += " (Submitted as completed)";
     if(l.approved) line += " (Approved)";
     if(l.rejected) line += " (Rejected)";
     if(l.adminClosed) line += " (Closed by admin)";
     if(l.note) line += `: ${l.note}`;
-    return `<div class="meta" style="padding-left:12px;">${escapeHtml(line)}</div>`;
+    const photoHtml = l.photo ? `<div style="padding-left:12px;margin:2px 0 4px;"><a href="${l.photo}" target="_blank" rel="noopener"><img src="${l.photo}" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--border);" /></a></div>` : "";
+    return `<div class="meta" style="padding-left:12px;">${escapeHtml(line)}</div>${photoHtml}`;
   }).join("");
   return `<div class="meta" style="margin-top:4px;"><b>${escapeHtml(j.jobLabel||"")} history:</b></div>${lines}`;
 }
@@ -5997,9 +6100,10 @@ function prOpenJobsEditor(path){
   const jobRows = unitJobs.map(j=> `
     <div class="card" style="cursor:default;">
       <div class="card-body">
-        <div style="display:flex;gap:8px;align-items:center;">
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
           <input type="checkbox" class="pr-job-copy-check" data-id="${j.id}" ${prJobsSelectedIds.has(j.id) ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" />
           <span style="flex:1;">${escapeHtml(j.jobLabel)}</span>
+          <button type="button" class="btn btn-light pr-job-photo-toggle" data-id="${j.id}" title="Require a photo when staff save progress on this job" style="padding:4px 10px;font-size:11px;flex-shrink:0;${j.photoRequired ? "background:var(--blue-bg);color:var(--blue);font-weight:700;" : ""}">${j.photoRequired ? "📷 Photo required" : "📷 Add photo requirement"}</button>
           ${prStatusBadge(j.status)}
         </div>
       </div>
@@ -6059,6 +6163,22 @@ function prOpenJobsEditor(path){
       if(cb.checked) prJobsSelectedIds.add(id); else prJobsSelectedIds.delete(id);
     });
   });
+  box.querySelectorAll(".pr-job-photo-toggle").forEach(btn=>{
+    btn.addEventListener("click", async ()=>{
+      if(!isAdmin) return;
+      const id = btn.getAttribute("data-id");
+      const job = unitJobs.find(j=> j.id===id);
+      if(!job) return;
+      btn.disabled = true;
+      try{
+        await updateDoc(doc(db,"progressJobs",id), { photoRequired: !job.photoRequired, updatedAt: serverTimestamp() });
+      }catch(err){
+        console.error(err);
+        alert("Could not update the photo setting. Check your connection and try again.");
+        btn.disabled = false;
+      }
+    });
+  });
   const deleteSelectedJobsBtn = document.getElementById("prDeleteSelectedJobsBtn");
   if(deleteSelectedJobsBtn){
     deleteSelectedJobsBtn.addEventListener("click", async ()=>{
@@ -6089,6 +6209,7 @@ function prOpenJobsEditor(path){
           unitPath, unitLabel: labelParts.join(" / "),
           jobLabel: name.trim(), status: "pending",
           currentStaff: null, currentNote: null,
+          photoRequired: false,
           logs: [],
           completedAt: null, completedBy: null, completedStaff: null, completedNote: null,
           createdAt: serverTimestamp(), createdBy: currentUser ? (currentUser.email||null) : null
@@ -6133,6 +6254,7 @@ function prOpenJobsEditor(path){
               unitPath: targetUnitPath, unitLabel: targetLabel,
               jobLabel: j.jobLabel, status: "pending",
               currentStaff: null, currentNote: null,
+              photoRequired: j.photoRequired || false,
               logs: [],
               completedAt: null, completedBy: null, completedStaff: null, completedNote: null,
               createdAt: serverTimestamp(), createdBy: currentUser ? (currentUser.email||null) : null
