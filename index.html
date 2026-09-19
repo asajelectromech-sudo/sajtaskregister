@@ -5167,10 +5167,25 @@ async function prEditLog(jobId, idx){
   if(staff === null) return;
   const note = prompt("Note:", entry.note || "");
   if(note === null) return;
+  const newStaff = staff.trim(), newNote = note.trim();
   const logs = job.logs.slice();
-  logs[idx] = { ...entry, staffName: staff.trim(), note: note.trim() };
+  logs[idx] = { ...entry, staffName: newStaff, note: newNote };
+  const updates = { logs, updatedAt: serverTimestamp() };
+  // Same stale-field issue as prDeleteLog below: if this entry's old text is
+  // exactly what's still sitting in currentStaff/currentNote (or submitted/
+  // completed), that field needs the edit applied too, or the old text keeps
+  // showing up in search and on the job card after the entry itself changed.
+  if(entry.staffName===job.currentStaff && entry.note===job.currentNote){
+    updates.currentStaff = newStaff; updates.currentNote = newNote;
+  }
+  if(entry.staffName===job.submittedStaff && entry.note===job.submittedNote){
+    updates.submittedStaff = newStaff; updates.submittedNote = newNote;
+  }
+  if(entry.staffName===job.completedStaff && entry.note===job.completedNote){
+    updates.completedStaff = newStaff; updates.completedNote = newNote;
+  }
   try{
-    await updateDoc(doc(db,"progressJobs",jobId), { logs, updatedAt: serverTimestamp() });
+    await updateDoc(doc(db,"progressJobs",jobId), updates);
   }catch(err){ console.error(err); alert("Could not update entry. Check your connection and try again."); }
 }
 
@@ -5180,9 +5195,29 @@ async function prDeleteLog(jobId, idx){
   const job = prJobs.find(j=> j.id===jobId);
   if(!job || !job.logs) return;
   const logs = job.logs.slice();
+  const removed = logs[idx];
   logs.splice(idx,1);
+  const updates = { logs, updatedAt: serverTimestamp() };
+  // currentStaff/currentNote, submittedStaff/submittedNote, and
+  // completedStaff/completedNote are separate top-level fields, written
+  // alongside a history entry but never cleaned up when that entry is
+  // deleted — so a deleted line could keep showing up in search (and in the
+  // "current" status display) via whichever of these still held its text.
+  // If the entry being deleted is exactly what's still sitting in one of
+  // those fields, clear that field too.
+  if(removed){
+    if(removed.staffName===job.currentStaff && removed.note===job.currentNote){
+      updates.currentStaff = null; updates.currentNote = null;
+    }
+    if(removed.staffName===job.submittedStaff && removed.note===job.submittedNote){
+      updates.submittedStaff = null; updates.submittedNote = null;
+    }
+    if(removed.staffName===job.completedStaff && removed.note===job.completedNote){
+      updates.completedStaff = null; updates.completedNote = null;
+    }
+  }
   try{
-    await updateDoc(doc(db,"progressJobs",jobId), { logs, updatedAt: serverTimestamp() });
+    await updateDoc(doc(db,"progressJobs",jobId), updates);
   }catch(err){ console.error(err); alert("Could not delete entry. Check your connection and try again."); }
 }
 
@@ -5414,14 +5449,29 @@ function renderPrReportView(){
   // Tapping a "By item" card jumps straight to that item in Fill Progress —
   // same drill-down the tree browser itself produces — so admin/staff can
   // go from "what's still pending here" straight into acting on it, instead
-  // of having to re-navigate the tree by hand.
+  // of having to re-navigate the tree by hand. When a search is active, the
+  // unit's jobs here are already exactly the ones that matched (byLoc was
+  // built from the search-filtered list), so jump straight to — and expand
+  // — the first matching job instead of landing on the unit with the whole
+  // checklist collapsed.
   box.querySelectorAll(".pr-report-item-card").forEach(card=>{
     card.addEventListener("click", ()=>{
       const path = card.getAttribute("data-report-item-path");
       prSelectedPath = path ? path.split(">") : [];
-      prExpandedJobId = null;
+      const unitJobs = (byLoc[path] && byLoc[path].jobs) || [];
+      const matchedJob = searchActive ? unitJobs[0] : null;
+      prExpandedJobId = matchedJob ? matchedJob.id : null;
       prSetActiveTab("fill");
       renderPrFillView();
+      if(matchedJob){
+        // The unit can have a long checklist (a dozen-plus jobs) — scroll
+        // the matched one into view instead of leaving the admin to hunt
+        // for it themselves.
+        setTimeout(()=>{
+          const el = document.querySelector(`[data-job-toggle="${matchedJob.id}"]`);
+          if(el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }, 50);
+      }
     });
   });
 }
