@@ -5822,16 +5822,19 @@ function prDownloadPdf(){
 // searching the job name itself.
 function prJobMatchesSearch(j, term){
   if(!term) return true;
+  // Split on commas AND/OR whitespace — either way of separating words works,
+  // and a job matches if it hits ANY one of the typed terms (OR logic).
+  const terms = term.split(/[,\s]+/).map(t=> t.trim()).filter(Boolean);
+  if(!terms.length) return true;
   const fields = [
     j.jobLabel, j.unitLabel, j.unitPath,
     j.assignedStaff, j.currentStaff, j.submittedStaff, j.completedStaff,
     j.currentNote, j.submittedNote, j.completedNote, j.rejectionNote
   ];
-  if(fields.some(v=> v && String(v).toLowerCase().includes(term))) return true;
-  if(Array.isArray(j.logs) && j.logs.some(l=> [l.staffName, l.note].some(v=> v && String(v).toLowerCase().includes(term)))) return true;
-  return false;
+  const logFields = Array.isArray(j.logs) ? j.logs.flatMap(l=> [l.staffName, l.note]) : [];
+  const haystacks = [...fields, ...logFields].filter(Boolean).map(v=> String(v).toLowerCase());
+  return terms.some(t=> haystacks.some(h=> h.includes(t)));
 }
-
 // ---------- CUSTOMIZE (admin only) — free-form tree browser ----------
 $("prCustomizeBtn").addEventListener("click", ()=>{
   if(!isAdmin) return;
