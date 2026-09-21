@@ -239,13 +239,13 @@
   </div>
 </div>
 
-<!-- QUICK ADD TASK: opened by the Project Reports + button for every signed-in user,
-     including anonymous users. The user first chooses an available project. -->
+<!-- PROJECT REPORT + PROJECT SELECTOR: admin/admin-approved staff can assign
+     tasks; normal users use this flow only for Progress Report. -->
 <div class="modal-overlay" id="projectTaskProjectSelectModal">
   <div class="modal">
     <button class="close-x" data-close="projectTaskProjectSelectModal">&times;</button>
     <h2>Add Task to Project</h2>
-    <div class="hint">Select the project where you want to add the task.</div>
+    <div class="hint">Select the project you want to open.</div>
     <div id="projectTaskProjectSelectList" style="margin-top:12px;"></div>
     <div class="error-text" id="projectTaskProjectSelectError"></div>
     <div class="modal-actions">
@@ -598,7 +598,7 @@
   <div class="modal">
     <button class="close-x" data-close="projectTaskVerifyModal">&times;</button>
     <h2>Verify your Google account</h2>
-    <div class="hint">Sign in with Google before adding a task to a project. This only confirms that you are a real user. No admin approval is needed, and this does not give you admin or verified-staff access.</div>
+    <div class="hint">Sign in with Google before opening a Project Progress Report. This only confirms that you are a real user. No admin approval is needed, and this does not give you admin or verified-staff access.</div>
     <div class="error-text" id="projectTaskVerifyError"></div>
     <div class="modal-actions">
       <button class="btn btn-primary" id="projectTaskVerifyGoogleBtn" style="width:100%;">Continue with Google</button>
@@ -654,6 +654,27 @@
     </div>
     <button class="btn btn-red" id="deleteAllStaffLoginsBtn" style="width:100%;margin-bottom:10px;">Delete all login history</button>
     <div id="staffLoginLogList"></div>
+  </div>
+</div>
+
+<!-- STAFF PROJECT ACCESS MODAL (admin only) -->
+<div class="modal-overlay" id="staffProjectAccessModal">
+  <div class="modal">
+    <button class="close-x" data-close="staffProjectAccessModal">&times;</button>
+    <h2>Project Access</h2>
+    <div class="hint">Choose which Project Reports this verified staff member can access. They will only see the selected projects on the user page.</div>
+    <div class="section-label" style="margin-top:14px;">Staff email</div>
+    <div id="staffProjectAccessEmail" style="font-weight:700;"></div>
+    <div class="toolbar" style="margin-top:10px;">
+      <button class="btn btn-light" id="staffProjectSelectAllBtn">Select all</button>
+      <button class="btn btn-light" id="staffProjectClearAllBtn">Clear all</button>
+    </div>
+    <div id="staffProjectAccessList"></div>
+    <div class="error-text" id="staffProjectAccessError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" data-close="staffProjectAccessModal">Cancel</button>
+      <button class="btn btn-primary" id="saveStaffProjectAccessBtn">Save project access</button>
+    </div>
   </div>
 </div>
 
@@ -773,6 +794,7 @@ let currentUser = null;
 let isAdmin = false;
 let isVerifiedStaff = false; // signed in with a real, non-anonymous, non-admin email — this can ALSO be true for an unapproved Google account mid-way through the Progress Report "Continue with Google" flow (that flow intentionally skips the authorizedStaff check), so don't use this alone to gate anything beyond what any signed-in Google account should get.
 let isAuthorizedStaffVerified = false; // narrower: true only once we've confirmed THIS exact email is on the admin's authorizedStaff allow-list (mirrors the isAuthorizedStaff() Firestore rule). Used for the couple of Progress Report actions the admin wants open to admin-approved staff specifically (assigning a job, downloading the PDF) but not to just any Google account that's only there to fill in progress.
+let authorizedStaffProjectIds = []; // project IDs the admin has explicitly assigned to the currently signed-in verified staff member
 let loggedThisSession = false; // guards against recording more than one staffLogins entry per page load
 let authorizedStaffUnsub = null; // live listener on the current user's authorizedStaff doc — kept running for the rest of the session (not just checked once at sign-in) so removing someone from the allow-list takes effect in any tab they still have open, without needing a reload or sign-out
 let allSnags = [];
@@ -814,11 +836,9 @@ let editingProjectId = null;
 let editingProjectTaskId = null;
 let currentTaskFormColumns = []; // columns rendered in the currently-open task form (admin vs staff fields)
 let currentTaskFormMode = "admin"; // which form is currently open: "admin" | "staff" | "staffCreate"
-// True while a normal user is inside the Project Reports "+" quick flow
-// after the one-time Google identity check (no authorizedStaff approval
-// needed) — kept signed in just long enough to use Add Task and/or Progress
-// Report, then signed back out to anonymous once they leave that flow (see
-// maybeSignOutAfterFabFlow below), same as before this flag existed.
+// True while a normal user is inside the Project Reports "+" Progress Report
+// flow after the one-time Google identity check. The account is signed back
+// out to anonymous once they leave that flow (see maybeSignOutAfterFabFlow).
 let pendingFabSignOut = false;
 function maybeSignOutAfterFabFlow(){
   if(!pendingFabSignOut) return;
@@ -987,9 +1007,17 @@ onAuthStateChanged(auth, async (user)=>{
     try{
       const staffSnap = await getDoc(doc(db, "authorizedStaff", user.email.toLowerCase()));
       isAuthorizedStaffVerified = staffSnap.exists();
-    }catch(e){ console.error("Could not check authorizedStaff status", e); isAuthorizedStaffVerified = false; }
+      authorizedStaffProjectIds = isAuthorizedStaffVerified && Array.isArray(staffSnap.data().projectIds)
+        ? staffSnap.data().projectIds.map(String)
+        : [];
+    }catch(e){
+      console.error("Could not check authorizedStaff status", e);
+      isAuthorizedStaffVerified = false;
+      authorizedStaffProjectIds = [];
+    }
   } else {
     isAuthorizedStaffVerified = false;
+    authorizedStaffProjectIds = [];
   }
 
   // Beyond that one-time check, keep watching this exact email's
@@ -1002,13 +1030,24 @@ onAuthStateChanged(auth, async (user)=>{
   if(isVerifiedStaff){
     authorizedStaffUnsub = onSnapshot(doc(db, "authorizedStaff", user.email.toLowerCase()), (snap)=>{
       const nowAuthorized = snap.exists();
-      if(nowAuthorized === isAuthorizedStaffVerified) return; // no real change — e.g. this listener's own first snapshot
+      const nextProjectIds = nowAuthorized && Array.isArray(snap.data().projectIds)
+        ? snap.data().projectIds.map(String)
+        : [];
+      const accessChanged = nowAuthorized !== isAuthorizedStaffVerified
+        || JSON.stringify(nextProjectIds) !== JSON.stringify(authorizedStaffProjectIds);
+      if(!accessChanged) return; // no real change — e.g. this listener's own first snapshot
       isAuthorizedStaffVerified = nowAuthorized;
+      authorizedStaffProjectIds = nextProjectIds;
       renderAuthBox();
       updateFabVisibility();
       if(activeTab === "projects"){
         renderProjectList();
-        if(currentProjectId) renderCurrentProjectTasks();
+        if(currentProjectId && !canAccessProject(currentProjectId)){
+          hideModal("projectTasksModal");
+          currentProjectId = null;
+        } else if(currentProjectId){
+          renderCurrentProjectTasks();
+        }
       }
     }, (err)=> console.error("authorizedStaff live check failed", err));
   }
@@ -1460,6 +1499,68 @@ $("restoreConfirmBtn").addEventListener("click", async ()=>{
   $("restoreConfirmBtn").disabled = false;
 });
 
+// ---------- STAFF PROJECT ACCESS ADMIN PANEL ----------
+let staffProjectAccessEmailValue = "";
+
+async function openStaffProjectAccessModal(email){
+  if(!isAdmin) return;
+  staffProjectAccessEmailValue = String(email || "").toLowerCase();
+  $("staffProjectAccessEmail").textContent = staffProjectAccessEmailValue;
+  $("staffProjectAccessError").textContent = "";
+  $("staffProjectAccessList").innerHTML = `<div class="hint">Loading projects…</div>`;
+  showModal("staffProjectAccessModal");
+  try{
+    const staffSnap = await getDoc(doc(db, "authorizedStaff", staffProjectAccessEmailValue));
+    if(!staffSnap.exists()){
+      $("staffProjectAccessError").textContent = "This staff account no longer exists in the authorized list.";
+      return;
+    }
+    const assigned = Array.isArray(staffSnap.data().projectIds) ? staffSnap.data().projectIds.map(String) : [];
+    const projects = allProjects.slice().sort((a,b)=> String(a.name||"").localeCompare(String(b.name||"")));
+    if(!projects.length){
+      $("staffProjectAccessList").innerHTML = `<div class="hint">No projects have been created yet.</div>`;
+      return;
+    }
+    $("staffProjectAccessList").innerHTML = projects.map(p=>`
+      <label style="display:flex;align-items:center;gap:9px;padding:9px 4px;border-bottom:1px solid var(--border);cursor:pointer;">
+        <input type="checkbox" class="staff-project-check" data-project-id="${escapeHtml(p.id)}" ${assigned.includes(String(p.id)) ? "checked" : ""} style="width:18px;height:18px;flex-shrink:0;" />
+        <span>${escapeHtml(p.name||"Project")}</span>
+      </label>
+    `).join("");
+  }catch(err){
+    console.error(err);
+    $("staffProjectAccessError").textContent = "Could not load project access. Check your connection and try again.";
+  }
+}
+
+$("staffProjectSelectAllBtn").addEventListener("click", ()=>{
+  document.querySelectorAll("#staffProjectAccessList .staff-project-check").forEach(cb=> cb.checked=true);
+});
+$("staffProjectClearAllBtn").addEventListener("click", ()=>{
+  document.querySelectorAll("#staffProjectAccessList .staff-project-check").forEach(cb=> cb.checked=false);
+});
+$("saveStaffProjectAccessBtn").addEventListener("click", async ()=>{
+  if(!isAdmin || !staffProjectAccessEmailValue) return;
+  const selected = Array.from(document.querySelectorAll("#staffProjectAccessList .staff-project-check:checked"))
+    .map(cb=> cb.getAttribute("data-project-id"))
+    .filter(Boolean);
+  $("staffProjectAccessError").textContent = "";
+  $("saveStaffProjectAccessBtn").disabled = true;
+  try{
+    await setDoc(doc(db, "authorizedStaff", staffProjectAccessEmailValue), {
+      projectIds: selected,
+      projectAccessUpdatedAt: serverTimestamp(),
+      projectAccessUpdatedBy: currentUser ? (currentUser.email||null) : null
+    }, {merge:true});
+    hideModal("staffProjectAccessModal");
+    renderStaffEmailList();
+  }catch(err){
+    console.error(err);
+    $("staffProjectAccessError").textContent = "Could not save project access. Check your connection and try again.";
+  }
+  $("saveStaffProjectAccessBtn").disabled = false;
+});
+
 // ---------- STAFF ACCESS ADMIN PANEL (admin only) ----------
 async function openStaffAccessAdminModal(){
   if(!isAdmin) return;
@@ -1501,7 +1602,7 @@ async function renderStaffAccessRequests(){
       btn.disabled = true;
       try{
         await setDoc(doc(db, "authorizedStaff", emailId), {
-          email: emailId, addedBy: currentUser.email || null, addedAt: serverTimestamp()
+          email: emailId, addedBy: currentUser.email || null, addedAt: serverTimestamp(), projectIds: []
         });
         await deleteDoc(doc(db, "staffAccessRequests", emailId));
         renderStaffAccessRequests();
@@ -1542,12 +1643,23 @@ async function renderStaffEmailList(){
     const docs = [];
     snap.forEach(d=> docs.push({ id:d.id, ...d.data() }));
     docs.sort((a,b)=> String(a.email||a.id).localeCompare(String(b.email||b.id)));
-    box.innerHTML = docs.map(d=>`
-      <div class="detail-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-        <span>${escapeHtml(d.email||d.id)}</span>
-        <button class="btn btn-red remove-staff-email" data-email-id="${escapeHtml(d.id)}" style="padding:4px 10px;font-size:12px;flex-shrink:0;">Remove</button>
-      </div>
-    `).join("");
+    box.innerHTML = docs.map(d=>{
+      const projectIds = Array.isArray(d.projectIds) ? d.projectIds.map(String) : [];
+      const projectLabel = Array.isArray(d.projectIds)
+        ? `${projectIds.length} project${projectIds.length===1 ? "" : "s"} assigned`
+        : "Project access not set";
+      return `
+      <div class="detail-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+        <span>${escapeHtml(d.email||d.id)} <span class="meta">— ${projectLabel}</span></span>
+        <span style="display:flex;gap:6px;flex-shrink:0;">
+          <button class="btn btn-light manage-staff-projects" data-email-id="${escapeHtml(d.id)}" style="padding:4px 10px;font-size:12px;">Projects</button>
+          <button class="btn btn-red remove-staff-email" data-email-id="${escapeHtml(d.id)}" style="padding:4px 10px;font-size:12px;">Remove</button>
+        </span>
+      </div>`;
+    }).join("");
+    box.querySelectorAll(".manage-staff-projects").forEach(btn=>btn.addEventListener("click", ()=>{
+      openStaffProjectAccessModal(btn.getAttribute("data-email-id"));
+    }));
     box.querySelectorAll(".remove-staff-email").forEach(btn=>btn.addEventListener("click", async ()=>{
       if(!(await confirmDelete("Remove this email? They'll need to be re-added before they can verify again."))) return;
       btn.disabled = true;
@@ -1576,7 +1688,7 @@ $("addStaffEmailBtn").addEventListener("click", async ()=>{
   $("addStaffEmailBtn").disabled = true;
   try{
     await setDoc(doc(db, "authorizedStaff", email), {
-      email, addedBy: currentUser.email || null, addedAt: serverTimestamp()
+      email, addedBy: currentUser.email || null, addedAt: serverTimestamp(), projectIds: []
     });
     $("newStaffEmailInput").value = "";
     renderStaffEmailList();
@@ -2880,8 +2992,23 @@ function startProjectListeners(){
   }, err=>console.error("Progress assignment listener:", err));
 }
 
+function canAccessProject(projectId){
+  if(!projectId) return false;
+  if(isAdmin) return true;
+  // Ordinary/Google-verified users who are NOT admin-approved staff can still
+  // use the Progress Report flow as before. Only admin-approved staff are
+  // restricted to the projects explicitly assigned by the admin.
+  if(isAuthorizedStaffVerified) return authorizedStaffProjectIds.includes(String(projectId));
+  return true;
+}
+
 function visibleProjects(){
   // Projects themselves are not approved. Approval happens per task.
+  // Admin sees every project. Admin-approved staff see only the projects
+  // explicitly assigned to their email. Other signed-in users keep the
+  // existing project visibility for the Progress Report flow.
+  if(isAdmin) return allProjects;
+  if(isAuthorizedStaffVerified) return allProjects.filter(p=> authorizedStaffProjectIds.includes(String(p.id)));
   return allProjects;
 }
 
@@ -2892,6 +3019,7 @@ function renderTaskNotificationsBanner(){
 
   const items=[];
   allProjectTasks.forEach(t=>{
+    if(!canAccessProject(t.projectId)) return;
     if(t.status === "approved") return;
     const taskNameCol=projectColumns.find(c=>c.key==="taskName");
     const legacyTaskCol=projectColumns.find(c=>c.key==="task");
@@ -2955,10 +3083,11 @@ function renderProgressApprovalBanner(){
     if(!byProject[j.projectId]) byProject[j.projectId] = 0;
     byProject[j.projectId]++;
   });
-  const items = Object.keys(byProject).map(pid=>{
+  const items = Object.keys(byProject).filter(pid=> canAccessProject(pid)).map(pid=>{
     const project = allProjects.find(p=>p.id===pid);
     return { projectId: pid, projectName: project ? (project.name||"Project") : "Project", count: byProject[pid] };
   });
+  if(!items.length){ box.style.display="none"; box.innerHTML=""; return; }
 
   box.style.display="block";
   box.innerHTML = `
@@ -2995,7 +3124,7 @@ function renderProgressAssignedBanner(){
   if(!box) return;
   if(isAdmin || !allAssignedProgressJobs.length){ box.style.display="none"; box.innerHTML=""; return; }
 
-  const items = allAssignedProgressJobs.map(j=>{
+  const items = allAssignedProgressJobs.filter(j=> canAccessProject(j.projectId)).map(j=>{
     const project = allProjects.find(p=>p.id===j.projectId);
     return {
       projectId: j.projectId,
@@ -3005,6 +3134,7 @@ function renderProgressAssignedBanner(){
       assignedStaff: j.assignedStaff
     };
   });
+  if(!items.length){ box.style.display="none"; box.innerHTML=""; return; }
 
   box.style.display="block";
   box.innerHTML = `
@@ -3039,6 +3169,7 @@ function renderProgressAssignedBanner(){
 function renderProjectTasksAssignedBanner(){
   const box = $("projectTasksAssignedBanner");
   if(!box || !currentProjectId) return;
+  if(!canAccessProject(currentProjectId)) { box.style.display="none"; box.innerHTML=""; return; }
   const count = prAssignedCountForProject(currentProjectId);
   if(!count){ box.style.display="none"; box.innerHTML=""; return; }
   box.style.display="block";
@@ -3070,7 +3201,7 @@ function renderProjectList(){
   const empty = $("projectEmptyState");
   const canManageProjects = isAdmin || isAuthorizedStaffVerified;
 
-  const projects = allProjects.filter(p=>{
+  const projects = visibleProjects().filter(p=>{
     if(canManageProjects) return true;
     const tasks = allProjectTasks.filter(t=>t.projectId===p.id);
     // A project remains visible to staff while it has at least one task that
@@ -3080,7 +3211,9 @@ function renderProjectList(){
 
   if(projects.length === 0){
     list.innerHTML="";
-    empty.textContent = "No projects with open tasks yet.";
+    empty.textContent = isAuthorizedStaffVerified
+      ? "No projects have been assigned to your account yet."
+      : "No projects with open tasks yet.";
     empty.style.display="block";
     return;
   }
@@ -3131,6 +3264,10 @@ function renderProjectList(){
 function openProject(id){
   const p = allProjects.find(x=>x.id===id);
   if(!p) return;
+  if(!canAccessProject(id)){
+    alert("This project has not been assigned to your account by the admin.");
+    return;
+  }
   currentProjectId = id;
   currentProjectName = p.name || "Project";
   $("projectTasksTitle").textContent = currentProjectName;
@@ -3709,20 +3846,22 @@ function openFillJobDetails(id){
   showModal("newProjectTaskModal");
 }
 
-function openProjectTaskProjectSelector(createMode="staffCreate"){
+function openProjectTaskProjectSelector(createMode="progressOnly"){
   if(!currentUser){
     $("projectTaskProjectSelectError").textContent = "Please wait for the app to connect.";
     showModal("projectTaskProjectSelectModal");
     return;
   }
 
+  $("projectTaskProjectSelectModal").querySelector("h2").textContent =
+    createMode === "admin" ? "Add Task to Project" : "Project Progress Report";
   const projects = visibleProjects();
   const list = $("projectTaskProjectSelectList");
   const error = $("projectTaskProjectSelectError");
   error.textContent = "";
 
   if(!projects.length){
-    list.innerHTML = `<div class="hint" style="padding:18px 4px;text-align:center;">No available projects yet.</div>`;
+    list.innerHTML = `<div class="hint" style="padding:18px 4px;text-align:center;">${isAuthorizedStaffVerified ? "No projects have been assigned to your account yet. Ask the admin to assign a Project Report." : "No available projects yet."}</div>`;
     showModal("projectTaskProjectSelectModal");
     return;
   }
@@ -3748,11 +3887,9 @@ function openProjectTaskProjectSelector(createMode="staffCreate"){
       currentProjectName=p.name||"Project";
       $("projectTaskProjectSelectError").textContent="";
 
-      // Normal users arrive here after the Project Reports + Google identity
-      // check and use the ordinary USER-created task flow. Admins and
-      // admin-verified staff arrive here directly from the same + button and
-      // use the elevated assignment flow instead. Either way, let them pick
-      // Add Task or Progress Report for this project next.
+      // Admin / admin-approved staff can assign a task. Normal users only
+      // get the Progress Report entry here — the ordinary user "Add Task"
+      // option has been removed from the + flow.
       prShowProjectActionChooser(p, createMode);
     });
   });
@@ -3760,27 +3897,30 @@ function openProjectTaskProjectSelector(createMode="staffCreate"){
   showModal("projectTaskProjectSelectModal");
 }
 
-// Shown inside projectTaskProjectSelectModal right after a project is picked
-// from the + button flow — lets the user choose Add Task or Progress Report
-// for that project, instead of jumping straight into the Add Task form.
+// Shown inside projectTaskProjectSelectModal after a project is picked
+// from the + button flow. Admin/admin-approved staff can Assign Task or open
+// Progress Report; normal users only get Progress Report.
 function prShowProjectActionChooser(p, createMode){
   const list = $("projectTaskProjectSelectList");
   const submittedCount = prSubmittedCountForProject(p.id);
+  const isElevated = createMode === "admin" && (isAdmin || isAuthorizedStaffVerified);
   list.innerHTML = `
     <div class="hint" style="margin-bottom:10px;">${escapeHtml(p.name||"Project")}</div>
-    <button type="button" class="btn btn-navy" id="ptaskChooseAddTask" style="display:block;width:100%;margin-bottom:8px;padding:12px;">${createMode === "admin" ? "Assign Task" : "Add Task"}</button>
+    ${isElevated ? `<button type="button" class="btn btn-navy" id="ptaskChooseAddTask" style="display:block;width:100%;margin-bottom:8px;padding:12px;">Assign Task</button>` : ""}
     <button type="button" class="btn btn-navy" id="ptaskChooseProgress" style="display:block;width:100%;margin-bottom:8px;padding:12px;">Progress Report${prBadgeHtml(submittedCount)}</button>
     <button type="button" class="btn btn-light" id="ptaskChooseBack" style="display:block;width:100%;padding:10px;">&larr; Back to projects</button>
   `;
-  document.getElementById("ptaskChooseAddTask").addEventListener("click", ()=>{
-    hideModal("projectTaskProjectSelectModal");
-    editingProjectTaskId=null;
-    $("projectTaskError").textContent="";
-    renderProjectTaskFields({}, createMode === "admin" ? "admin" : "staffCreate");
-    $("newProjectTaskTitle").textContent = createMode === "admin" ? "Assign Task" : "Add Task";
-    $("saveProjectTaskBtn").textContent="Save";
-    showModal("newProjectTaskModal");
-  });
+  if(isElevated){
+    document.getElementById("ptaskChooseAddTask").addEventListener("click", ()=>{
+      hideModal("projectTaskProjectSelectModal");
+      editingProjectTaskId=null;
+      $("projectTaskError").textContent="";
+      renderProjectTaskFields({}, "admin");
+      $("newProjectTaskTitle").textContent = "Assign Task";
+      $("saveProjectTaskBtn").textContent="Save";
+      showModal("newProjectTaskModal");
+    });
+  }
   document.getElementById("ptaskChooseProgress").addEventListener("click", ()=>{
     hideModal("projectTaskProjectSelectModal");
     openProgressReport(p.id, p.name || "Project");
@@ -3806,6 +3946,14 @@ $("saveProjectBtn").addEventListener("click",async()=>{
 
 $("saveProjectTaskBtn").addEventListener("click",async()=>{
   if(!currentUser || !currentProjectId){$("projectTaskError").textContent="Project not selected.";return;}
+  if(currentTaskFormMode === "staffCreate"){
+    $("projectTaskError").textContent="Only the admin or an admin-approved staff member can assign a Project Report task.";
+    return;
+  }
+  if(!canAccessProject(currentProjectId)){
+    $("projectTaskError").textContent="This project has not been assigned to your account by the admin.";
+    return;
+  }
   const values=collectProjectTaskValues();
   const missing=currentTaskFormColumns.filter(c=>c.required && !String(values[c.key]||"").trim());
   $("projectTaskError").textContent="";
@@ -3934,18 +4082,10 @@ $("workVerifyGoogleBtn").addEventListener("click", async ()=>{
 
 $("fab").addEventListener("click", async ()=>{
   if(activeTab === "projects"){
-    // The same Project Reports + button serves two separate purposes:
-    // 1) Admin / Authorized Staff (isAuthorizedStaffVerified — on the admin's
-    //    allow-list): assign a task directly, with no extra Google
-    //    verification because they already have elevated access.
-    // 2) Everyone else, including any merely Google-verified account
-    //    (isVerifiedStaff) that isn't on the allow-list: require the
-    //    one-time Google identity check, then create a normal USER task.
-    //    This does NOT grant elevated access and does NOT require admin
-    //    approval. Do not swap this for isVerifiedStaff — that flag is also
-    //    true mid-way through the open, no-approval-needed Progress Report
-    //    flow, and using it here would let an unapproved account straight
-    //    into the admin "Assign Task" form (this was a real bug, now fixed).
+    // Project Reports +:
+    // 1) Admin / admin-approved staff can assign a task.
+    // 2) Normal users can open Progress Report only. The old normal-user
+    //    "Add Task" path is intentionally removed.
     if(isAdmin || isAuthorizedStaffVerified){
       openProjectTaskProjectSelector("admin");
     }else{
@@ -3976,11 +4116,10 @@ $("fab").addEventListener("click", async ()=>{
 // there's no daily quota to run into. Firebase already returns
 // emailVerified === true for Google accounts, so isVerifiedStaff (below)
 // and the isAuthorizedStaff() Firestore rule both work exactly as before.
-// Project Reports + quick-add Google check. This deliberately does NOT use
-// authorizedStaff (no admin allow-list approval needed — any Google account
-// qualifies). The session is kept signed in only for the duration of this
-// + flow (Add Task and/or Progress Report), then signed back out to
-// anonymous afterward — see pendingFabSignOut / maybeSignOutAfterFabFlow.
+// Project Reports + Progress Report Google check. This deliberately does NOT
+// use authorizedStaff (no admin allow-list approval needed — any Google
+// account qualifies). The session is kept signed in only for the duration of
+// this Progress Report flow, then signed back out to anonymous afterward.
 $("projectTaskVerifyGoogleBtn").addEventListener("click", async ()=>{
   $("projectTaskVerifyError").textContent = "";
   $("projectTaskVerifyGoogleBtn").disabled = true;
@@ -3996,17 +4135,16 @@ $("projectTaskVerifyGoogleBtn").addEventListener("click", async ()=>{
     try{
       await addDoc(collection(db, "staffLogins"), {
         email, uid: result.user.uid, verifiedAt: serverTimestamp(),
-        action: "Project Add Task (user)"
+        action: "Project Progress Report (user)"
       });
-    }catch(e){ console.error("Could not record project add-task verification", e); }
+    }catch(e){ console.error("Could not record project progress verification", e); }
     // Stay signed in (Google-verified, not anonymous) just long enough to use
-    // Add Task and/or Progress Report from this flow — Progress Report needs
-    // a live Google-verified session to save. Signed back out automatically
-    // once the user leaves this flow (see maybeSignOutAfterFabFlow), so it
-    // still doesn't turn into a standing elevated/assigned staff session.
+    // the Progress Report. Signed back out automatically once the user leaves
+    // this flow (see maybeSignOutAfterFabFlow), so it still doesn't turn into
+    // a standing elevated/assigned staff session.
     pendingFabSignOut = true;
     hideModal("projectTaskVerifyModal");
-    openProjectTaskProjectSelector("staffCreate");
+    openProjectTaskProjectSelector("progressOnly");
   }catch(err){
     console.error("Project add-task Google verification failed", err);
     if(err.code !== "auth/popup-closed-by-user" && err.code !== "auth/cancelled-popup-request"){
@@ -4661,6 +4799,10 @@ function prFlattenTree(){
 
 // ---------- ENTRY POINTS ----------
 function openProgressReport(projectId, projectName){
+  if(!canAccessProject(projectId)){
+    alert("This project has not been assigned to your account by the admin.");
+    return;
+  }
   prCurrentProjectId = projectId;
   prCurrentProjectName = projectName || "Project";
   $("prTitle").textContent = `Progress Report — ${prCurrentProjectName}`;
@@ -6293,10 +6435,11 @@ function prOpenJobsEditor(path){
 // Injected onto project cards and into the Project Tasks modal header via
 // observers, so none of the existing render functions had to be modified.
 function prInjectProjectCardButtons(){
-  if(!(isAdmin || isVerifiedStaff)) return;
+  if(!(isAdmin || isAuthorizedStaffVerified)) return;
   document.querySelectorAll('#projectList .card[data-project-id]').forEach(card=>{
     if(card.querySelector(".pr-open-btn")) return;
     const pid = card.getAttribute("data-project-id");
+    if(!canAccessProject(pid)) return;
     const actionsRow = card.querySelector('.card-body > div[style*="flex-wrap"]');
     const btn = document.createElement("button");
     btn.className = "btn btn-navy pr-open-btn";
@@ -6323,7 +6466,7 @@ if(prProjectListEl){
 }
 
 function prInjectTasksModalButton(){
-  if(!(isAdmin || isVerifiedStaff) || !currentProjectId) return;
+  if(!(isAdmin || isAuthorizedStaffVerified) || !currentProjectId || !canAccessProject(currentProjectId)) return;
   const titleEl = document.getElementById("projectTasksTitle");
   if(!titleEl) return;
   let btn = document.getElementById("prFromTasksModalBtn");
