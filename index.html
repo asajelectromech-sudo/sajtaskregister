@@ -144,10 +144,12 @@
 
 <div id="passwordGate" class="loading-screen" style="display:none;">
   <div style="font-weight:700;color:var(--navy);font-size:18px;">SAJ Task Register</div>
-  <div style="font-size:13px;color:var(--text-muted);text-align:center;max-width:300px;">Sign in to continue. Access is controlled by Firebase Authentication and Security Rules.</div>
-  <button class="btn btn-primary" id="gateGoogleLoginBtn" style="width:240px;">Continue with Google</button>
+  <div style="font-size:13px;color:var(--text-muted);text-align:center;max-width:260px;">This app is password protected. Enter the password to continue.</div>
+  <input type="password" id="gatePasswordInput" placeholder="Password"
+    style="padding:11px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;width:220px;text-align:center;background:#fff;" />
+  <button class="btn btn-primary" id="gateSubmitBtn" style="width:220px;">Enter</button>
   <div class="error-text" id="gateError"></div>
-  <button class="btn btn-outline" id="gateAdminLoginBtn" style="color:var(--navy);border:1px solid var(--border);width:240px;margin-top:6px;">Admin sign in</button>
+  <button class="btn btn-outline" id="gateAdminLoginBtn" style="color:var(--navy);border:1px solid var(--border);width:220px;margin-top:6px;">Admin sign in instead</button>
 </div>
 
 <header>
@@ -579,6 +581,9 @@
       <button class="btn btn-light" id="addDailyColumnBtn" style="width:100%;">+ Add Daily Task Field</button>
     </div>
     <div class="hint">These fields control the form staff see after Google verification. Required fields must be completed before the report can be saved. For any field, you can enable optional image attachments (up to 3 images, from camera or gallery). The field order here is the order shown on the staff form and in the PDF.</div>
+    <div class="section-label">App Entry Password</div>
+    <div class="hint">This is the password anyone must type on the "Enter" screen just to open the app — separate from your own admin sign-in below. Any short password works (e.g. 4 digits); leave it blank to remove the password screen and let anyone in without one.</div>
+    <div class="field"><label>App password</label><input type="text" id="appSettingsPassword" placeholder="e.g. 1234 — leave blank for no password" /></div>
     <div class="section-label">Admin Password</div>
     <div class="hint">Set or update the Firebase Authentication password for your admin account (<b id="adminPasswordForEmail"></b>). This is a real Firebase credential, not an app-level password stored in Firestore.</div>
     <div class="field"><label>New password</label><input type="password" id="adminNewPassword" placeholder="At least 4 characters" /></div>
@@ -1084,9 +1089,11 @@ onAuthStateChanged(auth, async (user)=>{
     isAuthorizedStaffVerified = false;
     authorizedStaffProjectIds = [];
     appUnlocked = false;
-    $("loadingScreen").style.display = "none";
-    $("passwordGate").style.display = "flex";
-    $("gateError").textContent = "";
+    // No session yet at all (first load, or just signed out) — start an
+    // anonymous session so the app has *something* to read Firestore with.
+    // The password gate below is what actually decides whether the person
+    // gets past this into the real app; anonymous alone doesn't unlock it.
+    signInAnonymously(auth).catch(err=> console.error("Anon sign-in failed", err));
     return;
   }
   currentUser = user;
@@ -1168,9 +1175,28 @@ onAuthStateChanged(auth, async (user)=>{
     pendingVerifyAction = null;
   }
 
-  // Firebase Authentication is now the app entry gate. There is no
-  // client-side Firestore app password to retrieve or bypass.
-  appUnlocked = true;
+  // Admins who sign in directly (email + password) always bypass the app
+  // password gate — their own credentials are the stronger check.
+  if(isAdmin) appUnlocked = true;
+
+  if(!appUnlocked){
+    try{
+      const snap = await getDoc(doc(db, "settings", "appAccess"));
+      appPassword = (snap.exists() && snap.data().password) ? String(snap.data().password) : "";
+    }catch(e){
+      console.error("Could not load app password setting", e);
+      appPassword = "";
+    }
+    if(appPassword){
+      $("loadingScreen").style.display = "none";
+      $("gatePasswordInput").value = "";
+      $("gateError").textContent = "";
+      $("passwordGate").style.display = "flex";
+      return; // wait for the gate to be unlocked before showing the app
+    }
+    appUnlocked = true; // no password configured yet — open access
+  }
+
   unlockApp();
 });
 
@@ -1190,17 +1216,17 @@ function unlockApp(){
   startProjectListeners();
 }
 
-$("gateGoogleLoginBtn").addEventListener("click", async ()=>{
-  $("gateGoogleLoginBtn").disabled = true;
-  $("gateError").textContent = "";
-  try{
-    await signInWithPopup(auth, googleProvider);
-  }catch(err){
-    console.error("Google app sign-in failed", err);
-    if(err.code !== "auth/popup-closed-by-user" && err.code !== "auth/cancelled-popup-request")
-      $("gateError").textContent = `Sign in failed (${err.code || err.message || "unknown error"}).`;
+$("gateSubmitBtn").addEventListener("click", ()=>{
+  const val = $("gatePasswordInput").value;
+  if(val === appPassword){
+    appUnlocked = true;
+    unlockApp();
+  } else {
+    $("gateError").textContent = "Incorrect password.";
   }
-  $("gateGoogleLoginBtn").disabled = false;
+});
+$("gatePasswordInput").addEventListener("keydown", (e)=>{
+  if(e.key === "Enter") $("gateSubmitBtn").click();
 });
 $("gateAdminLoginBtn").addEventListener("click", ()=>{
   $("loginError").textContent = "";
@@ -1247,6 +1273,7 @@ function renderAuthBox(){
     $("appSettingsBtn").addEventListener("click", ()=>{
       renderProjectColumnsSettings();
       renderDailyColumnsSettings();
+      $("appSettingsPassword").value = appPassword || "";
       $("appSettingsError").textContent = "";
       $("adminPasswordForEmail").textContent = currentUser.email || "";
       $("adminNewPassword").value = "";
@@ -1395,11 +1422,14 @@ function applyProjectFieldLabels(){
 $("saveAppSettingsBtn").addEventListener("click", async ()=>{
   projectColumns=normalizeProjectColumns(projectColumns).filter(c=>String(c.label||"").trim());
   projectColumns.forEach(c=>c.label=String(c.label).trim());
+  const newAppPassword = $("appSettingsPassword").value.trim();
   $("appSettingsError").textContent = "";
   $("saveAppSettingsBtn").disabled = true;
   try{
+    await setDoc(doc(db, "settings", "appAccess"), { password: newAppPassword }, { merge: true });
     await setDoc(doc(db, "settings", "projectTaskLabels"), { columns: projectColumns }, { merge: true });
     await setDoc(doc(db, "settings", "dailyTaskReportLabels"), { columns: dailyTaskColumns }, { merge: true });
+    appPassword = newAppPassword;
     renderProjectColumnsSettings();
     applyProjectFieldLabels();
     hideModal("appSettingsModal");
