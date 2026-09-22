@@ -162,12 +162,13 @@
 
 <main>
   <div class="tabs" id="mainTabs">
-    <button class="tab-btn active" data-tab="snags">Snag Reports</button>
+    <button class="tab-btn active" data-tab="projects">Project Reports</button>
+    <button class="tab-btn" data-tab="daily">Daily Task Reports</button>
     <button class="tab-btn" data-tab="work">Service Action Reports</button>
-    <button class="tab-btn" data-tab="projects">Project Reports</button>
+    <button class="tab-btn" data-tab="snags">Snag Reports</button>
   </div>
 
-  <div id="snagsView">
+  <div id="snagsView" style="display:none;">
     <div class="chips" id="statusChips">
       <button class="chip active" data-status="all">All</button>
       <button class="chip" data-status="open">Open</button>
@@ -215,7 +216,7 @@
     <div id="workEmptyState" style="display:none;">No service action reports match your filters.</div>
   </div>
 
-  <div id="projectsView" style="display:none;">
+  <div id="projectsView" style="display:block;">
     <div id="taskNotificationsBanner" style="display:none;"></div>
     <div id="progressApprovalBanner" style="display:none;"></div>
     <div id="progressAssignedBanner" style="display:none;"></div>
@@ -224,6 +225,24 @@
     </div>
     <div id="projectList"></div>
     <div id="projectEmptyState" style="display:none;">No projects created yet.</div>
+  </div>
+
+  <div id="dailyView" style="display:none;">
+    <div class="toolbar">
+      <input type="text" id="dailySearchBox" placeholder="Search all daily task report fields…" style="flex:1;min-width:180px;" />
+      <input type="date" id="dailyFromDate" title="From date" />
+      <input type="date" id="dailyToDate" title="To date" />
+      <button class="btn btn-light" id="dailyClearFiltersBtn">Clear</button>
+      <button class="btn btn-light" id="dailySelectModeBtn" style="display:none;">Select</button>
+      <button class="btn btn-light" id="dailyExportBtn" style="display:none;">Export PDF</button>
+    </div>
+    <div class="toolbar" id="dailySelectAllRow" style="display:none;">
+      <button class="btn btn-light" id="dailySelectAllBtn">Select all</button>
+      <button class="btn btn-light" id="dailyClearSelectionBtn">Clear selection</button>
+      <button class="btn btn-red" id="dailyDeleteSelectedBtn" style="display:none;">Delete selected</button>
+    </div>
+    <div id="dailyList"></div>
+    <div id="dailyEmptyState" style="display:none;">No daily task reports match your filters.</div>
   </div>
 </main>
 
@@ -502,6 +521,49 @@
   </div>
 </div>
 
+<!-- DAILY TASK REPORTS -->
+<div class="modal-overlay" id="dailyVerifyModal">
+  <div class="modal">
+    <button class="close-x" data-close="dailyVerifyModal">&times;</button>
+    <h2>Verify your Google account</h2>
+    <div class="hint">Sign in with Google before creating or resubmitting a Daily Task Report. This verification identifies the staff member who submits the report.</div>
+    <div class="error-text" id="dailyVerifyError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="dailyVerifyGoogleBtn" style="width:100%;">Continue with Google</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="dailyTaskFormModal">
+  <div class="modal">
+    <button class="close-x" data-close="dailyTaskFormModal" id="dailyTaskFormCloseBtn">&times;</button>
+    <h2 id="dailyTaskFormTitle">New Daily Task Report</h2>
+    <div class="hint" id="dailyTaskFormDateHint"></div>
+    <div id="dailyTaskDynamicFields"></div>
+    <div class="error-text" id="dailyTaskFormError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" data-close="dailyTaskFormModal">Cancel</button>
+      <button class="btn btn-primary" id="saveDailyTaskBtn">Save report</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay modal-overlay-top" id="dailyReviewModal">
+  <div class="modal">
+    <h2 id="dailyReviewTitle">Review Daily Task Report</h2>
+    <div id="dailyReviewSummary"></div>
+    <div class="section-label">Star rating</div>
+    <div id="dailyReviewStars" style="font-size:34px;letter-spacing:7px;text-align:center;margin:10px 0;"></div>
+    <div class="field"><label>Review note</label><textarea id="dailyReviewNote" placeholder="Add approval or rejection notes…"></textarea></div>
+    <div class="error-text" id="dailyReviewError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" id="dailyReviewCancelBtn">Cancel</button>
+      <button class="btn btn-red" id="dailyReviewRejectBtn">Reject</button>
+      <button class="btn btn-green" id="dailyReviewApproveBtn">Approve</button>
+    </div>
+  </div>
+</div>
+
 <!-- APP SETTINGS MODAL (admin only) -->
 <div class="modal-overlay" id="appSettingsModal">
   <div class="modal">
@@ -517,6 +579,12 @@
       <button class="btn btn-light" id="addProjectColumnBtn" style="width:100%;">+ Add Column</button>
     </div>
     <div class="hint">Add, rename, reorder, or delete Project Report columns. Required columns are checked when a task is saved.</div>
+    <div class="section-label" style="margin-top:16px;">Daily Task Report fields</div>
+    <div id="dailyColumnsSettings"></div>
+    <div class="modal-actions" style="margin-top:8px;">
+      <button class="btn btn-light" id="addDailyColumnBtn" style="width:100%;">+ Add Daily Task Field</button>
+    </div>
+    <div class="hint">These fields control the form staff see after Google verification. Required fields must be completed before the report can be saved. The field order here is the order shown on the staff form and in the PDF.</div>
     <div class="section-label">Admin Password</div>
     <div class="hint">Set or update a password for your admin account (<b id="adminPasswordForEmail"></b>) so "Admin sign in" works as a backup alongside Google Sign-In. If you've never set one (or aren't sure), just set one here now.</div>
     <div class="field"><label>New password</label><input type="password" id="adminNewPassword" placeholder="At least 6 characters" /></div>
@@ -804,7 +872,7 @@ let filters = { status: "all", site: "", search: "" };
 let allWorkReports = [];
 let workListenerStarted = false;
 let workFilters = { status: "all", site: "", search: "" };
-let activeTab = "snags";
+let activeTab = "projects";
 let allProjects = [];
 let allProjectTasks = [];
 // Progress Report jobs waiting on admin approval, across ALL projects —
@@ -865,6 +933,25 @@ let projectColumns = [
   {key:"task", label:"Job Details", required:false, filledBy:"staff"}
 ];
 
+// Daily Task Reports — admin-defined form fields. By default all fields are
+// filled by staff, while the admin controls the field names/order/required flag.
+let dailyTaskColumns = [
+  {key:"task", label:"Task", required:true, filledBy:"staff"},
+  {key:"location", label:"Location / Building", required:true, filledBy:"staff"},
+  {key:"unitNumber", label:"Unit Number", required:false, filledBy:"staff"},
+  {key:"staffName", label:"Staff Name", required:true, filledBy:"staff"},
+  {key:"jobDetails", label:"Job Details", required:true, filledBy:"staff"}
+];
+let allDailyTaskReports = [];
+let dailyTaskListenerStarted = false;
+let dailyFilters = {search:"", from:"", to:""};
+let dailySelectMode = false;
+let selectedDailyTaskIds = new Set();
+let dailyVerificationMode = "new"; // "new" | "resubmit"
+let dailyResubmitId = null;
+let dailyReviewId = null;
+let selectedDailyRating = 0;
+
 let activeStream = null;
 let currentSnagForClose = null;
 
@@ -897,6 +984,15 @@ document.querySelectorAll("[data-close]").forEach(btn=>{
 // sign them back out to anonymous right away rather than waiting.
 document.querySelectorAll('[data-close="projectTaskProjectSelectModal"], [data-close="newProjectTaskModal"]').forEach(btn=>{
   btn.addEventListener("click", maybeSignOutAfterFabFlow);
+});
+document.querySelectorAll('[data-close="dailyTaskFormModal"]').forEach(btn=>{
+  btn.addEventListener("click", ()=>{
+    if(dailyVerificationMode){
+      signOut(auth).catch(err=>console.error("Could not sign out after Daily Task Report flow", err));
+      dailyVerificationMode = "new";
+      dailyResubmitId = null;
+    }
+  });
 });
 
 // Every delete anywhere in the app routes through this — a plain OK/Cancel
@@ -1040,6 +1136,7 @@ onAuthStateChanged(auth, async (user)=>{
       authorizedStaffProjectIds = nextProjectIds;
       renderAuthBox();
       updateFabVisibility();
+      applyMainTabView();
       if(activeTab === "projects"){
         renderProjectList();
         if(currentProjectId && !canAccessProject(currentProjectId)){
@@ -1096,10 +1193,13 @@ function unlockApp(){
   $("passwordGate").style.display = "none";
   $("loadingScreen").style.display = "none";
   renderAuthBox();
+  applyMainTabView();
   updateFabVisibility();
   updateSnagExportLabel();
   updateWorkExportLabel();
   loadProjectFieldLabels();
+  loadDailyTaskFieldLabels();
+  startDailyTaskListener();
   startSnagListener();
   startWorkListener();
   startProjectListeners();
@@ -1131,17 +1231,25 @@ function updateFabVisibility(){
 }
 
 // ---------- TABS ----------
+function applyMainTabView(){
+  document.querySelectorAll("#mainTabs .tab-btn").forEach(b=> b.classList.toggle("active", b.getAttribute("data-tab")===activeTab));
+  $("snagsView").style.display = activeTab === "snags" ? "block" : "none";
+  $("workView").style.display = activeTab === "work" ? "block" : "none";
+  $("projectsView").style.display = activeTab === "projects" ? "block" : "none";
+  $("dailyView").style.display = activeTab === "daily" ? "block" : "none";
+  $("newProjectBtn").style.display = (activeTab === "projects" && (isAdmin || isAuthorizedStaffVerified)) ? "inline-block" : "none";
+  const dailyElevated = isAdmin || isAuthorizedStaffVerified;
+  $("dailySelectModeBtn").style.display = dailyElevated ? "inline-block" : "none";
+  $("dailyExportBtn").style.display = dailyElevated ? "inline-block" : "none";
+  renderProjectList();
+  renderDailyTaskList();
+  updateFabVisibility();
+}
+
 document.querySelectorAll("#mainTabs .tab-btn").forEach(btn=>{
   btn.addEventListener("click", ()=>{
     activeTab = btn.getAttribute("data-tab");
-    document.querySelectorAll("#mainTabs .tab-btn").forEach(b=> b.classList.remove("active"));
-    btn.classList.add("active");
-    $("snagsView").style.display = activeTab === "snags" ? "block" : "none";
-    $("workView").style.display = activeTab === "work" ? "block" : "none";
-    $("projectsView").style.display = activeTab === "projects" ? "block" : "none";
-    $("newProjectBtn").style.display = (activeTab === "projects" && (isAdmin || isAuthorizedStaffVerified)) ? "inline-block" : "none";
-    renderProjectList();
-    updateFabVisibility();
+    applyMainTabView();
   });
 });
 
@@ -1154,6 +1262,7 @@ function renderAuthBox(){
     $("appSettingsBtn").addEventListener("click", ()=>{
       $("appSettingsPassword").value = appPassword || "";
       renderProjectColumnsSettings();
+      renderDailyColumnsSettings();
       $("appSettingsError").textContent = "";
       $("adminPasswordForEmail").textContent = currentUser.email || "";
       $("adminNewPassword").value = "";
@@ -1174,6 +1283,11 @@ function renderAuthBox(){
     });
   }
   $("newProjectBtn").style.display = (activeTab === "projects" && (isAdmin || isAuthorizedStaffVerified)) ? "inline-block" : "none";
+  if($("dailySelectModeBtn")){
+    const dailyElevated=isAdmin || isAuthorizedStaffVerified;
+    $("dailySelectModeBtn").style.display=dailyElevated ? "inline-block" : "none";
+    $("dailyExportBtn").style.display=dailyElevated ? "inline-block" : "none";
+  }
 }
 
 function normalizeProjectColumns(raw){
@@ -1303,6 +1417,7 @@ $("saveAppSettingsBtn").addEventListener("click", async ()=>{
   try{
     await setDoc(doc(db, "settings", "appAccess"), { password: val }, { merge: true });
     await setDoc(doc(db, "settings", "projectTaskLabels"), { columns: projectColumns }, { merge: true });
+    await setDoc(doc(db, "settings", "dailyTaskReportLabels"), { columns: dailyTaskColumns }, { merge: true });
     appPassword = val;
     renderProjectColumnsSettings();
     applyProjectFieldLabels();
@@ -1377,7 +1492,7 @@ $("downloadBackupBtn").addEventListener("click", async ()=>{
   try{
     const collectionNames = [
       "snags","workreports","projects","projecttasks",
-      "authorizedStaff","staffAccessRequests","staffLogins","settings"
+      "authorizedStaff","staffAccessRequests","staffLogins","settings","dailyTaskReports"
     ];
     const backup = {};
     for(const name of collectionNames){
@@ -2952,6 +3067,325 @@ function downloadProjectPdf(projectId, taskIdsFilter){
   pdf.save(filename);
 }
 
+// ============================================================================
+// DAILY TASK REPORTS
+// ============================================================================
+function normalizeDailyTaskColumns(raw){
+  const defaults = [
+    {key:"task", label:"Task", required:true, filledBy:"staff"},
+    {key:"location", label:"Location / Building", required:true, filledBy:"staff"},
+    {key:"unitNumber", label:"Unit Number", required:false, filledBy:"staff"},
+    {key:"staffName", label:"Staff Name", required:true, filledBy:"staff"},
+    {key:"jobDetails", label:"Job Details", required:true, filledBy:"staff"}
+  ];
+  if(!Array.isArray(raw) || raw.length===0) return defaults;
+  return raw.map((c,i)=>({
+    key:String(c.key || `daily_col_${Date.now()}_${i}`),
+    label:String(c.label || `Column ${i+1}`),
+    required:!!c.required,
+    filledBy:"staff"
+  }));
+}
+
+async function loadDailyTaskFieldLabels(){
+  try{
+    const snap=await getDoc(doc(db,"settings","dailyTaskReportLabels"));
+    dailyTaskColumns = snap.exists() && Array.isArray(snap.data().columns)
+      ? normalizeDailyTaskColumns(snap.data().columns)
+      : normalizeDailyTaskColumns(dailyTaskColumns);
+  }catch(err){ console.error("Could not load Daily Task Report fields:",err); }
+  renderDailyColumnsSettings();
+}
+
+function renderDailyColumnsSettings(){
+  const box=$("dailyColumnsSettings");
+  if(!box) return;
+  if(!dailyTaskColumns.length){
+    box.innerHTML='<div class="hint" style="padding:8px 0;">No fields. Add a field below.</div>';
+    return;
+  }
+  box.innerHTML=dailyTaskColumns.map((c,i)=>`
+    <div class="project-column-setting" style="border:1px solid var(--border);border-radius:10px;padding:10px;margin-bottom:8px;background:#fff;">
+      <div style="display:flex;gap:7px;align-items:end;">
+        <div class="field" style="flex:1;margin:0;">
+          <label>Column ${i+1} name</label>
+          <input type="text" class="daily-column-name" value="${escapeHtml(c.label)}" />
+        </div>
+        <button class="btn btn-light daily-col-up" data-key="${escapeHtml(c.key)}" ${i===0?'disabled':''}>↑</button>
+        <button class="btn btn-light daily-col-down" data-key="${escapeHtml(c.key)}" ${i===dailyTaskColumns.length-1?'disabled':''}>↓</button>
+        <button class="btn btn-red daily-col-delete" data-key="${escapeHtml(c.key)}">Delete</button>
+      </div>
+      <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-muted);margin-top:8px;">
+        <input type="checkbox" class="daily-column-required" ${c.required?'checked':''} /> Required
+      </label>
+      <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-muted);margin-top:6px;">
+        <input type="checkbox" class="daily-column-staff-filled" checked disabled /> Filled in by staff
+      </label>
+    </div>`).join("");
+  box.querySelectorAll(".daily-column-name").forEach((input,i)=>input.addEventListener("input",()=>dailyTaskColumns[i].label=input.value));
+  box.querySelectorAll(".daily-column-required").forEach((input,i)=>input.addEventListener("change",()=>dailyTaskColumns[i].required=input.checked));
+  box.querySelectorAll(".daily-col-up").forEach(btn=>btn.addEventListener("click",()=>moveDailyColumn(btn.dataset.key,-1)));
+  box.querySelectorAll(".daily-col-down").forEach(btn=>btn.addEventListener("click",()=>moveDailyColumn(btn.dataset.key,1)));
+  box.querySelectorAll(".daily-col-delete").forEach(btn=>btn.addEventListener("click",()=>deleteDailyColumn(btn.dataset.key)));
+}
+function moveDailyColumn(key,delta){
+  const i=dailyTaskColumns.findIndex(c=>c.key===key), j=i+delta;
+  if(i<0 || j<0 || j>=dailyTaskColumns.length) return;
+  [dailyTaskColumns[i],dailyTaskColumns[j]]=[dailyTaskColumns[j],dailyTaskColumns[i]];
+  renderDailyColumnsSettings();
+}
+async function deleteDailyColumn(key){
+  const col=dailyTaskColumns.find(c=>c.key===key); if(!col) return;
+  if(!(await confirmDelete(`Delete the Daily Task Report field "${col.label}"? Existing values in old reports will remain.`))) return;
+  dailyTaskColumns=dailyTaskColumns.filter(c=>c.key!==key);
+  renderDailyColumnsSettings();
+}
+$("addDailyColumnBtn").addEventListener("click",()=>{
+  const key=`daily_col_${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
+  dailyTaskColumns.push({key,label:"New Column",required:false,filledBy:"staff"});
+  renderDailyColumnsSettings();
+  const inputs=document.querySelectorAll("#dailyColumnsSettings .daily-column-name");
+  const last=inputs[inputs.length-1]; if(last){last.focus();last.select();}
+});
+
+function renderDailyTaskForm(values={}){
+  const box=$("dailyTaskDynamicFields");
+  if(!box) return;
+  if(!dailyTaskColumns.length){
+    box.innerHTML='<div class="hint">No Daily Task Report fields have been configured by the admin.</div>';
+    return;
+  }
+  box.innerHTML=dailyTaskColumns.map(c=>{
+    const v=values[c.key] ?? "";
+    return `<div class="field"><label>${escapeHtml(c.label)}${c.required?'':' (optional)'}</label><input type="text" id="dailyCol_${escapeHtml(c.key)}" value="${escapeHtml(String(v))}" placeholder="${escapeHtml(c.label)}" /></div>`;
+  }).join("");
+}
+function collectDailyTaskValues(){
+  const out={};
+  dailyTaskColumns.forEach(c=>{const el=$("dailyCol_"+c.key); out[c.key]=el ? el.value.trim() : "";});
+  return out;
+}
+function openDailyTaskForm(report=null){
+  const values=report && report.fields ? report.fields : {};
+  $("dailyTaskFormTitle").textContent=report ? "Resubmit Daily Task Report" : "New Daily Task Report";
+  $("dailyTaskFormDateHint").textContent=report ? `Original report date: ${report.reportDateKey || fmtDateOnly(report.createdAt)}` : `Report date: ${fmtDateOnly(new Date())}`;
+  $("dailyTaskFormError").textContent="";
+  renderDailyTaskForm(values);
+  showModal("dailyTaskFormModal");
+}
+
+function dailyReportDateKey(r){ return r.reportDateKey || fmtDateOnly(r.createdAt); }
+function dailyReportSearchText(r){
+  const vals=Object.values(r.fields||{}).join(" ");
+  return `${vals} ${r.submittedByEmail||""} ${r.status||""} ${r.approvalNote||""} ${r.rejectionNote||""}`.toLowerCase();
+}
+function getFilteredDailyTaskReports(){
+  const q=dailyFilters.search.trim().toLowerCase();
+  return allDailyTaskReports.filter(r=>{
+    const date=dailyReportDateKey(r);
+    if(dailyFilters.from && date < dailyFilters.from) return false;
+    if(dailyFilters.to && date > dailyFilters.to) return false;
+    if(q && !dailyReportSearchText(r).includes(q)) return false;
+    return true;
+  });
+}
+function dailyStatusLabel(status){
+  if(status==="approved") return "Approved";
+  if(status==="rejected") return "Rejected";
+  return "Pending";
+}
+function dailyStatusBadge(status){
+  const cls=status==="approved" ? "badge-closed" : status==="rejected" ? "badge-rejected" : "badge-open";
+  return `<span class="badge ${cls}">${dailyStatusLabel(status)}</span>`;
+}
+function dailyStars(rating){
+  const n=Math.max(0,Math.min(5,Number(rating)||0));
+  return n ? "★".repeat(n)+"☆".repeat(5-n) : "Not rated";
+}
+function updateDailySelectionUi(){
+  const count=selectedDailyTaskIds.size;
+  $("dailyExportBtn").textContent=count ? `Export Selected (${count})` : "Export PDF";
+  $("dailyDeleteSelectedBtn").style.display=(isAdmin && dailySelectMode && count) ? "inline-block" : "none";
+  $("dailySelectAllRow").style.display=dailySelectMode ? "flex" : "none";
+}
+function renderDailyTaskList(){
+  const list=$("dailyList"), empty=$("dailyEmptyState");
+  if(!list || !empty) return;
+  const items=getFilteredDailyTaskReports();
+  if(!items.length){list.innerHTML="";empty.style.display="block";updateDailySelectionUi();return;}
+  empty.style.display="none";
+  list.innerHTML=items.map(r=>{
+    const fields=Object.entries(r.fields||{}).map(([key,val])=>{
+      const col=dailyTaskColumns.find(c=>c.key===key);
+      return `<div style="font-size:12px;margin-top:4px;"><b>${escapeHtml(col?col.label:key)}:</b> ${escapeHtml(String(val??""))}</div>`;
+    }).join("");
+    const elevated=isAdmin || isAuthorizedStaffVerified;
+    const selected=selectedDailyTaskIds.has(r.id);
+    const actions=[];
+    if(isAdmin && r.status!=="approved") actions.push(`<button class="btn btn-light daily-review-btn" data-id="${escapeHtml(r.id)}">Review</button>`);
+    if(isAdmin && r.status==="approved") actions.push(`<button class="btn btn-light daily-review-btn" data-id="${escapeHtml(r.id)}">Review / Rating</button>`);
+    if(!isAdmin && r.status==="rejected" && r.submittedByEmail && currentUser && !currentUser.isAnonymous && currentUser.email===r.submittedByEmail){
+      actions.push(`<button class="btn btn-light daily-resubmit-btn" data-id="${escapeHtml(r.id)}">Resubmit</button>`);
+    }
+    if(elevated) actions.push(`<button class="btn btn-navy daily-pdf-btn" data-id="${escapeHtml(r.id)}">PDF</button>`);
+    if(isAdmin) actions.push(`<button class="btn btn-red daily-delete-btn" data-id="${escapeHtml(r.id)}">Delete</button>`);
+    return `<div class="card" data-daily-id="${escapeHtml(r.id)}">
+      <div style="display:flex;align-items:flex-start;gap:9px;">
+        ${elevated && dailySelectMode ? `<input type="checkbox" class="daily-check" data-id="${escapeHtml(r.id)}" ${selected?'checked':''} style="width:18px;height:18px;margin-top:3px;flex-shrink:0;" />` : ""}
+        <div class="card-body" style="flex:1;min-width:0;">
+          <p class="card-title" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">${dailyStatusBadge(r.status)} <span>${escapeHtml(r.fields?.task || "Daily Task Report")}</span></p>
+          <div class="meta">Report date: ${escapeHtml(dailyReportDateKey(r))} · Submitted: ${escapeHtml(fmtDate(r.createdAt))}${r.submittedByEmail?` · ${escapeHtml(r.submittedByEmail)}`:""}</div>
+          ${fields}
+          ${r.status==="approved" ? `<div style="margin-top:7px;font-weight:700;">Rating: ${escapeHtml(dailyStars(r.rating))}</div>` : ""}
+          ${r.approvalNote ? `<div class="hint" style="margin-top:7px;"><b>Approval note:</b> ${escapeHtml(r.approvalNote)}</div>` : ""}
+          ${r.rejectionNote ? `<div class="hint" style="margin-top:7px;color:#b91c1c;"><b>Rejection note:</b> ${escapeHtml(r.rejectionNote)}</div>` : ""}
+          ${actions.length?`<div style="margin-top:9px;display:flex;gap:6px;flex-wrap:wrap;">${actions.join("")}</div>`:""}
+        </div>
+      </div>
+    </div>`;
+  }).join("");
+  list.querySelectorAll(".daily-check").forEach(cb=>cb.addEventListener("change",()=>{
+    const id=cb.getAttribute("data-id"); if(cb.checked) selectedDailyTaskIds.add(id); else selectedDailyTaskIds.delete(id); updateDailySelectionUi();
+  }));
+  list.querySelectorAll(".daily-pdf-btn").forEach(btn=>btn.addEventListener("click",()=>generateDailyTaskPdf(allDailyTaskReports.filter(r=>r.id===btn.getAttribute("data-id")))));
+  list.querySelectorAll(".daily-review-btn").forEach(btn=>btn.addEventListener("click",()=>openDailyReview(btn.getAttribute("data-id"))));
+  list.querySelectorAll(".daily-resubmit-btn").forEach(btn=>btn.addEventListener("click",()=>{
+    const r=allDailyTaskReports.find(x=>x.id===btn.getAttribute("data-id")); if(!r) return;
+    dailyVerificationMode="resubmit"; dailyResubmitId=r.id; $("dailyVerifyError").textContent=""; showModal("dailyVerifyModal");
+  }));
+  list.querySelectorAll(".daily-delete-btn").forEach(btn=>btn.addEventListener("click",async()=>{
+    if(!isAdmin) return; if(!(await confirmDelete("Delete this Daily Task Report?"))) return;
+    try{await deleteDoc(doc(db,"dailyTaskReports",btn.getAttribute("data-id")));selectedDailyTaskIds.delete(btn.getAttribute("data-id"));}
+    catch(err){console.error(err);alert("Could not delete the Daily Task Report.");}
+  }));
+  updateDailySelectionUi();
+}
+
+function startDailyTaskListener(){
+  if(dailyTaskListenerStarted) return;
+  dailyTaskListenerStarted=true;
+  onSnapshot(collection(db,"dailyTaskReports"),snap=>{
+    allDailyTaskReports=snap.docs.map(d=>({id:d.id,...d.data()})).sort((a,b)=>{
+      const at=a.createdAt?.toMillis ? a.createdAt.toMillis() : 0;
+      const bt=b.createdAt?.toMillis ? b.createdAt.toMillis() : 0;
+      return bt-at;
+    });
+    renderDailyTaskList();
+  },err=>console.error("Daily Task Report listener:",err));
+}
+
+function renderDailyReviewStars(){
+  $("dailyReviewStars").innerHTML=[1,2,3,4,5].map(n=>`<button type="button" class="btn btn-light daily-star-choice" data-rating="${n}" style="font-size:28px;padding:4px 8px;border:none;background:transparent;">${n<=selectedDailyRating?'★':'☆'}</button>`).join("");
+  document.querySelectorAll(".daily-star-choice").forEach(btn=>btn.addEventListener("click",()=>{selectedDailyRating=Number(btn.dataset.rating);renderDailyReviewStars();}));
+}
+function openDailyReview(id){
+  if(!isAdmin) return;
+  const r=allDailyTaskReports.find(x=>x.id===id); if(!r) return;
+  dailyReviewId=id; selectedDailyRating=Number(r.rating)||0;
+  $("dailyReviewTitle").textContent=r.status==="approved" ? "Review Daily Task Report" : "Review Daily Task Report";
+  $("dailyReviewSummary").innerHTML=`<div class="hint">${escapeHtml(r.fields?.task||"Daily Task Report")} · ${escapeHtml(dailyReportDateKey(r))}</div>`;
+  $("dailyReviewNote").value=r.status==="rejected" ? (r.rejectionNote||"") : (r.approvalNote||"");
+  $("dailyReviewError").textContent="";
+  $("dailyReviewApproveBtn").style.display="inline-block";
+  $("dailyReviewRejectBtn").style.display=r.status==="approved" ? "none" : "inline-block";
+  renderDailyReviewStars(); showModal("dailyReviewModal");
+}
+async function saveDailyReview(decision){
+  if(!isAdmin || !dailyReviewId) return;
+  const note=$("dailyReviewNote").value.trim();
+  if(decision==="approve" && selectedDailyRating<1){$("dailyReviewError").textContent="Select a 1–5 star rating before approving.";return;}
+  if(decision==="reject" && !note){$("dailyReviewError").textContent="Please add a rejection note.";return;}
+  const payload={status:decision==="approve"?"approved":"rejected",reviewedBy:currentUser?.email||null,reviewedAt:serverTimestamp(),rating:decision==="approve"?selectedDailyRating:null,approvalNote:decision==="approve"?note:null,rejectionNote:decision==="reject"?note:null};
+  try{await updateDoc(doc(db,"dailyTaskReports",dailyReviewId),payload);dailyReviewId=null;hideModal("dailyReviewModal");}
+  catch(err){console.error(err);$("dailyReviewError").textContent="Could not save the review. Check your connection and try again.";}
+}
+
+function generateDailyTaskPdf(items){
+  if(!(isAdmin || isAuthorizedStaffVerified) || !items.length) return;
+  const {jsPDF}=window.jspdf; const pdf=new jsPDF({unit:"pt",format:"a4"});
+  const pageH=842, margin=40, width=515; let y=50;
+  pdf.setFontSize(16); pdf.setFont(undefined,"bold"); pdf.text("SAJ Daily Task Reports",margin,y); pdf.setFont(undefined,"normal"); y+=18;
+  pdf.setFontSize(9); pdf.setTextColor(120); pdf.text(`Generated ${new Date().toLocaleString("en-GB")} — ${items.length} report(s)`,margin,y); pdf.setTextColor(0); y+=24;
+  items.forEach((r,idx)=>{
+    if(y>pageH-100){pdf.addPage();y=50;}
+    pdf.setFontSize(12);pdf.setFont(undefined,"bold");pdf.text(`${idx+1}. ${r.fields?.task||"Daily Task Report"} [${dailyStatusLabel(r.status).toUpperCase()}]`,margin,y);pdf.setFont(undefined,"normal");y+=16;
+    pdf.setFontSize(9);
+    const meta=`Report date: ${dailyReportDateKey(r)} | Submitted: ${fmtDate(r.createdAt)}${r.submittedByEmail?` | ${r.submittedByEmail}`:""}`;
+    pdf.text(pdf.splitTextToSize(meta,width),margin,y); y+=22;
+    Object.entries(r.fields||{}).forEach(([key,val])=>{
+      const col=dailyTaskColumns.find(c=>c.key===key); const row=`${col?col.label:key}: ${val??""}`;
+      const lines=pdf.splitTextToSize(row,width); if(y+lines.length*11>pageH-45){pdf.addPage();y=50;} pdf.text(lines,margin,y); y+=lines.length*11+2;
+    });
+    if(r.rating){pdf.text(`Rating: ${r.rating}/5`,margin,y);y+=13;}
+    if(r.approvalNote){const lines=pdf.splitTextToSize(`Approval note: ${r.approvalNote}`,width);pdf.text(lines,margin,y);y+=lines.length*11+2;}
+    if(r.rejectionNote){const lines=pdf.splitTextToSize(`Rejection note: ${r.rejectionNote}`,width);pdf.text(lines,margin,y);y+=lines.length*11+2;}
+    pdf.setDrawColor(220);pdf.line(margin,y+4,margin+width,y+4);y+=18;
+  });
+  const suffix=items.length===1 ? sanitizeForFilename(items[0].fields?.task||"Daily_Task") : `Selected_${items.length}`;
+  pdf.save(`SAJ_Daily_Task_Reports_${suffix}_${fmtDateOnly(new Date())}.pdf`);
+}
+
+$("dailySearchBox").addEventListener("input",()=>{dailyFilters.search=$("dailySearchBox").value;renderDailyTaskList();});
+$("dailyFromDate").addEventListener("change",()=>{dailyFilters.from=$("dailyFromDate").value;renderDailyTaskList();});
+$("dailyToDate").addEventListener("change",()=>{dailyFilters.to=$("dailyToDate").value;renderDailyTaskList();});
+$("dailyClearFiltersBtn").addEventListener("click",()=>{$("dailySearchBox").value="";$('dailyFromDate').value="";$('dailyToDate').value="";dailyFilters={search:"",from:"",to:""};renderDailyTaskList();});
+$("dailySelectModeBtn").addEventListener("click",()=>{dailySelectMode=!dailySelectMode;if(!dailySelectMode)selectedDailyTaskIds.clear();$("dailySelectModeBtn").textContent=dailySelectMode?"Cancel":"Select";renderDailyTaskList();});
+$("dailySelectAllBtn").addEventListener("click",()=>{getFilteredDailyTaskReports().forEach(r=>selectedDailyTaskIds.add(r.id));renderDailyTaskList();});
+$("dailyClearSelectionBtn").addEventListener("click",()=>{selectedDailyTaskIds.clear();renderDailyTaskList();});
+$("dailyExportBtn").addEventListener("click",()=>{
+  if(!(isAdmin||isAuthorizedStaffVerified)) return;
+  const items=selectedDailyTaskIds.size ? allDailyTaskReports.filter(r=>selectedDailyTaskIds.has(r.id)) : getFilteredDailyTaskReports();
+  if(!items.length){alert("No Daily Task Reports match the current filter.");return;}
+  generateDailyTaskPdf(items);
+});
+$("dailyDeleteSelectedBtn").addEventListener("click",async()=>{
+  if(!isAdmin || !selectedDailyTaskIds.size) return;
+  if(!(await confirmDelete(`Delete ${selectedDailyTaskIds.size} selected Daily Task Report(s)? This cannot be undone.`))) return;
+  try{await Promise.all([...selectedDailyTaskIds].map(id=>deleteDoc(doc(db,"dailyTaskReports",id))));selectedDailyTaskIds.clear();renderDailyTaskList();}
+  catch(err){console.error(err);alert("Could not delete some Daily Task Reports.");}
+});
+$("dailyReviewCancelBtn").addEventListener("click",()=>hideModal("dailyReviewModal"));
+$("dailyReviewApproveBtn").addEventListener("click",()=>saveDailyReview("approve"));
+$("dailyReviewRejectBtn").addEventListener("click",()=>saveDailyReview("reject"));
+
+$("dailyVerifyGoogleBtn").addEventListener("click",async()=>{
+  $("dailyVerifyError").textContent="";$("dailyVerifyGoogleBtn").disabled=true;
+  try{
+    const result=await signInWithPopup(auth,googleProvider); const email=(result.user.email||"").toLowerCase();
+    if(!email){$("dailyVerifyError").textContent="Could not read an email address from that Google account.";await signOut(auth);return;}
+    try{await addDoc(collection(db,"staffLogins"),{email,uid:result.user.uid,verifiedAt:serverTimestamp(),action:"Daily Task Report"});}catch(e){console.error("Could not record Daily Task Report verification",e);}
+    hideModal("dailyVerifyModal");
+    if(dailyVerificationMode==="resubmit"){
+      const r=allDailyTaskReports.find(x=>x.id===dailyResubmitId);
+      if(!r){await signOut(auth);return;}
+      openDailyTaskForm(r);
+    }else{
+      openDailyTaskForm();
+    }
+  }catch(err){
+    console.error("Daily Task Report Google verification failed",err);
+    if(err.code!=="auth/popup-closed-by-user" && err.code!=="auth/cancelled-popup-request") $("dailyVerifyError").textContent=`Could not verify (${err.code||err.message||"unknown error"}).`;
+  }
+  $("dailyVerifyGoogleBtn").disabled=false;
+});
+
+$("saveDailyTaskBtn").addEventListener("click",async()=>{
+  if(!currentUser || currentUser.isAnonymous || !currentUser.email){$("dailyTaskFormError").textContent="Please complete Google verification again.";return;}
+  const values=collectDailyTaskValues();
+  const missing=dailyTaskColumns.filter(c=>c.required && !String(values[c.key]||"").trim());
+  if(missing.length){$("dailyTaskFormError").textContent=`Please fill: ${missing.map(c=>c.label).join(", ")}.`;return;}
+  $("saveDailyTaskBtn").disabled=true;$("dailyTaskFormError").textContent="";
+  try{
+    if(dailyVerificationMode==="resubmit" && dailyResubmitId){
+      await updateDoc(doc(db,"dailyTaskReports",dailyResubmitId),{fields:values,status:"pending",reportDateKey:dailyReportDateKey(allDailyTaskReports.find(r=>r.id===dailyResubmitId)||{}),resubmittedAt:serverTimestamp(),resubmittedBy:currentUser.email,rejectionNote:null,updatedAt:serverTimestamp()});
+    }else{
+      await addDoc(collection(db,"dailyTaskReports"),{fields:values,status:"pending",reportDateKey:fmtDateOnly(new Date()),submittedByEmail:currentUser.email,submittedByUid:currentUser.uid,createdAt:serverTimestamp(),updatedAt:serverTimestamp(),rating:null,approvalNote:null,rejectionNote:null});
+    }
+    dailyVerificationMode="new";dailyResubmitId=null;hideModal("dailyTaskFormModal");await signOut(auth);
+  }catch(err){console.error(err);$("dailyTaskFormError").textContent="Could not save the report. Check your connection and try again.";}
+  $("saveDailyTaskBtn").disabled=false;
+});
+
 // ---------- PROJECT REPORTS ----------
 function startProjectListeners(){
   if(projectListenerStarted) return;
@@ -4092,6 +4526,13 @@ $("fab").addEventListener("click", async ()=>{
       $("projectTaskVerifyError").textContent = "";
       showModal("projectTaskVerifyModal");
     }
+    return;
+  }
+  if(activeTab === "daily"){
+    dailyVerificationMode = "new";
+    dailyResubmitId = null;
+    $("dailyVerifyError").textContent = "";
+    showModal("dailyVerifyModal");
     return;
   }
   if(activeTab === "work"){
