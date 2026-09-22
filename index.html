@@ -144,12 +144,10 @@
 
 <div id="passwordGate" class="loading-screen" style="display:none;">
   <div style="font-weight:700;color:var(--navy);font-size:18px;">SAJ Task Register</div>
-  <div style="font-size:13px;color:var(--text-muted);text-align:center;max-width:260px;">This app is password protected. Enter the password to continue.</div>
-  <input type="password" id="gatePasswordInput" placeholder="Password"
-    style="padding:11px 12px;border:1px solid var(--border);border-radius:8px;font-size:14px;width:220px;text-align:center;background:#fff;" />
-  <button class="btn btn-primary" id="gateSubmitBtn" style="width:220px;">Enter</button>
+  <div style="font-size:13px;color:var(--text-muted);text-align:center;max-width:300px;">Sign in to continue. Access is controlled by Firebase Authentication and Security Rules.</div>
+  <button class="btn btn-primary" id="gateGoogleLoginBtn" style="width:240px;">Continue with Google</button>
   <div class="error-text" id="gateError"></div>
-  <button class="btn btn-outline" id="gateAdminLoginBtn" style="color:var(--navy);border:1px solid var(--border);width:220px;margin-top:6px;">Admin sign in instead</button>
+  <button class="btn btn-outline" id="gateAdminLoginBtn" style="color:var(--navy);border:1px solid var(--border);width:240px;margin-top:6px;">Admin sign in</button>
 </div>
 
 <header>
@@ -569,10 +567,6 @@
   <div class="modal">
     <button class="close-x" data-close="appSettingsModal">&times;</button>
     <h2>App settings (admin)</h2>
-    <div class="field">
-      <label>App password</label>
-      <input type="text" id="appSettingsPassword" placeholder="Leave blank for no password" />
-    </div>
     <div class="section-label">Project Report task columns</div>
     <div id="projectColumnsSettings"></div>
     <div class="modal-actions" style="margin-top:8px;">
@@ -584,9 +578,9 @@
     <div class="modal-actions" style="margin-top:8px;">
       <button class="btn btn-light" id="addDailyColumnBtn" style="width:100%;">+ Add Daily Task Field</button>
     </div>
-    <div class="hint">These fields control the form staff see after Google verification. Required fields must be completed before the report can be saved. The field order here is the order shown on the staff form and in the PDF.</div>
+    <div class="hint">These fields control the form staff see after Google verification. Required fields must be completed before the report can be saved. For any field, you can enable optional image attachments (up to 3 images, from camera or gallery). The field order here is the order shown on the staff form and in the PDF.</div>
     <div class="section-label">Admin Password</div>
-    <div class="hint">Set or update a password for your admin account (<b id="adminPasswordForEmail"></b>) so "Admin sign in" works as a backup alongside Google Sign-In. If you've never set one (or aren't sure), just set one here now.</div>
+    <div class="hint">Set or update the Firebase Authentication password for your admin account (<b id="adminPasswordForEmail"></b>). This is a real Firebase credential, not an app-level password stored in Firestore.</div>
     <div class="field"><label>New password</label><input type="password" id="adminNewPassword" placeholder="At least 6 characters" /></div>
     <div class="field"><label>Confirm password</label><input type="password" id="adminNewPasswordConfirm" placeholder="Retype password" /></div>
     <div class="error-text" id="adminPasswordError"></div>
@@ -951,6 +945,9 @@ let dailyVerificationMode = "new"; // "new" | "resubmit"
 let dailyResubmitId = null;
 let dailyReviewId = null;
 let selectedDailyRating = 0;
+// Optional images attached to Daily Task Report fields.
+// Each image-enabled field can hold up to 3 compressed images.
+let dailyImageDrafts = {};
 
 let activeStream = null;
 let currentSnagForClose = null;
@@ -988,7 +985,6 @@ document.querySelectorAll('[data-close="projectTaskProjectSelectModal"], [data-c
 document.querySelectorAll('[data-close="dailyTaskFormModal"]').forEach(btn=>{
   btn.addEventListener("click", ()=>{
     if(dailyVerificationMode){
-      signOut(auth).catch(err=>console.error("Could not sign out after Daily Task Report flow", err));
       dailyVerificationMode = "new";
       dailyResubmitId = null;
     }
@@ -1082,7 +1078,15 @@ const googleProvider = new GoogleAuthProvider();
 onAuthStateChanged(auth, async (user)=>{
   if(!user){
     if(authorizedStaffUnsub){ authorizedStaffUnsub(); authorizedStaffUnsub = null; }
-    signInAnonymously(auth).catch(err=> console.error("Anon sign-in failed", err));
+    currentUser = null;
+    isAdmin = false;
+    isVerifiedStaff = false;
+    isAuthorizedStaffVerified = false;
+    authorizedStaffProjectIds = [];
+    appUnlocked = false;
+    $("loadingScreen").style.display = "none";
+    $("passwordGate").style.display = "flex";
+    $("gateError").textContent = "";
     return;
   }
   currentUser = user;
@@ -1164,28 +1168,9 @@ onAuthStateChanged(auth, async (user)=>{
     pendingVerifyAction = null;
   }
 
-  // Admins who sign in directly (email + password) always bypass the app
-  // password gate — their own credentials are the stronger check.
-  if(isAdmin) appUnlocked = true;
-
-  if(!appUnlocked){
-    try{
-      const snap = await getDoc(doc(db, "settings", "appAccess"));
-      appPassword = (snap.exists() && snap.data().password) ? String(snap.data().password) : "";
-    }catch(e){
-      console.error("Could not load app password setting", e);
-      appPassword = "";
-    }
-    if(appPassword){
-      $("loadingScreen").style.display = "none";
-      $("gatePasswordInput").value = "";
-      $("gateError").textContent = "";
-      $("passwordGate").style.display = "flex";
-      return; // wait for the gate to be unlocked before showing the app
-    }
-    appUnlocked = true; // no password configured yet — open access
-  }
-
+  // Firebase Authentication is now the app entry gate. There is no
+  // client-side Firestore app password to retrieve or bypass.
+  appUnlocked = true;
   unlockApp();
 });
 
@@ -1205,17 +1190,17 @@ function unlockApp(){
   startProjectListeners();
 }
 
-$("gateSubmitBtn").addEventListener("click", ()=>{
-  const val = $("gatePasswordInput").value;
-  if(val === appPassword){
-    appUnlocked = true;
-    unlockApp();
-  } else {
-    $("gateError").textContent = "Incorrect password.";
+$("gateGoogleLoginBtn").addEventListener("click", async ()=>{
+  $("gateGoogleLoginBtn").disabled = true;
+  $("gateError").textContent = "";
+  try{
+    await signInWithPopup(auth, googleProvider);
+  }catch(err){
+    console.error("Google app sign-in failed", err);
+    if(err.code !== "auth/popup-closed-by-user" && err.code !== "auth/cancelled-popup-request")
+      $("gateError").textContent = `Sign in failed (${err.code || err.message || "unknown error"}).`;
   }
-});
-$("gatePasswordInput").addEventListener("keydown", (e)=>{
-  if(e.key === "Enter") $("gateSubmitBtn").click();
+  $("gateGoogleLoginBtn").disabled = false;
 });
 $("gateAdminLoginBtn").addEventListener("click", ()=>{
   $("loginError").textContent = "";
@@ -1260,7 +1245,6 @@ function renderAuthBox(){
     $("logoutBtn").addEventListener("click", ()=> signOut(auth));
     $("staffAccessBtn").addEventListener("click", openStaffAccessAdminModal);
     $("appSettingsBtn").addEventListener("click", ()=>{
-      $("appSettingsPassword").value = appPassword || "";
       renderProjectColumnsSettings();
       renderDailyColumnsSettings();
       $("appSettingsError").textContent = "";
@@ -1409,16 +1393,13 @@ function applyProjectFieldLabels(){
 }
 
 $("saveAppSettingsBtn").addEventListener("click", async ()=>{
-  const val = $("appSettingsPassword").value.trim();
   projectColumns=normalizeProjectColumns(projectColumns).filter(c=>String(c.label||"").trim());
   projectColumns.forEach(c=>c.label=String(c.label).trim());
   $("appSettingsError").textContent = "";
   $("saveAppSettingsBtn").disabled = true;
   try{
-    await setDoc(doc(db, "settings", "appAccess"), { password: val }, { merge: true });
     await setDoc(doc(db, "settings", "projectTaskLabels"), { columns: projectColumns }, { merge: true });
     await setDoc(doc(db, "settings", "dailyTaskReportLabels"), { columns: dailyTaskColumns }, { merge: true });
-    appPassword = val;
     renderProjectColumnsSettings();
     applyProjectFieldLabels();
     hideModal("appSettingsModal");
@@ -3083,7 +3064,8 @@ function normalizeDailyTaskColumns(raw){
     key:String(c.key || `daily_col_${Date.now()}_${i}`),
     label:String(c.label || `Column ${i+1}`),
     required:!!c.required,
-    filledBy:"staff"
+    filledBy:"staff",
+    imageEnabled:!!c.imageEnabled
   }));
 }
 
@@ -3121,9 +3103,13 @@ function renderDailyColumnsSettings(){
       <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-muted);margin-top:6px;">
         <input type="checkbox" class="daily-column-staff-filled" checked disabled /> Filled in by staff
       </label>
+      <label style="display:flex;align-items:center;gap:7px;font-size:12px;color:var(--text-muted);margin-top:6px;">
+        <input type="checkbox" class="daily-column-images" ${c.imageEnabled?'checked':''} /> Allow up to 3 images (optional)
+      </label>
     </div>`).join("");
   box.querySelectorAll(".daily-column-name").forEach((input,i)=>input.addEventListener("input",()=>dailyTaskColumns[i].label=input.value));
   box.querySelectorAll(".daily-column-required").forEach((input,i)=>input.addEventListener("change",()=>dailyTaskColumns[i].required=input.checked));
+  box.querySelectorAll(".daily-column-images").forEach((input,i)=>input.addEventListener("change",()=>dailyTaskColumns[i].imageEnabled=input.checked));
   box.querySelectorAll(".daily-col-up").forEach(btn=>btn.addEventListener("click",()=>moveDailyColumn(btn.dataset.key,-1)));
   box.querySelectorAll(".daily-col-down").forEach(btn=>btn.addEventListener("click",()=>moveDailyColumn(btn.dataset.key,1)));
   box.querySelectorAll(".daily-col-delete").forEach(btn=>btn.addEventListener("click",()=>deleteDailyColumn(btn.dataset.key)));
@@ -3142,11 +3128,77 @@ async function deleteDailyColumn(key){
 }
 $("addDailyColumnBtn").addEventListener("click",()=>{
   const key=`daily_col_${Date.now()}_${Math.random().toString(36).slice(2,7)}`;
-  dailyTaskColumns.push({key,label:"New Column",required:false,filledBy:"staff"});
+  dailyTaskColumns.push({key,label:"New Column",required:false,filledBy:"staff",imageEnabled:false});
   renderDailyColumnsSettings();
   const inputs=document.querySelectorAll("#dailyColumnsSettings .daily-column-name");
   const last=inputs[inputs.length-1]; if(last){last.focus();last.select();}
 });
+
+function compressDailyImageFile(file, maxDim=700, quality=0.40){
+  return new Promise((resolve,reject)=>{
+    const reader=new FileReader();
+    reader.onload=()=>{
+      const img=new Image();
+      img.onload=()=>{
+        const scale=Math.min(1,maxDim/Math.max(img.width,img.height));
+        const canvas=document.createElement("canvas");
+        canvas.width=Math.max(1,Math.round(img.width*scale));
+        canvas.height=Math.max(1,Math.round(img.height*scale));
+        const ctx=canvas.getContext("2d");
+        ctx.drawImage(img,0,0,canvas.width,canvas.height);
+        let dataUrl = canvas.toDataURL("image/jpeg",quality);
+        // Keep stored image data small. If still unusually large, reduce once more.
+        if(dataUrl.length > 350000){
+          dataUrl = canvas.toDataURL("image/jpeg",0.28);
+        }
+        resolve(dataUrl);
+      };
+      img.onerror=()=>reject(new Error("Could not read that image."));
+      img.src=reader.result;
+    };
+    reader.onerror=()=>reject(new Error("Could not read that file."));
+    reader.readAsDataURL(file);
+  });
+}
+
+function renderDailyImagePreviews(key){
+  const box=document.querySelector(`.daily-image-previews[data-key="${CSS.escape(key)}"]`);
+  if(!box) return;
+  const images=Array.isArray(dailyImageDrafts[key]) ? dailyImageDrafts[key] : [];
+  box.innerHTML=images.map((src,i)=>`
+    <div style="position:relative;width:82px;">
+      <img src="${src}" style="width:82px;height:70px;object-fit:cover;border-radius:8px;border:1px solid var(--border);display:block;" />
+      <button type="button" class="btn btn-red daily-image-remove" data-key="${escapeHtml(key)}" data-index="${i}" style="position:absolute;top:2px;right:2px;width:24px;height:24px;padding:0;border-radius:50%;font-size:14px;">×</button>
+    </div>`).join("");
+  box.querySelectorAll(".daily-image-remove").forEach(btn=>btn.addEventListener("click",()=>{
+    const k=btn.dataset.key, idx=Number(btn.dataset.index);
+    if(Array.isArray(dailyImageDrafts[k])) dailyImageDrafts[k].splice(idx,1);
+    renderDailyImagePreviews(k);
+  }));
+}
+
+async function addDailyImagesFromFiles(key, fileList){
+  const current=Array.isArray(dailyImageDrafts[key]) ? dailyImageDrafts[key] : [];
+  const files=Array.from(fileList||[]).filter(f=>f && String(f.type||"").startsWith("image/"));
+  if(!files.length) return;
+  const remaining=Math.max(0,3-current.length);
+  if(!remaining){
+    alert("Maximum 3 images allowed for this field.");
+    return;
+  }
+  if(files.length>remaining) alert("Only 3 images are allowed for each image-enabled field. Extra images were not added.");
+  for(const file of files.slice(0,remaining)){
+    try{
+      const dataUrl=await compressDailyImageFile(file);
+      current.push(dataUrl);
+    }catch(err){
+      console.error(err);
+      alert("Could not add one of the selected images.");
+    }
+  }
+  dailyImageDrafts[key]=current;
+  renderDailyImagePreviews(key);
+}
 
 function renderDailyTaskForm(values={}){
   const box=$("dailyTaskDynamicFields");
@@ -3157,16 +3209,55 @@ function renderDailyTaskForm(values={}){
   }
   box.innerHTML=dailyTaskColumns.map(c=>{
     const v=values[c.key] ?? "";
-    return `<div class="field"><label>${escapeHtml(c.label)}${c.required?'':' (optional)'}</label><input type="text" id="dailyCol_${escapeHtml(c.key)}" value="${escapeHtml(String(v))}" placeholder="${escapeHtml(c.label)}" /></div>`;
+    const imageHtml=c.imageEnabled ? `
+      <div style="margin-top:7px;">
+        <div style="font-size:12px;color:var(--text-muted);margin-bottom:6px;">Images (optional, maximum 3)</div>
+        <div style="display:flex;gap:7px;flex-wrap:wrap;">
+          <button type="button" class="btn btn-light daily-camera-btn" data-key="${escapeHtml(c.key)}">Camera</button>
+          <button type="button" class="btn btn-light daily-gallery-btn" data-key="${escapeHtml(c.key)}">Gallery</button>
+        </div>
+        <input type="file" accept="image/*" capture="environment" class="daily-camera-input" data-key="${escapeHtml(c.key)}" style="display:none;" />
+        <input type="file" accept="image/*" multiple class="daily-gallery-input" data-key="${escapeHtml(c.key)}" style="display:none;" />
+        <div class="daily-image-previews" data-key="${escapeHtml(c.key)}" style="display:flex;gap:7px;flex-wrap:wrap;margin-top:8px;"></div>
+      </div>` : "";
+    return `<div class="field">
+      <label>${escapeHtml(c.label)}${c.required?'':' (optional)'}</label>
+      <input type="text" id="dailyCol_${escapeHtml(c.key)}" value="${escapeHtml(String(v))}" placeholder="${escapeHtml(c.label)}" />
+      ${imageHtml}
+    </div>`;
   }).join("");
+
+  box.querySelectorAll(".daily-camera-btn").forEach(btn=>btn.addEventListener("click",()=>{
+    const input=box.querySelector(`.daily-camera-input[data-key="${CSS.escape(btn.dataset.key)}"]`);
+    if(input) input.click();
+  }));
+  box.querySelectorAll(".daily-gallery-btn").forEach(btn=>btn.addEventListener("click",()=>{
+    const input=box.querySelector(`.daily-gallery-input[data-key="${CSS.escape(btn.dataset.key)}"]`);
+    if(input) input.click();
+  }));
+  box.querySelectorAll(".daily-camera-input,.daily-gallery-input").forEach(input=>input.addEventListener("change",async()=>{
+    await addDailyImagesFromFiles(input.dataset.key,input.files);
+    input.value="";
+  }));
+  dailyTaskColumns.filter(c=>c.imageEnabled).forEach(c=>renderDailyImagePreviews(c.key));
 }
+
 function collectDailyTaskValues(){
   const out={};
-  dailyTaskColumns.forEach(c=>{const el=$("dailyCol_"+c.key); out[c.key]=el ? el.value.trim() : "";});
+  dailyTaskColumns.forEach(c=>{
+    const el=$("dailyCol_"+c.key);
+    out[c.key]=el ? el.value.trim() : "";
+  });
   return out;
 }
+
 function openDailyTaskForm(report=null){
   const values=report && report.fields ? report.fields : {};
+  dailyImageDrafts={};
+  dailyTaskColumns.filter(c=>c.imageEnabled).forEach(c=>{
+    const existing=report && report.images && Array.isArray(report.images[c.key]) ? report.images[c.key] : [];
+    dailyImageDrafts[c.key]=existing.slice(0,3);
+  });
   $("dailyTaskFormTitle").textContent=report ? "Resubmit Daily Task Report" : "New Daily Task Report";
   $("dailyTaskFormDateHint").textContent=report ? `Original report date: ${report.reportDateKey || fmtDateOnly(report.createdAt)}` : `Report date: ${fmtDateOnly(new Date())}`;
   $("dailyTaskFormError").textContent="";
@@ -3236,6 +3327,16 @@ function renderDailyTaskList(){
           <p class="card-title" style="display:flex;align-items:center;gap:7px;flex-wrap:wrap;">${dailyStatusBadge(r.status)} <span>${escapeHtml(r.fields?.task || "Daily Task Report")}</span></p>
           <div class="meta">Report date: ${escapeHtml(dailyReportDateKey(r))} · Submitted: ${escapeHtml(fmtDate(r.createdAt))}${r.submittedByEmail?` · ${escapeHtml(r.submittedByEmail)}`:""}</div>
           ${fields}
+          ${Object.values(r.images||{}).flat().length ? `
+            <div style="display:flex;gap:7px;flex-wrap:wrap;margin-top:8px;">
+              ${Object.entries(r.images||{}).flatMap(([key,imgs])=>{
+                const col=dailyTaskColumns.find(c=>c.key===key);
+                return (Array.isArray(imgs)?imgs:[]).slice(0,3).map((src,i)=>`
+                  <a href="${src}" target="_blank" rel="noopener" title="${escapeHtml(col?col.label:key)} image ${i+1}">
+                    <img src="${src}" style="width:72px;height:62px;object-fit:cover;border-radius:7px;border:1px solid var(--border);" />
+                  </a>`);
+              }).join("")}
+            </div>` : ""}
           ${r.status==="approved" ? `<div style="margin-top:7px;font-weight:700;">Rating: ${escapeHtml(dailyStars(r.rating))}</div>` : ""}
           ${r.approvalNote ? `<div class="hint" style="margin-top:7px;"><b>Approval note:</b> ${escapeHtml(r.approvalNote)}</div>` : ""}
           ${r.rejectionNote ? `<div class="hint" style="margin-top:7px;color:#b91c1c;"><b>Rejection note:</b> ${escapeHtml(r.rejectionNote)}</div>` : ""}
@@ -3319,6 +3420,23 @@ function generateDailyTaskPdf(items){
     if(r.rating){pdf.text(`Rating: ${r.rating}/5`,margin,y);y+=13;}
     if(r.approvalNote){const lines=pdf.splitTextToSize(`Approval note: ${r.approvalNote}`,width);pdf.text(lines,margin,y);y+=lines.length*11+2;}
     if(r.rejectionNote){const lines=pdf.splitTextToSize(`Rejection note: ${r.rejectionNote}`,width);pdf.text(lines,margin,y);y+=lines.length*11+2;}
+    const imageEntries=Object.entries(r.images||{}).flatMap(([key,imgs])=>(Array.isArray(imgs)?imgs:[]).slice(0,3).map((src,i)=>({key,src,i})));
+    if(imageEntries.length){
+      const imageLabelWidth=130, imageW=120, imageH=88, gap=10;
+      pdf.setFontSize(9); pdf.text("Images:",margin,y); y+=12;
+      for(let i=0;i<imageEntries.length;i++){
+        if(y+imageH>pageH-45){pdf.addPage();y=50;}
+        const x=margin+(i%3)*(imageW+gap);
+        if(i%3===0 && x!==margin) y+=imageH+gap;
+        try{
+          pdf.addImage(imageEntries[i].src,"JPEG",x,y,imageW,imageH);
+          pdf.setFontSize(7);
+          const col=dailyTaskColumns.find(c=>c.key===imageEntries[i].key);
+          pdf.text(`${col?col.label:imageEntries[i].key} ${imageEntries[i].i+1}`,x,y+imageH+9);
+        }catch(e){ console.warn("Could not add Daily Task image to PDF",e); }
+        if(i%3===2 || i===imageEntries.length-1) y+=imageH+18;
+      }
+    }
     pdf.setDrawColor(220);pdf.line(margin,y+4,margin+width,y+4);y+=18;
   });
   const suffix=items.length===1 ? sanitizeForFilename(items[0].fields?.task||"Daily_Task") : `Selected_${items.length}`;
@@ -3377,11 +3495,11 @@ $("saveDailyTaskBtn").addEventListener("click",async()=>{
   $("saveDailyTaskBtn").disabled=true;$("dailyTaskFormError").textContent="";
   try{
     if(dailyVerificationMode==="resubmit" && dailyResubmitId){
-      await updateDoc(doc(db,"dailyTaskReports",dailyResubmitId),{fields:values,status:"pending",reportDateKey:dailyReportDateKey(allDailyTaskReports.find(r=>r.id===dailyResubmitId)||{}),resubmittedAt:serverTimestamp(),resubmittedBy:currentUser.email,rejectionNote:null,updatedAt:serverTimestamp()});
+      await updateDoc(doc(db,"dailyTaskReports",dailyResubmitId),{fields:values,images:dailyImageDrafts,status:"pending",reportDateKey:dailyReportDateKey(allDailyTaskReports.find(r=>r.id===dailyResubmitId)||{}),resubmittedAt:serverTimestamp(),resubmittedBy:currentUser.email,rejectionNote:null,updatedAt:serverTimestamp()});
     }else{
-      await addDoc(collection(db,"dailyTaskReports"),{fields:values,status:"pending",reportDateKey:fmtDateOnly(new Date()),submittedByEmail:currentUser.email,submittedByUid:currentUser.uid,createdAt:serverTimestamp(),updatedAt:serverTimestamp(),rating:null,approvalNote:null,rejectionNote:null});
+      await addDoc(collection(db,"dailyTaskReports"),{fields:values,images:dailyImageDrafts,status:"pending",reportDateKey:fmtDateOnly(new Date()),submittedByEmail:currentUser.email,submittedByUid:currentUser.uid,createdAt:serverTimestamp(),updatedAt:serverTimestamp(),rating:null,approvalNote:null,rejectionNote:null});
     }
-    dailyVerificationMode="new";dailyResubmitId=null;hideModal("dailyTaskFormModal");await signOut(auth);
+    dailyVerificationMode="new";dailyResubmitId=null;hideModal("dailyTaskFormModal");
   }catch(err){console.error(err);$("dailyTaskFormError").textContent="Could not save the report. Check your connection and try again.";}
   $("saveDailyTaskBtn").disabled=false;
 });
@@ -4112,7 +4230,7 @@ function openTaskRatingModal(id){
   const t = allProjectTasks.find(x=>x.id===id);
   const staffCol = projectColumns.find(c=>c.key==="staffName");
   const staffName = (t && staffCol) ? (getProjectTaskValue(t, staffCol) || "the assigned staff") : "the assigned staff";
-  $("taskRatingHint").textContent = `Rate ${staffName}'s work on this task (optional — tap Skip to leave it unrated).`;
+  $("taskRatingHint").textContent = `Rate ${staffName}'s work on this task after approval (optional — tap Skip to leave it unrated).`;
   $("taskRatingError").textContent = "";
   renderTaskRatingStars();
   showModal("taskRatingModal");
@@ -4476,10 +4594,8 @@ function openNewWorkReportForm(){
 
 // Unlike the staff "Verify email" flow, this never checks an approval list
 // and never grants elevated permissions — it exists purely so a Service
-// Action Report can be attributed to a real Google account rather than
-// letting any anonymous visitor submit one under any typed name. Signs
-// back out to anonymous immediately after, so it can't accidentally leave
-// someone with staff-level UI showing.
+// Action Report is attributed to the currently authenticated Google account.
+// Elevated staff permissions are still enforced independently by Firestore rules.
 $("workVerifyGoogleBtn").addEventListener("click", async ()=>{
   $("workVerifyError").textContent = "";
   $("workVerifyGoogleBtn").disabled = true;
@@ -4501,7 +4617,6 @@ $("workVerifyGoogleBtn").addEventListener("click", async ()=>{
         action: "Service Action Report"
       });
     }catch(e){ console.error("Could not record service action report verification", e); }
-    await signOut(auth);
     verifiedWorkReportEmail = email;
     hideModal("workVerifyModal");
     openNewWorkReportForm();
@@ -4573,8 +4688,8 @@ $("fab").addEventListener("click", async ()=>{
 // and the isAuthorizedStaff() Firestore rule both work exactly as before.
 // Project Reports + Progress Report Google check. This deliberately does NOT
 // use authorizedStaff (no admin allow-list approval needed — any Google
-// account qualifies). The session is kept signed in only for the duration of
-// this Progress Report flow, then signed back out to anonymous afterward.
+// account qualifies). The authenticated session remains active for the app;
+// Firestore rules decide which actions the account can perform.
 $("projectTaskVerifyGoogleBtn").addEventListener("click", async ()=>{
   $("projectTaskVerifyError").textContent = "";
   $("projectTaskVerifyGoogleBtn").disabled = true;
@@ -4593,11 +4708,9 @@ $("projectTaskVerifyGoogleBtn").addEventListener("click", async ()=>{
         action: "Project Progress Report (user)"
       });
     }catch(e){ console.error("Could not record project progress verification", e); }
-    // Stay signed in (Google-verified, not anonymous) just long enough to use
-    // the Progress Report. Signed back out automatically once the user leaves
-    // this flow (see maybeSignOutAfterFabFlow), so it still doesn't turn into
-    // a standing elevated/assigned staff session.
-    pendingFabSignOut = true;
+    // Stay signed in. Being signed in does not itself grant admin/staff
+    // permissions; Firestore rules enforce those separately.
+    pendingFabSignOut = false;
     hideModal("projectTaskVerifyModal");
     openProjectTaskProjectSelector("progressOnly");
   }catch(err){
@@ -4647,9 +4760,8 @@ $("verifyGoogleBtn").addEventListener("click", async ()=>{
       $("verifyEmailError").textContent = `${email} hasn't been added by your admin yet.`;
       $("verifyEmailRequestAccessBtn").setAttribute("data-email", email);
       $("verifyEmailRequestAccessBtn").style.display = "block";
-      // Don't leave them signed in as an unapproved Google account — back
-      // to anonymous until the admin approves them.
-      await signOut(auth);
+      // Keep the authenticated Google session. The Firestore rules still
+      // prevent elevated staff actions until the admin approves this email.
       $("verifyGoogleBtn").disabled = false;
       return;
     }
