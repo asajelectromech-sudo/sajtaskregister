@@ -581,7 +581,7 @@
     <div class="hint">These fields control the form staff see after Google verification. Required fields must be completed before the report can be saved. For any field, you can enable optional image attachments (up to 3 images, from camera or gallery). The field order here is the order shown on the staff form and in the PDF.</div>
     <div class="section-label">Admin Password</div>
     <div class="hint">Set or update the Firebase Authentication password for your admin account (<b id="adminPasswordForEmail"></b>). This is a real Firebase credential, not an app-level password stored in Firestore.</div>
-    <div class="field"><label>New password</label><input type="password" id="adminNewPassword" placeholder="At least 6 characters" /></div>
+    <div class="field"><label>New password</label><input type="password" id="adminNewPassword" placeholder="At least 4 characters" /></div>
     <div class="field"><label>Confirm password</label><input type="password" id="adminNewPasswordConfirm" placeholder="Retype password" /></div>
     <div class="error-text" id="adminPasswordError"></div>
     <div class="modal-actions" style="margin-top:4px;">
@@ -1424,7 +1424,7 @@ $("setAdminPasswordBtn").addEventListener("click", async ()=>{
   const pw2 = $("adminNewPasswordConfirm").value;
   $("adminPasswordError").style.color = "";
   $("adminPasswordError").textContent = "";
-  if(pw1.length < 6){ $("adminPasswordError").textContent = "Password must be at least 6 characters."; return; }
+  if(pw1.length < 4){ $("adminPasswordError").textContent = "Password must be at least 4 characters."; return; }
   if(pw1 !== pw2){ $("adminPasswordError").textContent = "Passwords don't match."; return; }
   $("setAdminPasswordBtn").disabled = true;
   try{
