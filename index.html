@@ -830,6 +830,16 @@
   </div>
 </div>
 
+<div class="modal-overlay modal-overlay-top" id="prRatingModal">
+  <div class="modal">
+    <h2>Rate Progress Report job</h2>
+    <p class="hint" id="prRatingHint"></p>
+    <div id="prRatingStars" style="font-size:34px;letter-spacing:8px;text-align:center;margin:16px 0;"></div>
+    <div class="error-text" id="prRatingError"></div>
+    <div class="modal-actions"><button class="btn btn-light" id="prRatingCancelBtn">Cancel</button><button class="btn btn-primary" id="prRatingSaveBtn">Approve &amp; Save rating</button></div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="prCustomizeModal">
   <div class="modal">
     <button class="close-x" data-close="prCustomizeModal">&times;</button>
@@ -1007,24 +1017,59 @@ function hasStaffPermission(key){
   return LEGACY_STAFF_PERMISSIONS[key] === true;
 }
 
-// Mobile browser back/swipe support for the two main report modals. Opening a
-// report creates a temporary history entry; the native back button or edge
-// swipe closes that report instead of navigating away from the app.
+// Mobile browser back/swipe support. The Progress Report keeps a small
+// navigation stack so the native Back button / edge swipe retraces the exact
+// path the user took: job -> item -> parent item -> Fill Progress -> close.
 let reportModalHistoryId = null;
+let prMobileHistory = [];
+let prMobileHistoryHandling = false;
 function pushReportModalHistory(id){
   if(reportModalHistoryId) return;
   reportModalHistoryId=id;
-  history.pushState({sajReportModal:id},"",location.href);
+  prMobileHistory = id === "prModal" ? [{tab:"fill",path:[],jobId:null}] : [];
+  history.pushState({sajReportModal:id,sajPrStep:0},"",location.href);
+}
+function pushPrMobileStep(step){
+  if(reportModalHistoryId !== "prModal") return;
+  prMobileHistory.push({...step});
+  history.pushState({sajReportModal:"prModal",sajPrStep:prMobileHistory.length-1},"",location.href);
+}
+function applyPrMobileStep(step){
+  if(!step) return;
+  prSetActiveTab(step.tab || "fill");
+  prSelectedPath = Array.isArray(step.path) ? step.path.slice() : [];
+  prExpandedJobId = step.jobId || null;
+  if(step.tab === "fill") renderPrFillView();
 }
 function clearReportModalHistory(){
   if(!reportModalHistoryId) return;
+  const id=reportModalHistoryId;
+  const steps = id === "prModal" ? Math.max(1, prMobileHistory.length) : 1;
   reportModalHistoryId=null;
-  if(history.state && history.state.sajReportModal) history.back();
+  prMobileHistory=[];
+  if(id === "prModal" && history.state && history.state.sajReportModal){
+    prMobileHistoryHandling = true;
+    history.go(-steps);
+    setTimeout(()=>{ prMobileHistoryHandling=false; },250);
+  } else if(history.state && history.state.sajReportModal){
+    history.back();
+  }
 }
 window.addEventListener("popstate",()=>{
+  if(prMobileHistoryHandling) return;
   const id=reportModalHistoryId;
-  reportModalHistoryId=null;
   if(!id) return;
+  if(id === "prModal" && prMobileHistory.length > 1){
+    prMobileHistory.pop();
+    const previous = prMobileHistory[prMobileHistory.length-1];
+    applyPrMobileStep(previous);
+    // Keep one history entry for the now-current in-app step so another
+    // swipe/back continues walking backward through the report.
+    history.pushState({sajReportModal:"prModal",sajPrStep:prMobileHistory.length-1},"",location.href);
+    return;
+  }
+  reportModalHistoryId=null;
+  prMobileHistory=[];
   const el=$(id);
   if(el && el.classList.contains("show")) el.classList.remove("show");
   if(id==="prModal"){ prCleanupListeners(); maybeSignOutAfterFabFlow(); }
@@ -3798,12 +3843,22 @@ function renderProgressApprovalBanner(){
 
   const byProject = {};
   allSubmittedProgressJobs.forEach(j=>{
-    if(!byProject[j.projectId]) byProject[j.projectId] = 0;
-    byProject[j.projectId]++;
+    if(!byProject[j.projectId]) byProject[j.projectId] = [];
+    byProject[j.projectId].push(j);
   });
   const items = Object.keys(byProject).filter(pid=> canAccessProject(pid)).map(pid=>{
     const project = allProjects.find(p=>p.id===pid);
-    return { projectId: pid, projectName: project ? (project.name||"Project") : "Project", count: byProject[pid] };
+    const jobs = byProject[pid];
+    const latest = jobs.reduce((a,b)=>{
+      const ta=a.submittedAt||a.updatedAt||a.createdAt, tb=b.submittedAt||b.updatedAt||b.createdAt;
+      const na=ta&&ta.toDate?ta.toDate().getTime():new Date(ta||0).getTime(), nb=tb&&tb.toDate?tb.toDate().getTime():new Date(tb||0).getTime();
+      return nb>na?b:a;
+    });
+    return { projectId: pid, projectName: project ? (project.name||"Project") : "Project", count: jobs.length, notificationAt: latest.submittedAt||latest.updatedAt||latest.createdAt };
+  }).sort((a,b)=>{
+    const da=a.notificationAt&&a.notificationAt.toDate?a.notificationAt.toDate().getTime():new Date(a.notificationAt||0).getTime();
+    const db=b.notificationAt&&b.notificationAt.toDate?b.notificationAt.toDate().getTime():new Date(b.notificationAt||0).getTime();
+    return db-da;
   });
   if(!items.length){ box.style.display="none"; box.innerHTML=""; return; }
 
@@ -3816,7 +3871,7 @@ function renderProgressApprovalBanner(){
           Progress Report — awaiting approval
         </p>
         ${items.map(i=>`
-          <div class="detail-row" style="cursor:pointer;color:var(--blue);" data-progress-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${i.count} job(s) awaiting approval</div>
+          <div class="detail-row" style="cursor:pointer;color:var(--blue);" data-progress-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${i.count} job(s) awaiting approval <span class="meta">· ${escapeHtml(fmtDate(i.notificationAt))}</span></div>
         `).join("")}
       </div>
     </div>`;
@@ -4640,7 +4695,7 @@ function prShowProjectActionChooser(p, createMode){
     });
   }
   document.getElementById("ptaskChooseProgress").addEventListener("click", ()=>{
-    hideModal("projectTaskProjectSelectModal");
+    // Keep the selector underneath so Back returns to the exact previous step.
     openProgressReport(p.id, p.name || "Project");
   });
   document.getElementById("ptaskChooseBack").addEventListener("click", ()=>{
@@ -5560,14 +5615,8 @@ function openProgressReport(projectId, projectName){
     alert("This project has not been assigned to your account by the admin.");
     return;
   }
-  // If Progress Report is opened from the Project Tasks modal, close that
-  // underlying modal first so one mobile back/swipe returns cleanly to the
-  // project list instead of exposing two report modals at once.
-  if($("projectTasksModal") && $("projectTasksModal").classList.contains("show")){
-    hideModal("projectTasksModal");
-    reportModalHistoryId=null;
-    if(history.state && history.state.sajReportModal) history.replaceState(null,"",location.href);
-  }
+  // Keep the Project Tasks modal underneath when Progress Report is opened
+  // from it. Mobile Back can therefore return to that exact previous screen.
   prCurrentProjectId = projectId;
   prCurrentProjectName = projectName || "Project";
   $("prTitle").textContent = `Progress Report — ${prCurrentProjectName}`;
@@ -5582,6 +5631,7 @@ function openProgressReport(projectId, projectName){
   prReportItemFilters = new Set();
   prReportDateFrom = "";
   prReportDateTo = "";
+  prReportRatingFilter = 0;
   prReportItemPickerOpen = false;
   prReportItemSearch = "";
   prReportSearchTerm = "";
@@ -5675,6 +5725,7 @@ function renderPrFillView(){
       const idx = parseInt(el.getAttribute("data-idx"), 10);
       prSelectedPath = idx < 0 ? [] : prSelectedPath.slice(0, idx+1);
       prExpandedJobId = null;
+      pushPrMobileStep({tab:"fill",path:prSelectedPath,jobId:null});
       renderPrFillView();
     });
   });
@@ -5682,6 +5733,7 @@ function renderPrFillView(){
     card.addEventListener("click", ()=>{
       prSelectedPath = [...prSelectedPath, card.getAttribute("data-drill-id")];
       prExpandedJobId = null;
+      pushPrMobileStep({tab:"fill",path:prSelectedPath,jobId:null});
       renderPrFillView();
     });
   });
@@ -5700,8 +5752,8 @@ function prStatusBadge(status){
 // sent back for rework (rejectionNote present), or — admin only — awaiting
 // approval. Shared by the tab badge and the tab's own render.
 function prNotifItems(){
-  const assigned = prJobs.filter(j=> j.assignedStaff && (j.status==="pending" || j.status==="in_progress"));
   const rejected = prJobs.filter(j=> j.status==="in_progress" && j.rejectionNote);
+  const assigned = prJobs.filter(j=> j.assignedStaff && (j.status==="pending" || j.status==="in_progress") && !j.rejectionNote);
   const awaiting = isAdmin ? prJobs.filter(j=> j.status==="submitted") : [];
   return { assigned, rejected, awaiting };
 }
@@ -5726,27 +5778,33 @@ function renderPrNotifView(){
   if(!box) return;
   if(!prCurrentProjectId){ box.innerHTML = ""; return; }
   const { assigned, rejected, awaiting } = prNotifItems();
+  const notificationItems = [
+    ...assigned.map(j=>({...j, _kind:"assigned", _at:j.assignedAt || j.updatedAt || j.createdAt})),
+    ...rejected.filter(j=>!assigned.some(a=>a.id===j.id)).map(j=>({...j, _kind:"rejected", _at:j.rejectedAt || j.updatedAt || j.createdAt})),
+    ...awaiting.map(j=>({...j, _kind:"awaiting", _at:j.submittedAt || j.updatedAt || j.createdAt}))
+  ].sort((a,b)=>{
+    const da=a._at && a._at.toDate ? a._at.toDate().getTime() : new Date(a._at||0).getTime();
+    const db=b._at && b._at.toDate ? b._at.toDate().getTime() : new Date(b._at||0).getTime();
+    return db-da;
+  });
 
-  if(!assigned.length && !rejected.length && !awaiting.length){
+  if(!notificationItems.length){
     box.innerHTML = `<div class="hint" style="text-align:center;padding:30px 10px;">No notifications right now.</div>`;
     return;
   }
 
-  const section = (title, list, html)=> list.length ? `
-    <div class="section-label" style="margin-top:14px;">${title} (${list.length})</div>
-    ${list.map(html).join("")}
-  ` : "";
+  const notifRows = notificationItems.map(j=>{
+    const kindLabel = j._kind==="awaiting" ? "Awaiting your approval" : j._kind==="rejected" ? "Sent back for rework" : "Assigned to staff";
+    const color = j._kind==="rejected" ? "var(--red)" : "var(--blue)";
+    const extra = j._kind==="awaiting"
+      ? `<div class="meta">${kindLabel} · Submitted by ${escapeHtml(j.submittedStaff || j.currentStaff || "")}${j.submittedBy ? ` (${escapeHtml(j.submittedBy)})` : ""}</div>`
+      : j._kind==="rejected"
+        ? `<div class="meta" style="color:${color};">${escapeHtml(j.rejectionNote||"")}</div>`
+        : `<div class="meta" style="color:${color};font-weight:700;">${kindLabel}: ${escapeHtml(j.assignedStaff||"")}</div>`;
+    return prNotifJobCard(j,{extra: extra + `<div class="meta" style="margin-top:3px;">${escapeHtml(fmtDate(j._at))}</div>`});
+  }).join("");
 
-  box.innerHTML =
-    section("Assigned to staff", assigned, j=> prNotifJobCard(j, {
-      extra: `<div class="meta" style="color:var(--blue);font-weight:700;">Assigned to: ${escapeHtml(j.assignedStaff)}</div>`
-    })) +
-    section("Sent back for rework", rejected, j=> prNotifJobCard(j, {
-      extra: `<div class="meta" style="color:var(--red);">${escapeHtml(j.rejectionNote||"")}</div>`
-    })) +
-    section("Awaiting your approval", awaiting, j=> prNotifJobCard(j, {
-      extra: `<div class="meta">Submitted by ${escapeHtml(j.submittedStaff || j.currentStaff || "")}${j.submittedBy ? ` (${escapeHtml(j.submittedBy)})` : ""}</div>`
-    }));
+  box.innerHTML = `<div class="section-label" style="margin-top:14px;">Newest first</div>${notifRows}`;
 
   box.querySelectorAll("[data-notif-job]").forEach(el=>{
     el.addEventListener("click", ()=>{
@@ -5755,6 +5813,7 @@ function renderPrNotifView(){
       if(!job) return;
       prSelectedPath = job.unitPath ? job.unitPath.split(">") : [];
       prExpandedJobId = jobId;
+      pushPrMobileStep({tab:"fill",path:prSelectedPath,jobId});
       prSetActiveTab("fill");
       renderPrFillView();
     });
@@ -5818,7 +5877,7 @@ function prRenderJobCard(j){
       <div class="card-body" style="width:100%;">
         <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;cursor:pointer;" data-job-toggle="${j.id}">
           <p class="card-title" style="margin:0;">${escapeHtml(j.jobLabel)}</p>
-          ${prStatusBadge(j.status)}
+          <span style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;justify-content:flex-end;">${j.rating ? `<span class="badge" style="background:#fff7ed;color:#b45309;">${'★'.repeat(Math.max(0,Math.min(5,Number(j.rating)||0)))}${'☆'.repeat(5-Math.max(0,Math.min(5,Number(j.rating)||0)))} ${Number(j.rating)}/5</span>` : ""}${prStatusBadge(j.status)}</span>
         </div>
         ${j.assignedStaff ? `<div class="meta" style="color:var(--blue);font-weight:700;">Assigned to: ${escapeHtml(j.assignedStaff)}</div>` : ""}
         ${j.currentStaff ? `<div class="meta">Last: ${escapeHtml(j.currentStaff)}${j.currentNote ? " — "+escapeHtml(j.currentNote) : ""}</div>` : ""}
@@ -5887,6 +5946,7 @@ function prWireJobCards(box){
     el.addEventListener("click", ()=>{
       const id = el.getAttribute("data-job-toggle");
       prExpandedJobId = (prExpandedJobId===id) ? null : id;
+      pushPrMobileStep({tab:"fill",path:prSelectedPath,jobId:prExpandedJobId});
       renderPrJobsChecklist();
     });
   });
@@ -6068,29 +6128,39 @@ async function prCompleteJob(jobId){
   }catch(err){ console.error(err); alert("Could not save. Check your connection and try again."); }
 }
 
+function renderPrRatingStars(){
+  const box=$("prRatingStars"); if(!box) return;
+  box.innerHTML=[1,2,3,4,5].map(n=>`<span class="rating-star" data-pr-star="${n}" style="cursor:pointer;color:${n<=selectedPrRating?'#f59e0b':'#d8dee5'};">★</span>`).join("");
+  box.querySelectorAll("[data-pr-star]").forEach(s=>s.addEventListener("click",()=>{ selectedPrRating=Number(s.getAttribute("data-pr-star")); renderPrRatingStars(); }));
+}
+function openPrRatingModal(jobId){
+  const job=prJobs.find(j=>j.id===jobId); if(!job) return;
+  prRatingJobId=jobId; selectedPrRating=0;
+  $("prRatingHint").textContent=`Rate the completed work for “${job.jobLabel||"this job"}” before approving it. A 1–5 star rating is required.`;
+  $("prRatingError").textContent=""; renderPrRatingStars(); showModal("prRatingModal");
+}
+async function savePrApprovalWithRating(){
+  if(!prRatingJobId) return;
+  if(selectedPrRating<1){ $("prRatingError").textContent="Please select a 1–5 star rating before approving."; return; }
+  const jobId=prRatingJobId, job=prJobs.find(j=>j.id===jobId); if(!job) return;
+  const staff=job.submittedStaff||job.currentStaff||"", note=job.submittedNote||job.currentNote||"";
+  const entry={date:new Date().toISOString().slice(0,10),staffName:staff,note:`Approved — ${selectedPrRating}/5 stars`,savedBy:currentUser?(currentUser.email||null):null,savedAt:Timestamp.now(),approved:true};
+  $("prRatingSaveBtn").disabled=true;
+  try{
+    await updateDoc(doc(db,"progressJobs",jobId),{
+      status:"done", completedStaff:staff, completedNote:note, completedAt:serverTimestamp(), completedBy:currentUser?(currentUser.email||null):null,
+      rating:selectedPrRating, ratedBy:currentUser?(currentUser.email||null):null, ratedAt:serverTimestamp(), logs:arrayUnion(entry), updatedAt:serverTimestamp()
+    });
+    prRatingJobId=null; selectedPrRating=0; hideModal("prRatingModal");
+  }catch(err){ console.error(err); $("prRatingError").textContent="Could not approve and save the rating. Check your connection and try again."; }
+  $("prRatingSaveBtn").disabled=false;
+}
+$("prRatingSaveBtn").addEventListener("click",savePrApprovalWithRating);
+$("prRatingCancelBtn").addEventListener("click",()=>{prRatingJobId=null;selectedPrRating=0;hideModal("prRatingModal");});
+
 async function prApproveJob(jobId){
   if(!isAdmin && !hasStaffPermission("progress.approve")) return;
-  const job = prJobs.find(j=> j.id===jobId);
-  if(!job) return;
-  const staff = job.submittedStaff || job.currentStaff || "";
-  const note = job.submittedNote || job.currentNote || "";
-  const entry = {
-    date: new Date().toISOString().slice(0,10),
-    staffName: staff, note: "Approved by admin",
-    savedBy: currentUser ? (currentUser.email||null) : null,
-    savedAt: Timestamp.now(),
-    approved: true
-  };
-  try{
-    await updateDoc(doc(db,"progressJobs",jobId), {
-      status: "done",
-      completedStaff: staff, completedNote: note,
-      completedAt: serverTimestamp(),
-      completedBy: currentUser ? (currentUser.email||null) : null,
-      logs: arrayUnion(entry),
-      updatedAt: serverTimestamp()
-    });
-  }catch(err){ console.error(err); alert("Could not approve. Check your connection and try again."); }
+  openPrRatingModal(jobId);
 }
 
 // Lets admin close a job outright, from any state short of already-done —
@@ -6261,6 +6331,9 @@ let prReportItemPickerOpen = false; // whether the multi-select item checklist i
 let prReportItemSearch = ""; // live filter text typed into the item picker's search box
 let prReportDateFrom = ""; // "YYYY-MM-DD" or "" — filters both the on-screen list and the PDF export by each job's last-activity date
 let prReportDateTo = ""; // "YYYY-MM-DD" or ""
+let prReportRatingFilter = 0; // 0 = all ratings; 1-5 = exact rating
+let prRatingJobId = null;
+let selectedPrRating = 0;
 const PR_FILTERS = [
   { key: "all", label: "All" },
   { key: "pending", label: "Pending" },
@@ -6314,6 +6387,7 @@ function prJobDateInScope(j){
 function prFilteredJobs(){
   let jobs = prJobsInItemScope(prJobs);
   if(prReportFilter.size > 0) jobs = jobs.filter(j=> prReportFilter.has(j.status));
+  if(prReportRatingFilter > 0) jobs = jobs.filter(j=> Number(j.rating||0) === prReportRatingFilter);
   jobs = jobs.filter(prJobDateInScope);
   const term = prReportSearchTerm.trim().toLowerCase();
   if(term) jobs = jobs.filter(j=> prJobMatchesSearch(j, term));
@@ -6363,7 +6437,7 @@ function renderPrReportView(){
     : prReportItemFilters.size === 1 ? pickedLabels[0]
     : `${prReportItemFilters.size} items selected`;
   const dateFilterActive = !!(prReportDateFrom || prReportDateTo);
-  const anyFilterActive = prReportFilter.size > 0 || prReportItemFilters.size > 0 || dateFilterActive || !!prReportSearchTerm.trim();
+  const anyFilterActive = prReportFilter.size > 0 || prReportItemFilters.size > 0 || dateFilterActive || !!prReportSearchTerm.trim() || prReportRatingFilter > 0;
 
   const itemSearchTerm = prReportItemSearch.trim().toLowerCase();
   // Matches on the item's own location label (Building / Floor / Unit) OR on
@@ -6394,6 +6468,10 @@ function renderPrReportView(){
     <div style="display:flex;gap:10px;">
       <div class="field" style="flex:1;"><label>From date</label><input type="date" id="prReportDateFrom" value="${escapeHtml(prReportDateFrom)}" /></div>
       <div class="field" style="flex:1;"><label>To date</label><input type="date" id="prReportDateTo" value="${escapeHtml(prReportDateTo)}" /></div>
+    </div>
+    <div class="field">
+      <label>Star rating</label>
+      <div class="chips" style="margin-top:4px;">${[0,1,2,3,4,5].map(n=>`<button type="button" class="chip pr-report-rating-filter${prReportRatingFilter===n?' active':''}" data-rating-filter="${n}">${n===0?'All ratings':`${'★'.repeat(n)} ${n}/5`}</button>`).join('')}</div>
     </div>`;
 
   if(!scopedJobs.length){
@@ -6548,6 +6626,10 @@ function prReportBindFilterControls(box){
   if(fromInput) fromInput.addEventListener("change", ()=>{ prReportDateFrom = fromInput.value; renderPrReportView(); });
   const toInput = document.getElementById("prReportDateTo");
   if(toInput) toInput.addEventListener("change", ()=>{ prReportDateTo = toInput.value; renderPrReportView(); });
+  box.querySelectorAll(".pr-report-rating-filter").forEach(btn=>btn.addEventListener("click", ()=>{
+    prReportRatingFilter = Number(btn.getAttribute("data-rating-filter")) || 0;
+    renderPrReportView();
+  }));
   const reportSearchInput = document.getElementById("prReportSearchInput");
   if(reportSearchInput){
     reportSearchInput.addEventListener("input", ()=>{
@@ -6586,6 +6668,7 @@ function prReportBindFilterControls(box){
 function prDownloadPdf(){
   if(!isAdmin && !isAuthorizedStaffVerified) return;
   const statusFilterLabel = prReportFilter.size===0 ? "All" : PR_FILTERS.filter(f=> prReportFilter.has(f.key)).map(f=> f.label).join(", ");
+  const ratingFilterLabel = prReportRatingFilter > 0 ? `${prReportRatingFilter}/5 stars` : "All ratings";
   const allItems = prFlattenTree();
   const pickedLabels = allItems.filter(u=> prReportItemFilters.has(u.unitPath)).map(u=> u.leafLabel);
   const itemFilterLabel = pickedLabels.join(", ");
@@ -6638,6 +6721,10 @@ function prDownloadPdf(){
     pdf.text(`Status filter: ${statusFilterLabel} only`, margin, y);
     y += 18;
   }
+  if(prReportRatingFilter > 0){
+    pdf.text(`Star rating filter: ${ratingFilterLabel}`, margin, y);
+    y += 18;
+  }
   y += 8;
   pdf.setFontSize(13);
   pdf.text((itemFilterLabel || dateFilterLabel) ? "Summary (filtered)" : "Summary (whole project)", margin, y);
@@ -6672,6 +6759,7 @@ function prDownloadPdf(){
     u.jobs.forEach(j=>{
       const statusLabel = j.status==="done" ? "Completed" : j.status==="submitted" ? "Awaiting approval" : j.status==="in_progress" ? "In progress" : "Pending";
       let line = `- ${j.jobLabel}: ${statusLabel}`;
+      if(j.rating) line += ` — Rating ${Number(j.rating)}/5`;
       if(j.status==="done") line += ` (by ${j.completedStaff||""}, ${fmtDate(j.completedAt)})`;
       else if(j.currentStaff) line += ` (last: ${j.currentStaff})`;
       const wrapped = pdf.splitTextToSize(line, 500);
