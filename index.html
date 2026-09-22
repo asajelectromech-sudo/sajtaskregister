@@ -338,7 +338,7 @@
 <div class="modal-overlay" id="editProjectModal">
   <div class="modal">
     <button class="close-x" data-close="editProjectModal">&times;</button>
-    <h2>Edit Project Report (admin)</h2>
+    <h2>Edit Project Report</h2>
     <div class="field"><label>Project name</label><input id="editProjectNameInput" type="text" /></div>
     <div class="error-text" id="editProjectError"></div>
     <div class="modal-actions">
@@ -745,11 +745,25 @@
   </div>
 </div>
 
+<!-- STAFF REPORT PERMISSIONS MODAL (admin only) -->
+<div class="modal-overlay" id="staffPermissionsModal">
+  <div class="modal">
+    <button class="close-x" data-close="staffPermissionsModal">&times;</button>
+    <h2>Report Permissions</h2>
+    <div class="hint">Choose which admin-like actions this verified staff member can perform. The same permissions are enforced by Firestore security rules.</div>
+    <div class="section-label" style="margin-top:14px;">Staff email</div>
+    <div id="staffPermissionsEmail" style="font-weight:700;"></div>
+    <div id="staffPermissionsList" style="margin-top:10px;"></div>
+    <div class="error-text" id="staffPermissionsError"></div>
+    <div class="modal-actions"><button class="btn btn-light" data-close="staffPermissionsModal">Cancel</button><button class="btn btn-primary" id="saveStaffPermissionsBtn">Save permissions</button></div>
+  </div>
+</div>
+
 <!-- EDIT WORK REPORT MODAL (admin only) -->
 <div class="modal-overlay" id="editWorkModal">
   <div class="modal">
     <button class="close-x" data-close="editWorkModal">&times;</button>
-    <h2>Edit service action report (admin)</h2>
+    <h2>Edit service action report</h2>
     <div class="field"><label>Site</label><input type="text" id="editWorkSite" /></div>
     <div class="field"><label>Location</label><input type="text" id="editWorkLocation" /></div>
     <div class="field"><label>Reporting staff</label><input type="text" id="editWorkReportedBy" /></div>
@@ -862,6 +876,7 @@ let isAdmin = false;
 let isVerifiedStaff = false; // signed in with a real, non-anonymous, non-admin email — this can ALSO be true for an unapproved Google account mid-way through the Progress Report "Continue with Google" flow (that flow intentionally skips the authorizedStaff check), so don't use this alone to gate anything beyond what any signed-in Google account should get.
 let isAuthorizedStaffVerified = false; // narrower: true only once we've confirmed THIS exact email is on the admin's authorizedStaff allow-list (mirrors the isAuthorizedStaff() Firestore rule). Used for the couple of Progress Report actions the admin wants open to admin-approved staff specifically (assigning a job, downloading the PDF) but not to just any Google account that's only there to fill in progress.
 let authorizedStaffProjectIds = []; // project IDs the admin has explicitly assigned to the currently signed-in verified staff member
+let authorizedStaffPermissions = {}; // admin-granted report-management permissions for this verified staff member
 let loggedThisSession = false; // guards against recording more than one staffLogins entry per page load
 let authorizedStaffUnsub = null; // live listener on the current user's authorizedStaff doc — kept running for the rest of the session (not just checked once at sign-in) so removing someone from the allow-list takes effect in any tab they still have open, without needing a reload or sign-out
 let allSnags = [];
@@ -949,6 +964,7 @@ let selectedDailyTaskIds = new Set();
 let dailyVerificationMode = "new"; // "new" | "resubmit"
 let dailyResubmitId = null;
 let dailyReviewId = null;
+let dailyAdminEditId = null;
 let selectedDailyRating = 0;
 // Optional images attached to Daily Task Report fields.
 // Each image-enabled field can hold up to 3 compressed images.
@@ -974,12 +990,55 @@ let appUnlocked = false;
 // ---------- HELPERS ----------
 function $(id){ return document.getElementById(id); }
 function showModal(id){ $(id).classList.add("show"); }
+
+const LEGACY_STAFF_PERMISSIONS = {
+  "project.create": true,
+  "project.assign": true,
+  "project.review": true,
+  "project.export": true,
+  "daily.export": true,
+  "progress.assign": true,
+  "progress.close": true
+};
+function hasStaffPermission(key){
+  if(isAdmin) return true;
+  if(!isAuthorizedStaffVerified) return false;
+  if(Object.prototype.hasOwnProperty.call(authorizedStaffPermissions,key)) return authorizedStaffPermissions[key] === true;
+  return LEGACY_STAFF_PERMISSIONS[key] === true;
+}
+
+// Mobile browser back/swipe support for the two main report modals. Opening a
+// report creates a temporary history entry; the native back button or edge
+// swipe closes that report instead of navigating away from the app.
+let reportModalHistoryId = null;
+function pushReportModalHistory(id){
+  if(reportModalHistoryId) return;
+  reportModalHistoryId=id;
+  history.pushState({sajReportModal:id},"",location.href);
+}
+function clearReportModalHistory(){
+  if(!reportModalHistoryId) return;
+  reportModalHistoryId=null;
+  if(history.state && history.state.sajReportModal) history.back();
+}
+window.addEventListener("popstate",()=>{
+  const id=reportModalHistoryId;
+  reportModalHistoryId=null;
+  if(!id) return;
+  const el=$(id);
+  if(el && el.classList.contains("show")) el.classList.remove("show");
+  if(id==="prModal"){ prCleanupListeners(); maybeSignOutAfterFabFlow(); }
+});
 function hideModal(id){
   $(id).classList.remove("show");
   stopCamera();
 }
 document.querySelectorAll("[data-close]").forEach(btn=>{
-  btn.addEventListener("click", ()=> hideModal(btn.getAttribute("data-close")));
+  btn.addEventListener("click", ()=> {
+    const id=btn.getAttribute("data-close");
+    hideModal(id);
+    if(id==="prModal" || id==="projectTasksModal") clearReportModalHistory();
+  });
 });
 // If a normal user backs out of the Project Reports + flow (cancels the
 // project picker or the Add Task form) without reaching Progress Report,
@@ -1088,6 +1147,7 @@ onAuthStateChanged(auth, async (user)=>{
     isVerifiedStaff = false;
     isAuthorizedStaffVerified = false;
     authorizedStaffProjectIds = [];
+    authorizedStaffPermissions = {};
     appUnlocked = false;
     // No session yet at all (first load, or just signed out) — start an
     // anonymous session so the app has *something* to read Firestore with.
@@ -1117,14 +1177,18 @@ onAuthStateChanged(auth, async (user)=>{
       authorizedStaffProjectIds = isAuthorizedStaffVerified && Array.isArray(staffSnap.data().projectIds)
         ? staffSnap.data().projectIds.map(String)
         : [];
+      authorizedStaffPermissions = isAuthorizedStaffVerified && staffSnap.data().permissions && typeof staffSnap.data().permissions === "object"
+        ? {...staffSnap.data().permissions} : {};
     }catch(e){
       console.error("Could not check authorizedStaff status", e);
       isAuthorizedStaffVerified = false;
       authorizedStaffProjectIds = [];
+      authorizedStaffPermissions = {};
     }
   } else {
     isAuthorizedStaffVerified = false;
     authorizedStaffProjectIds = [];
+    authorizedStaffPermissions = {};
   }
 
   // Beyond that one-time check, keep watching this exact email's
@@ -1140,11 +1204,15 @@ onAuthStateChanged(auth, async (user)=>{
       const nextProjectIds = nowAuthorized && Array.isArray(snap.data().projectIds)
         ? snap.data().projectIds.map(String)
         : [];
+      const nextPermissions = nowAuthorized && snap.data().permissions && typeof snap.data().permissions === "object"
+        ? {...snap.data().permissions} : {};
       const accessChanged = nowAuthorized !== isAuthorizedStaffVerified
-        || JSON.stringify(nextProjectIds) !== JSON.stringify(authorizedStaffProjectIds);
+        || JSON.stringify(nextProjectIds) !== JSON.stringify(authorizedStaffProjectIds)
+        || JSON.stringify(nextPermissions) !== JSON.stringify(authorizedStaffPermissions);
       if(!accessChanged) return; // no real change — e.g. this listener's own first snapshot
       isAuthorizedStaffVerified = nowAuthorized;
       authorizedStaffProjectIds = nextProjectIds;
+      authorizedStaffPermissions = nextPermissions;
       renderAuthBox();
       updateFabVisibility();
       applyMainTabView();
@@ -1248,8 +1316,8 @@ function applyMainTabView(){
   $("workView").style.display = activeTab === "work" ? "block" : "none";
   $("projectsView").style.display = activeTab === "projects" ? "block" : "none";
   $("dailyView").style.display = activeTab === "daily" ? "block" : "none";
-  $("newProjectBtn").style.display = (activeTab === "projects" && (isAdmin || isAuthorizedStaffVerified)) ? "inline-block" : "none";
-  const dailyElevated = isAdmin || isAuthorizedStaffVerified;
+  $("newProjectBtn").style.display = (activeTab === "projects" && (isAdmin || hasStaffPermission("project.create"))) ? "inline-block" : "none";
+  const dailyElevated = isAdmin || hasStaffPermission("daily.export");
   $("dailySelectModeBtn").style.display = dailyElevated ? "inline-block" : "none";
   $("dailyExportBtn").style.display = dailyElevated ? "inline-block" : "none";
   renderProjectList();
@@ -1293,9 +1361,9 @@ function renderAuthBox(){
       showModal("loginModal");
     });
   }
-  $("newProjectBtn").style.display = (activeTab === "projects" && (isAdmin || isAuthorizedStaffVerified)) ? "inline-block" : "none";
+  $("newProjectBtn").style.display = (activeTab === "projects" && (isAdmin || hasStaffPermission("project.create"))) ? "inline-block" : "none";
   if($("dailySelectModeBtn")){
-    const dailyElevated=isAdmin || isAuthorizedStaffVerified;
+    const dailyElevated=isAdmin || hasStaffPermission("daily.export");
     $("dailySelectModeBtn").style.display=dailyElevated ? "inline-block" : "none";
     $("dailyExportBtn").style.display=dailyElevated ? "inline-block" : "none";
   }
@@ -1687,6 +1755,42 @@ $("saveStaffProjectAccessBtn").addEventListener("click", async ()=>{
   $("saveStaffProjectAccessBtn").disabled = false;
 });
 
+// ---------- STAFF REPORT PERMISSIONS ADMIN PANEL (admin only) ----------
+let staffPermissionsEmailValue = "";
+const STAFF_PERMISSION_GROUPS = [
+  {title:"Project Reports",items:[["project.edit","Edit projects / tasks"],["project.delete","Delete projects / tasks"],["project.review","Approve / reject tasks"],["project.reopen","Reopen / call back approved tasks"],["project.create","Create / assign projects and tasks"],["project.export","Download Project Report PDFs"]]},
+  {title:"Daily Task Reports",items:[["daily.review","Approve / reject / rate reports"],["daily.edit","Edit reports"],["daily.delete","Delete reports"],["daily.export","Download Daily Task Report PDFs"]]},
+  {title:"Service Action Reports",items:[["service.edit","Edit service action reports"],["service.delete","Delete service action reports"],["service.reopen","Reopen closed reports"]]},
+  {title:"Snag Reports",items:[["snag.edit","Edit snag reports"],["snag.delete","Delete snag reports"],["snag.reopen","Reopen closed snags"]]},
+  {title:"Progress Reports",items:[["progress.approve","Approve / reject completed jobs"],["progress.reopen","Reopen completed jobs"],["progress.edit","Edit job history"],["progress.delete","Delete job history entries"],["progress.assign","Assign jobs to staff"],["progress.close","Close jobs directly"]]}
+];
+async function openStaffPermissionsModal(email){
+  if(!isAdmin) return;
+  staffPermissionsEmailValue=String(email||"").toLowerCase();
+  $("staffPermissionsEmail").textContent=staffPermissionsEmailValue;
+  $("staffPermissionsError").textContent="";
+  $("staffPermissionsList").innerHTML='<div class="hint">Loading…</div>';
+  showModal("staffPermissionsModal");
+  try{
+    const snap=await getDoc(doc(db,"authorizedStaff",staffPermissionsEmailValue));
+    if(!snap.exists()){ $("staffPermissionsError").textContent="This staff account no longer exists."; return; }
+    const saved=snap.data().permissions && typeof snap.data().permissions==="object" ? snap.data().permissions : {};
+    const effective={...LEGACY_STAFF_PERMISSIONS,...saved};
+    $("staffPermissionsList").innerHTML=STAFF_PERMISSION_GROUPS.map(g=>`<div class="section-label" style="margin-top:12px;">${escapeHtml(g.title)}</div>${g.items.map(([key,label])=>`<label style="display:flex;align-items:center;gap:9px;padding:8px 4px;border-bottom:1px solid var(--border);cursor:pointer;"><input type="checkbox" class="staff-permission-check" data-permission="${escapeHtml(key)}" ${effective[key]===true?"checked":""} style="width:18px;height:18px;flex-shrink:0;" /><span>${escapeHtml(label)}</span></label>`).join("")}`).join("");
+  }catch(err){ console.error(err); $("staffPermissionsError").textContent="Could not load permissions. Check your connection and try again."; }
+}
+$("saveStaffPermissionsBtn").addEventListener("click",async()=>{
+  if(!isAdmin || !staffPermissionsEmailValue) return;
+  const permissions={};
+  document.querySelectorAll("#staffPermissionsList .staff-permission-check").forEach(cb=>permissions[cb.getAttribute("data-permission")]=cb.checked);
+  $("staffPermissionsError").textContent=""; $("saveStaffPermissionsBtn").disabled=true;
+  try{
+    await setDoc(doc(db,"authorizedStaff",staffPermissionsEmailValue),{permissions,permissionsUpdatedAt:serverTimestamp(),permissionsUpdatedBy:currentUser?currentUser.email||null:null},{merge:true});
+    hideModal("staffPermissionsModal"); renderStaffEmailList();
+  }catch(err){ console.error(err); $("staffPermissionsError").textContent="Could not save permissions. Check your connection and try again."; }
+  $("saveStaffPermissionsBtn").disabled=false;
+});
+
 // ---------- STAFF ACCESS ADMIN PANEL (admin only) ----------
 async function openStaffAccessAdminModal(){
   if(!isAdmin) return;
@@ -1728,7 +1832,7 @@ async function renderStaffAccessRequests(){
       btn.disabled = true;
       try{
         await setDoc(doc(db, "authorizedStaff", emailId), {
-          email: emailId, addedBy: currentUser.email || null, addedAt: serverTimestamp(), projectIds: []
+          email: emailId, addedBy: currentUser.email || null, addedAt: serverTimestamp(), projectIds: [], permissions: {...LEGACY_STAFF_PERMISSIONS}
         });
         await deleteDoc(doc(db, "staffAccessRequests", emailId));
         renderStaffAccessRequests();
@@ -1779,12 +1883,16 @@ async function renderStaffEmailList(){
         <span>${escapeHtml(d.email||d.id)} <span class="meta">— ${projectLabel}</span></span>
         <span style="display:flex;gap:6px;flex-shrink:0;">
           <button class="btn btn-light manage-staff-projects" data-email-id="${escapeHtml(d.id)}" style="padding:4px 10px;font-size:12px;">Projects</button>
+          <button class="btn btn-light manage-staff-permissions" data-email-id="${escapeHtml(d.id)}" style="padding:4px 10px;font-size:12px;">Permissions</button>
           <button class="btn btn-red remove-staff-email" data-email-id="${escapeHtml(d.id)}" style="padding:4px 10px;font-size:12px;">Remove</button>
         </span>
       </div>`;
     }).join("");
     box.querySelectorAll(".manage-staff-projects").forEach(btn=>btn.addEventListener("click", ()=>{
       openStaffProjectAccessModal(btn.getAttribute("data-email-id"));
+    }));
+    box.querySelectorAll(".manage-staff-permissions").forEach(btn=>btn.addEventListener("click", ()=>{
+      openStaffPermissionsModal(btn.getAttribute("data-email-id"));
     }));
     box.querySelectorAll(".remove-staff-email").forEach(btn=>btn.addEventListener("click", async ()=>{
       if(!(await confirmDelete("Remove this email? They'll need to be re-added before they can verify again."))) return;
@@ -1814,7 +1922,7 @@ $("addStaffEmailBtn").addEventListener("click", async ()=>{
   $("addStaffEmailBtn").disabled = true;
   try{
     await setDoc(doc(db, "authorizedStaff", email), {
-      email, addedBy: currentUser.email || null, addedAt: serverTimestamp(), projectIds: []
+      email, addedBy: currentUser.email || null, addedAt: serverTimestamp(), projectIds: [], permissions: {...LEGACY_STAFF_PERMISSIONS}
     });
     $("newStaffEmailInput").value = "";
     renderStaffEmailList();
@@ -1969,7 +2077,7 @@ $("clearSnagsBtn").addEventListener("click", ()=>{
   updateSnagExportLabel();
 });
 $("deleteSelectedSnagsBtn").addEventListener("click", async ()=>{
-  if(!isAdmin || selectedSnagIds.size === 0) return;
+  if((!isAdmin && !hasStaffPermission("snag.delete")) || selectedSnagIds.size === 0) return;
   if(!(await confirmDelete(`Delete ${selectedSnagIds.size} selected snag(s)? This cannot be undone.`))) return;
   $("deleteSelectedSnagsBtn").disabled = true;
   try{
@@ -2107,7 +2215,7 @@ $("clearWorkBtn").addEventListener("click", ()=>{
   updateWorkExportLabel();
 });
 $("deleteSelectedWorkBtn").addEventListener("click", async ()=>{
-  if(!isAdmin || selectedWorkIds.size === 0) return;
+  if((!isAdmin && !hasStaffPermission("service.delete")) || selectedWorkIds.size === 0) return;
   if(!(await confirmDelete(`Delete ${selectedWorkIds.size} selected service action report(s)? This cannot be undone.`))) return;
   $("deleteSelectedWorkBtn").disabled = true;
   try{
@@ -2209,8 +2317,13 @@ function openWorkDetail(id){
       html += `<div class="modal-actions"><button class="btn btn-navy" id="forceCompleteWorkBtn" style="width:100%;">Force close (admin)</button></div>`;
     }
   }
-  if(isAdmin){
-    html += `<div class="modal-actions"><button class="btn btn-light" id="editWorkBtn" style="width:100%;">Edit (admin)</button></div>`;
+  if(isAdmin || hasStaffPermission("service.edit")){
+    html += `<div class="modal-actions"><button class="btn btn-light" id="editWorkBtn" style="width:100%;">Edit</button></div>`;
+  }
+  if(s.status === "complete" && (isAdmin || hasStaffPermission("service.reopen"))){
+    html += `<div class="modal-actions"><button class="btn btn-navy" id="reopenWorkBtn" style="width:100%;">Reopen report</button></div>`;
+  }
+  if(isAdmin || hasStaffPermission("service.delete")){
     html += `<div class="modal-actions"><button class="btn btn-red" id="deleteWorkBtn" style="width:100%;">Delete this record</button></div>`;
   }
   $("detailContent").innerHTML = html;
@@ -2242,11 +2355,23 @@ function openWorkDetail(id){
       }
     });
   }
-  if(isAdmin){
+  if(isAdmin || hasStaffPermission("service.edit")){
     $("editWorkBtn").addEventListener("click", ()=>{
       hideModal("detailModal");
       openEditWorkModal(s);
     });
+  }
+  const reopenWorkBtn=document.getElementById("reopenWorkBtn");
+  if(reopenWorkBtn){
+    reopenWorkBtn.addEventListener("click", async ()=>{
+      if(!isAdmin && !hasStaffPermission("service.reopen")) return;
+      if(!(await confirmDelete("Reopen this service action report? It will return to Open status."))) return;
+      reopenWorkBtn.disabled=true;
+      try{ await updateDoc(doc(db,"workreports",s.id),{status:"incomplete",updatedAt:serverTimestamp()}); hideModal("detailModal"); }
+      catch(err){ console.error(err); alert("Could not reopen the report. Check your connection and try again."); reopenWorkBtn.disabled=false; }
+    });
+  }
+  if(isAdmin || hasStaffPermission("service.delete")){
     const delBtn = document.getElementById("deleteWorkBtn");
     if(delBtn){
       delBtn.addEventListener("click", async ()=>{
@@ -2296,7 +2421,7 @@ function openEditWorkModal(s){
   renderSignaturePreview("editWork");
 }
 $("saveEditWorkBtn").addEventListener("click", async ()=>{
-  if(!isAdmin || !editingWorkAdminId) return;
+  if((!isAdmin && !hasStaffPermission("service.edit")) || !editingWorkAdminId) return;
   const site = $("editWorkSite").value.trim();
   const location = $("editWorkLocation").value.trim();
   const reportedBy = $("editWorkReportedBy").value.trim();
@@ -3340,16 +3465,17 @@ function renderDailyTaskList(){
       const col=dailyTaskColumns.find(c=>c.key===key);
       return `<div style="font-size:12px;margin-top:4px;"><b>${escapeHtml(col?col.label:key)}:</b> ${escapeHtml(String(val??""))}</div>`;
     }).join("");
-    const elevated=isAdmin || isAuthorizedStaffVerified;
+    const elevated=isAdmin || hasStaffPermission("daily.export");
     const selected=selectedDailyTaskIds.has(r.id);
     const actions=[];
-    if(isAdmin && r.status!=="approved") actions.push(`<button class="btn btn-light daily-review-btn" data-id="${escapeHtml(r.id)}">Review</button>`);
-    if(isAdmin && r.status==="approved") actions.push(`<button class="btn btn-light daily-review-btn" data-id="${escapeHtml(r.id)}">Review / Rating</button>`);
+    if((isAdmin || hasStaffPermission("daily.review")) && r.status!=="approved") actions.push(`<button class="btn btn-light daily-review-btn" data-id="${escapeHtml(r.id)}">Review</button>`);
+    if((isAdmin || hasStaffPermission("daily.review")) && r.status==="approved") actions.push(`<button class="btn btn-light daily-review-btn" data-id="${escapeHtml(r.id)}">Review / Rating</button>`);
+    if(isAdmin || hasStaffPermission("daily.edit")) actions.push(`<button class="btn btn-light daily-edit-btn" data-id="${escapeHtml(r.id)}">Edit</button>`);
     if(!isAdmin && r.status==="rejected" && r.submittedByEmail && currentUser && !currentUser.isAnonymous && currentUser.email===r.submittedByEmail){
       actions.push(`<button class="btn btn-light daily-resubmit-btn" data-id="${escapeHtml(r.id)}">Resubmit</button>`);
     }
     if(elevated) actions.push(`<button class="btn btn-navy daily-pdf-btn" data-id="${escapeHtml(r.id)}">PDF</button>`);
-    if(isAdmin) actions.push(`<button class="btn btn-red daily-delete-btn" data-id="${escapeHtml(r.id)}">Delete</button>`);
+    if(isAdmin || hasStaffPermission("daily.delete")) actions.push(`<button class="btn btn-red daily-delete-btn" data-id="${escapeHtml(r.id)}">Delete</button>`);
     return `<div class="card" data-daily-id="${escapeHtml(r.id)}">
       <div style="display:flex;align-items:flex-start;gap:9px;">
         ${elevated && dailySelectMode ? `<input type="checkbox" class="daily-check" data-id="${escapeHtml(r.id)}" ${selected?'checked':''} style="width:18px;height:18px;margin-top:3px;flex-shrink:0;" />` : ""}
@@ -3380,12 +3506,17 @@ function renderDailyTaskList(){
   }));
   list.querySelectorAll(".daily-pdf-btn").forEach(btn=>btn.addEventListener("click",()=>generateDailyTaskPdf(allDailyTaskReports.filter(r=>r.id===btn.getAttribute("data-id")))));
   list.querySelectorAll(".daily-review-btn").forEach(btn=>btn.addEventListener("click",()=>openDailyReview(btn.getAttribute("data-id"))));
+  list.querySelectorAll(".daily-edit-btn").forEach(btn=>btn.addEventListener("click",()=>{
+    const r=allDailyTaskReports.find(x=>x.id===btn.getAttribute("data-id")); if(!r) return;
+    dailyAdminEditId=r.id; dailyVerificationMode="adminEdit"; dailyResubmitId=null; openDailyTaskForm(r);
+    $("dailyTaskFormTitle").textContent="Edit Daily Task Report";
+  }));
   list.querySelectorAll(".daily-resubmit-btn").forEach(btn=>btn.addEventListener("click",()=>{
     const r=allDailyTaskReports.find(x=>x.id===btn.getAttribute("data-id")); if(!r) return;
     dailyVerificationMode="resubmit"; dailyResubmitId=r.id; $("dailyVerifyError").textContent=""; showModal("dailyVerifyModal");
   }));
   list.querySelectorAll(".daily-delete-btn").forEach(btn=>btn.addEventListener("click",async()=>{
-    if(!isAdmin) return; if(!(await confirmDelete("Delete this Daily Task Report?"))) return;
+    if(!isAdmin && !hasStaffPermission("daily.delete")) return; if(!(await confirmDelete("Delete this Daily Task Report?"))) return;
     try{await deleteDoc(doc(db,"dailyTaskReports",btn.getAttribute("data-id")));selectedDailyTaskIds.delete(btn.getAttribute("data-id"));}
     catch(err){console.error(err);alert("Could not delete the Daily Task Report.");}
   }));
@@ -3410,7 +3541,7 @@ function renderDailyReviewStars(){
   document.querySelectorAll(".daily-star-choice").forEach(btn=>btn.addEventListener("click",()=>{selectedDailyRating=Number(btn.dataset.rating);renderDailyReviewStars();}));
 }
 function openDailyReview(id){
-  if(!isAdmin) return;
+  if(!isAdmin && !hasStaffPermission("daily.review")) return;
   const r=allDailyTaskReports.find(x=>x.id===id); if(!r) return;
   dailyReviewId=id; selectedDailyRating=Number(r.rating)||0;
   $("dailyReviewTitle").textContent=r.status==="approved" ? "Review Daily Task Report" : "Review Daily Task Report";
@@ -3422,7 +3553,7 @@ function openDailyReview(id){
   renderDailyReviewStars(); showModal("dailyReviewModal");
 }
 async function saveDailyReview(decision){
-  if(!isAdmin || !dailyReviewId) return;
+  if((!isAdmin && !hasStaffPermission("daily.review")) || !dailyReviewId) return;
   const note=$("dailyReviewNote").value.trim();
   if(decision==="approve" && selectedDailyRating<1){$("dailyReviewError").textContent="Select a 1–5 star rating before approving.";return;}
   if(decision==="reject" && !note){$("dailyReviewError").textContent="Please add a rejection note.";return;}
@@ -3432,7 +3563,7 @@ async function saveDailyReview(decision){
 }
 
 function generateDailyTaskPdf(items){
-  if(!(isAdmin || isAuthorizedStaffVerified) || !items.length) return;
+  if(!(isAdmin || hasStaffPermission("daily.export")) || !items.length) return;
   const {jsPDF}=window.jspdf; const pdf=new jsPDF({unit:"pt",format:"a4"});
   const pageH=842, margin=40, width=515; let y=50;
   pdf.setFontSize(16); pdf.setFont(undefined,"bold"); pdf.text("SAJ Daily Task Reports",margin,y); pdf.setFont(undefined,"normal"); y+=18;
@@ -3481,13 +3612,13 @@ $("dailySelectModeBtn").addEventListener("click",()=>{dailySelectMode=!dailySele
 $("dailySelectAllBtn").addEventListener("click",()=>{getFilteredDailyTaskReports().forEach(r=>selectedDailyTaskIds.add(r.id));renderDailyTaskList();});
 $("dailyClearSelectionBtn").addEventListener("click",()=>{selectedDailyTaskIds.clear();renderDailyTaskList();});
 $("dailyExportBtn").addEventListener("click",()=>{
-  if(!(isAdmin||isAuthorizedStaffVerified)) return;
+  if(!(isAdmin || hasStaffPermission("daily.export"))) return;
   const items=selectedDailyTaskIds.size ? allDailyTaskReports.filter(r=>selectedDailyTaskIds.has(r.id)) : getFilteredDailyTaskReports();
   if(!items.length){alert("No Daily Task Reports match the current filter.");return;}
   generateDailyTaskPdf(items);
 });
 $("dailyDeleteSelectedBtn").addEventListener("click",async()=>{
-  if(!isAdmin || !selectedDailyTaskIds.size) return;
+  if((!isAdmin && !hasStaffPermission("daily.delete")) || !selectedDailyTaskIds.size) return;
   if(!(await confirmDelete(`Delete ${selectedDailyTaskIds.size} selected Daily Task Report(s)? This cannot be undone.`))) return;
   try{await Promise.all([...selectedDailyTaskIds].map(id=>deleteDoc(doc(db,"dailyTaskReports",id))));selectedDailyTaskIds.clear();renderDailyTaskList();}
   catch(err){console.error(err);alert("Could not delete some Daily Task Reports.");}
@@ -3524,12 +3655,16 @@ $("saveDailyTaskBtn").addEventListener("click",async()=>{
   if(missing.length){$("dailyTaskFormError").textContent=`Please fill: ${missing.map(c=>c.label).join(", ")}.`;return;}
   $("saveDailyTaskBtn").disabled=true;$("dailyTaskFormError").textContent="";
   try{
-    if(dailyVerificationMode==="resubmit" && dailyResubmitId){
+    if(dailyAdminEditId){
+      if(!isAdmin && !hasStaffPermission("daily.edit")) throw new Error("Not permitted");
+      await updateDoc(doc(db,"dailyTaskReports",dailyAdminEditId),{fields:values,images:dailyImageDrafts,updatedAt:serverTimestamp()});
+      dailyAdminEditId=null; dailyVerificationMode="new"; dailyResubmitId=null; hideModal("dailyTaskFormModal");
+    }else if(dailyVerificationMode==="resubmit" && dailyResubmitId){
       await updateDoc(doc(db,"dailyTaskReports",dailyResubmitId),{fields:values,images:dailyImageDrafts,status:"pending",reportDateKey:dailyReportDateKey(allDailyTaskReports.find(r=>r.id===dailyResubmitId)||{}),resubmittedAt:serverTimestamp(),resubmittedBy:currentUser.email,rejectionNote:null,updatedAt:serverTimestamp()});
     }else{
       await addDoc(collection(db,"dailyTaskReports"),{fields:values,images:dailyImageDrafts,status:"pending",reportDateKey:fmtDateOnly(new Date()),submittedByEmail:currentUser.email,submittedByUid:currentUser.uid,createdAt:serverTimestamp(),updatedAt:serverTimestamp(),rating:null,approvalNote:null,rejectionNote:null});
     }
-    dailyVerificationMode="new";dailyResubmitId=null;hideModal("dailyTaskFormModal");
+    dailyVerificationMode="new";dailyResubmitId=null;dailyAdminEditId=null;hideModal("dailyTaskFormModal");
   }catch(err){console.error(err);$("dailyTaskFormError").textContent="Could not save the report. Check your connection and try again.";}
   $("saveDailyTaskBtn").disabled=false;
 });
@@ -3619,7 +3754,8 @@ function renderTaskNotificationsBanner(){
       projectId: t.projectId,
       projectName: project ? (project.name||"Project") : (t.projectName||"Project"),
       title: title || "Untitled task",
-      kind: isRejected ? "rejected" : "new"
+      kind: isRejected ? "rejected" : "new",
+      notificationAt: isRejected ? (t.rejectedAt || t.updatedAt || t.createdAt) : (t.assignedAt || t.updatedAt || t.createdAt)
     });
   });
 
@@ -3637,10 +3773,10 @@ function renderTaskNotificationsBanner(){
           Task notifications
         </p>
         ${rejectedItems.length ? `<div class="detail-row" style="margin-top:4px;"><b>Rejected — please review &amp; resubmit (${rejectedItems.length}):</b></div>` + rejectedItems.map(i=>`
-          <div class="detail-row" style="cursor:pointer;color:var(--red);" data-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${escapeHtml(i.title)}</div>
+          <div class="detail-row" style="cursor:pointer;color:var(--red);" data-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${escapeHtml(i.title)} <span class="meta">· ${escapeHtml(fmtDate(i.notificationAt))}</span></div>
         `).join("") : ""}
         ${newItems.length ? `<div class="detail-row" style="margin-top:6px;"><b>New tasks assigned to you (${newItems.length}):</b></div>` + newItems.map(i=>`
-          <div class="detail-row" style="cursor:pointer;color:var(--blue);" data-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${escapeHtml(i.title)}</div>
+          <div class="detail-row" style="cursor:pointer;color:var(--blue);" data-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${escapeHtml(i.title)} <span class="meta">· ${escapeHtml(fmtDate(i.notificationAt))}</span></div>
         `).join("") : ""}
       </div>
     </div>`;
@@ -3805,12 +3941,9 @@ function renderProjectList(){
     const allTasksForProject = allProjectTasks.filter(t=>t.projectId===p.id);
     const tasks = canManageProjects ? allTasksForProject : allTasksForProject.filter(t=>t.status !== "approved");
     let projectCardButtons = "";
-    if(isAdmin){
-      projectCardButtons += `<button class="btn btn-light edit-project" data-project-id="${p.id}">Edit</button><button class="btn btn-red delete-project" data-project-id="${p.id}">Delete</button>`;
-    }
-    if(canManageProjects){
-      projectCardButtons += `<button class="btn btn-navy pdf-project" data-project-id="${p.id}">Download PDF</button>`;
-    }
+    if(isAdmin || hasStaffPermission("project.edit")) projectCardButtons += `<button class="btn btn-light edit-project" data-project-id="${p.id}">Edit</button>`;
+    if(isAdmin || hasStaffPermission("project.delete")) projectCardButtons += `<button class="btn btn-red delete-project" data-project-id="${p.id}">Delete</button>`;
+    if(canManageProjects && hasStaffPermission("project.export")) projectCardButtons += `<button class="btn btn-navy pdf-project" data-project-id="${p.id}">Download PDF</button>`;
     const adminActions = projectCardButtons ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">${projectCardButtons}</div>` : "";
     return `<div class="card" data-project-id="${p.id}">
       <div class="thumb-placeholder">📁</div>
@@ -3859,7 +3992,8 @@ function openProject(id){
   $("taskSelectModeBtn").textContent = "Select";
   $("taskSelectModeBtn").classList.remove("btn-navy");
   $("taskSelectAllRow").style.display = "none";
-  $("taskSelectToolbar").style.display = (isAdmin || isAuthorizedStaffVerified) ? "flex" : "none";
+  $("taskSelectToolbar").style.display = (isAdmin || hasStaffPermission("project.export") || hasStaffPermission("project.delete")) ? "flex" : "none";
+  $("taskExportBtn").style.display = (isAdmin || hasStaffPermission("project.export")) ? "inline-block" : "none";
   // Always reopen on the Active view — Archived (approved) tasks are a
   // deliberate extra step to reach, not the default landing view.
   projectTaskViewMode = "active";
@@ -3878,6 +4012,7 @@ function openProject(id){
   // Task creation from Project Reports is handled only by the bottom-right
   // + button. There is no separate + Add Task button inside this project modal.
   showModal("projectTasksModal");
+  pushReportModalHistory("projectTasksModal");
 }
 
 $("projectTaskViewChips").querySelectorAll(".chip").forEach(chip=>{
@@ -4056,7 +4191,7 @@ function renderCurrentProjectTasks(){
     // The Job Details wait rule applies only to verified non-admin staff.
     // Edit and Delete stay admin-only, always.
     let taskActionButtons = "";
-    if(isAdmin){
+    if(isAdmin || hasStaffPermission("project.review")){
       if(t.status === "approved"){
         taskActionButtons = `<button class="btn btn-light revert-project-task" data-task-id="${t.id}">Call back</button>`;
       } else if(t.status === "rejected"){
@@ -4075,9 +4210,8 @@ function renderCurrentProjectTasks(){
         taskActionButtons = `<button class="btn btn-green approve-project-task" data-task-id="${t.id}">Approve</button><button class="btn btn-red reject-project-task" data-task-id="${t.id}">Reject</button>`;
       }
     }
-    if(isAdmin){
-      taskActionButtons += `<button class="btn btn-light edit-project-task" data-task-id="${t.id}">Edit</button><button class="btn btn-red delete-project-task" data-task-id="${t.id}">Delete</button>`;
-    }
+    if(isAdmin || hasStaffPermission("project.edit")) taskActionButtons += `<button class="btn btn-light edit-project-task" data-task-id="${t.id}">Edit</button>`;
+    if(isAdmin || hasStaffPermission("project.delete")) taskActionButtons += `<button class="btn btn-red delete-project-task" data-task-id="${t.id}">Delete</button>`;
     const checkboxHtml = (canManageTasks && taskSelectMode)
       ? `<input type="checkbox" class="task-check" data-task-id="${t.id}" ${selectedProjectTaskIds.has(t.id)?"checked":""} style="margin-top:2px;width:18px;height:18px;flex-shrink:0;" />`
       : "";
@@ -4103,7 +4237,7 @@ function renderCurrentProjectTasks(){
   }).join("");
 
   list.querySelectorAll(".approve-project-task").forEach(btn=>btn.addEventListener("click",e=>{
-    e.stopPropagation(); if(!isAdmin && !isAuthorizedStaffVerified) return;
+    e.stopPropagation(); if(!isAdmin && !hasStaffPermission("project.review")) return;
     openTaskDecisionNoteModal(btn.getAttribute("data-task-id"), "approve");
   }));
   list.querySelectorAll(".reject-project-task").forEach(btn=>btn.addEventListener("click",e=>{
@@ -4111,7 +4245,7 @@ function renderCurrentProjectTasks(){
     openTaskDecisionNoteModal(btn.getAttribute("data-task-id"), "reject");
   }));
   list.querySelectorAll(".revert-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
-    e.stopPropagation(); if(!isAdmin && !isAuthorizedStaffVerified) return;
+    e.stopPropagation(); if(!isAdmin && !hasStaffPermission("project.reopen")) return;
     if(!confirm("Move this task back to Pending approval?")) return;
     const id=btn.getAttribute("data-task-id"); btn.disabled=true;
     try{ await updateDoc(doc(db,"projecttasks",id),{status:"pending",approvedBy:null,approvedAt:null,approvedByName:null,rejectedBy:null,rejectedAt:null,rejectedByName:null,rating:null,approvalNote:null,rejectionNote:null}); }
@@ -4120,7 +4254,7 @@ function renderCurrentProjectTasks(){
   list.querySelectorAll(".edit-project-task").forEach(btn=>btn.addEventListener("click",e=>{e.stopPropagation();openEditProjectTask(btn.getAttribute("data-task-id"));}));
   list.querySelectorAll(".fill-job-details").forEach(btn=>btn.addEventListener("click",e=>{e.stopPropagation();openFillJobDetails(btn.getAttribute("data-task-id"));}));
   list.querySelectorAll(".delete-project-task").forEach(btn=>btn.addEventListener("click",async e=>{
-    e.stopPropagation(); if(!isAdmin) return;
+    e.stopPropagation(); if(!isAdmin && !hasStaffPermission("project.delete")) return;
     const id=btn.getAttribute("data-task-id"); if(!(await confirmDelete("Delete this project task?"))) return;
     try{await deleteDoc(doc(db,"projecttasks",id));}catch(err){console.error(err);alert("Could not delete task.");}
   }));
@@ -4134,6 +4268,7 @@ function renderCurrentProjectTasks(){
 
 // ---------- TASK MULTI-SELECT (PDF export + bulk delete) ----------
 function updateTaskSelectionLabel(){
+  $("taskExportBtn").style.display = (isAdmin || hasStaffPermission("project.export")) ? "inline-block" : "none";
   $("taskExportBtn").textContent = (taskSelectMode && selectedProjectTaskIds.size > 0) ? `Export Selected (${selectedProjectTaskIds.size})` : "Export PDF";
   $("deleteSelectedTasksBtn").style.display = (isAdmin && taskSelectMode && selectedProjectTaskIds.size > 0) ? "block" : "none";
 }
@@ -4172,6 +4307,7 @@ $("deleteSelectedTasksBtn").addEventListener("click", async ()=>{
   $("deleteSelectedTasksBtn").disabled = false;
 });
 $("taskExportBtn").addEventListener("click", ()=>{
+  if(!(isAdmin || hasStaffPermission("project.export"))) return;
   if(!currentProjectId) return;
   if(taskSelectMode && selectedProjectTaskIds.size > 0){
     downloadProjectPdf(currentProjectId, Array.from(selectedProjectTaskIds));
@@ -4326,7 +4462,7 @@ function collectProjectTaskValues(){
 }
 
 function openEditProject(id){
-  if(!isAdmin) return;
+  if(!isAdmin && !hasStaffPermission("project.edit")) return;
   const p=allProjects.find(x=>x.id===id);
   if(!p) return;
   editingProjectId=id;
@@ -4336,7 +4472,7 @@ function openEditProject(id){
 }
 
 $("saveEditProjectBtn").addEventListener("click",async()=>{
-  if(!isAdmin || !editingProjectId) return;
+  if((!isAdmin && !hasStaffPermission("project.edit")) || !editingProjectId) return;
   const name=$("editProjectNameInput").value.trim();
   $("editProjectError").textContent="";
   if(!name){ $("editProjectError").textContent="Project name is required."; return; }
@@ -4356,7 +4492,7 @@ $("saveEditProjectBtn").addEventListener("click",async()=>{
 });
 
 async function deleteProject(id){
-  if(!isAdmin) return;
+  if(!isAdmin && !hasStaffPermission("project.delete")) return;
   const p=allProjects.find(x=>x.id===id);
   if(!p || !(await confirmDelete(`Delete project "${p.name||"Project"}" and all of its tasks? This cannot be undone.`))) return;
   try{
@@ -4371,7 +4507,7 @@ async function deleteProject(id){
 }
 
 function openEditProjectTask(id){
-  if(!isAdmin) return;
+  if(!isAdmin && !hasStaffPermission("project.edit")) return;
   const t=allProjectTasks.find(x=>x.id===id); if(!t) return;
   // If this task was assigned by admin (has a Task name), edit the admin
   // fields as before — staff fill in Job Details separately. If it was
@@ -4485,7 +4621,7 @@ function openProjectTaskProjectSelector(createMode="progressOnly"){
 function prShowProjectActionChooser(p, createMode){
   const list = $("projectTaskProjectSelectList");
   const submittedCount = prSubmittedCountForProject(p.id);
-  const isElevated = createMode === "admin" && (isAdmin || isAuthorizedStaffVerified);
+  const isElevated = createMode === "admin" && (isAdmin || hasStaffPermission("project.create"));
   list.innerHTML = `
     <div class="hint" style="margin-bottom:10px;">${escapeHtml(p.name||"Project")}</div>
     ${isElevated ? `<button type="button" class="btn btn-navy" id="ptaskChooseAddTask" style="display:block;width:100%;margin-bottom:8px;padding:12px;">Assign Task</button>` : ""}
@@ -4900,10 +5036,9 @@ function openDetail(id){
       html += `<div class="modal-actions"><button class="btn btn-navy" id="forceCloseSnagBtn" style="width:100%;">Force close (admin)</button></div>`;
     }
   }
-  if(isAdmin){
-    html += `<div class="modal-actions"><button class="btn btn-light" id="editSnagBtn" style="width:100%;">Edit (admin)</button></div>`;
-    html += `<div class="modal-actions"><button class="btn btn-red" id="deleteSnagBtn" style="width:100%;">Delete this record</button></div>`;
-  }
+  if(isAdmin || hasStaffPermission("snag.edit")) html += `<div class="modal-actions"><button class="btn btn-light" id="editSnagBtn" style="width:100%;">Edit</button></div>`;
+  if(s.status === "closed" && (isAdmin || hasStaffPermission("snag.reopen"))) html += `<div class="modal-actions"><button class="btn btn-navy" id="reopenSnagBtn" style="width:100%;">Reopen snag</button></div>`;
+  if(isAdmin || hasStaffPermission("snag.delete")) html += `<div class="modal-actions"><button class="btn btn-red" id="deleteSnagBtn" style="width:100%;">Delete this record</button></div>`;
   $("detailContent").innerHTML = html;
   if(s.status === "open"){
     $("openCloseFlowBtn").addEventListener("click", ()=>{
@@ -4935,11 +5070,23 @@ function openDetail(id){
       }
     });
   }
-  if(isAdmin){
+  if(isAdmin || hasStaffPermission("snag.edit")){
     $("editSnagBtn").addEventListener("click", ()=>{
       hideModal("detailModal");
       openEditSnagModal(s);
     });
+  }
+  const reopenSnagBtn=document.getElementById("reopenSnagBtn");
+  if(reopenSnagBtn){
+    reopenSnagBtn.addEventListener("click", async ()=>{
+      if(!isAdmin && !hasStaffPermission("snag.reopen")) return;
+      if(!(await confirmDelete("Reopen this snag? It will return to Open status."))) return;
+      reopenSnagBtn.disabled=true;
+      try{ await updateDoc(doc(db,"snags",s.id),{status:"open",updatedAt:serverTimestamp()}); hideModal("detailModal"); }
+      catch(err){ console.error(err); alert("Could not reopen the snag. Check your connection and try again."); reopenSnagBtn.disabled=false; }
+    });
+  }
+  if(isAdmin || hasStaffPermission("snag.delete")){
     const delBtn = document.getElementById("deleteSnagBtn");
     if(delBtn){
       delBtn.addEventListener("click", async ()=>{
@@ -4965,12 +5112,20 @@ function openDetail(id){
 let editingSnagId = null;
 function openEditSnagModal(s){
   editingSnagId = s.id;
+  const snagEditAllowed = isAdmin || hasStaffPermission("snag.edit");
+  $("editSnagSite").disabled = !snagEditAllowed;
   $("editSnagSite").value = s.site || "";
+  $("editSnagLocation").disabled = !snagEditAllowed;
   $("editSnagLocation").value = s.location || "";
+  $("editSnagDescription").disabled = !snagEditAllowed;
   $("editSnagDescription").value = s.description || "";
+  $("editSnagOpenedBy").disabled = !snagEditAllowed;
   $("editSnagOpenedBy").value = s.openedBy || "";
   $("editSnagStatus").value = s.status || "open";
+  $("editSnagStatus").disabled = !snagEditAllowed;
+  $("editSnagClosedBy").disabled = !snagEditAllowed;
   $("editSnagClosedBy").value = s.closedBy || "";
+  $("editSnagCloseNotes").disabled = !snagEditAllowed;
   $("editSnagCloseNotes").value = s.closeNotes || "";
   $("editSnagError").textContent = "";
   $("editSnagClosedFields").style.display = $("editSnagStatus").value === "closed" ? "block" : "none";
@@ -4988,7 +5143,7 @@ $("editSnagStatus").addEventListener("change", ()=>{
   $("editSnagClosedFields").style.display = $("editSnagStatus").value === "closed" ? "block" : "none";
 });
 $("saveEditSnagBtn").addEventListener("click", async ()=>{
-  if(!isAdmin || !editingSnagId) return;
+  if((!isAdmin && !hasStaffPermission("snag.edit") && !hasStaffPermission("snag.reopen")) || !editingSnagId) return;
   const site = $("editSnagSite").value.trim();
   const location = $("editSnagLocation").value.trim();
   const description = $("editSnagDescription").value.trim();
@@ -4999,8 +5154,13 @@ $("saveEditSnagBtn").addEventListener("click", async ()=>{
     $("editSnagError").textContent = "Site, location and description are required.";
     return;
   }
-  const payload = { site, location, description, openedBy, status, openPhotos: editSnagOpenPhotos.slice() };
-  if(status === "closed"){
+  const reopenOnly = !isAdmin && !hasStaffPermission("snag.edit") && hasStaffPermission("snag.reopen");
+  if(reopenOnly && !(editingSnagId && allSnags.find(x=>x.id===editingSnagId)?.status === "closed" && status === "open")){
+    $("editSnagError").textContent = "Only reopening is permitted for this account.";
+    return;
+  }
+  const payload = reopenOnly ? {status:"open",updatedAt:serverTimestamp()} : { site, location, description, openedBy, status, openPhotos: editSnagOpenPhotos.slice() };
+  if(!reopenOnly && status === "closed"){
     payload.closedBy = $("editSnagClosedBy").value.trim() || "Admin";
     payload.closeNotes = $("editSnagCloseNotes").value.trim();
     payload.closePhotos = editSnagClosePhotos.slice();
@@ -5400,6 +5560,14 @@ function openProgressReport(projectId, projectName){
     alert("This project has not been assigned to your account by the admin.");
     return;
   }
+  // If Progress Report is opened from the Project Tasks modal, close that
+  // underlying modal first so one mobile back/swipe returns cleanly to the
+  // project list instead of exposing two report modals at once.
+  if($("projectTasksModal") && $("projectTasksModal").classList.contains("show")){
+    hideModal("projectTasksModal");
+    reportModalHistoryId=null;
+    if(history.state && history.state.sajReportModal) history.replaceState(null,"",location.href);
+  }
   prCurrentProjectId = projectId;
   prCurrentProjectName = projectName || "Project";
   $("prTitle").textContent = `Progress Report — ${prCurrentProjectName}`;
@@ -5420,6 +5588,7 @@ function openProgressReport(projectId, projectName){
   startPrListeners();
   prSetActiveTab("fill");
   showModal("prModal");
+  pushReportModalHistory("prModal");
 }
 
 function prCleanupListeners(){
@@ -5427,7 +5596,7 @@ function prCleanupListeners(){
   if(prJobsListenerUnsub){ prJobsListenerUnsub(); prJobsListenerUnsub = null; }
 }
 const prModalCloseBtn = document.querySelector('#prModal [data-close="prModal"]');
-if(prModalCloseBtn) prModalCloseBtn.addEventListener("click", ()=>{ prCleanupListeners(); maybeSignOutAfterFabFlow(); });
+if(prModalCloseBtn) prModalCloseBtn.addEventListener("click", ()=>{ prCleanupListeners(); maybeSignOutAfterFabFlow(); clearReportModalHistory(); });
 
 function startPrListeners(){
   prCleanupListeners();
@@ -5656,7 +5825,7 @@ function prRenderJobCard(j){
         ${j.status==="in_progress" && j.rejectionNote ? `<div class="meta" style="color:var(--red);">Sent back by admin: ${escapeHtml(j.rejectionNote)}</div>` : ""}
         ${expanded ? `
           <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
-            ${(isAdmin || isAuthorizedStaffVerified) ? `
+            ${(isAdmin || hasStaffPermission("progress.assign")) ? `
               <div class="field">
                 <label>Assign to staff</label>
                 <div style="display:flex;gap:8px;">
@@ -5676,7 +5845,7 @@ function prRenderJobCard(j){
             ` : (j.status==="submitted" ? `
               <div class="detail-row"><b>Submitted by:</b> ${escapeHtml(j.submittedStaff || j.currentStaff || "")}${j.submittedBy ? ` <span style="color:var(--text-muted);font-weight:400;">(${escapeHtml(j.submittedBy)})</span>` : ""}</div>
               ${j.submittedNote ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(j.submittedNote)}</div>` : ""}
-              ${isAdmin ? `
+              ${(isAdmin || hasStaffPermission("progress.approve")) ? `
                 <div class="hint">Waiting on your review.</div>
                 <div class="modal-actions">
                   <button class="btn btn-green pr-job-approve" data-id="${j.id}">Approve</button>
@@ -5686,10 +5855,10 @@ function prRenderJobCard(j){
             ` : (j.status==="done" ? `
               <div class="detail-row"><b>Completed by:</b> ${escapeHtml(j.completedStaff || j.currentStaff || "")}${j.completedBy ? ` <span style="color:var(--text-muted);font-weight:400;">(${escapeHtml(j.completedBy)})</span>` : ""}</div>
               ${j.completedNote ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(j.completedNote)}</div>` : ""}
-              ${isAdmin ? `<button class="btn btn-red pr-job-reopen" data-id="${j.id}" style="width:100%;margin-top:6px;">Reopen</button>` : ""}
+              ${(isAdmin || hasStaffPermission("progress.reopen")) ? `<button class="btn btn-red pr-job-reopen" data-id="${j.id}" style="width:100%;margin-top:6px;">Reopen</button>` : ""}
             ` : `<div class="hint">Sign in with your Google account to update this job.</div>`))}
             ${j.photoRequired && j.status!=="done" && (canEdit || isAdmin || isAuthorizedStaffVerified) ? prRenderJobPhotoPicker(j.id) : ""}
-            ${(isAdmin || isAuthorizedStaffVerified) && j.status!=="done" ? `<button class="btn btn-red pr-job-admin-close" data-id="${j.id}" style="width:100%;margin-top:8px;">Close job (admin)</button>` : ""}
+            ${(isAdmin || hasStaffPermission("progress.close")) && j.status!=="done" ? `<button class="btn btn-red pr-job-admin-close" data-id="${j.id}" style="width:100%;margin-top:8px;">Close job (admin)</button>` : ""}
             ${logs.length ? `
               <div class="section-label" style="margin-top:12px;">History</div>
               ${logs.map(l=> prRenderLogEntry(j.id, l)).join("")}
@@ -5703,12 +5872,12 @@ function prRenderJobCard(j){
 function prRenderLogEntry(jobId, l){
   const label = `${escapeHtml(l.date||"")} &middot; <b>${escapeHtml(l.staffName||"")}</b>${l.savedBy ? ` <span style="color:var(--text-muted);font-weight:400;">(${escapeHtml(l.savedBy)})</span>` : ""}${l.completion ? " (Submitted as completed)" : ""}${l.approved ? " (Approved)" : ""}${l.rejected ? " (Rejected)" : ""}${l.adminClosed ? " (Closed by admin)" : ""}${l.note ? " — "+escapeHtml(l.note) : ""}`;
   const photoHtml = l.photo ? `<div style="margin-top:4px;"><a href="${l.photo}" download="job-photo-${escapeHtml(l.date||"photo")}.jpg" target="_blank" rel="noopener"><img src="${l.photo}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--border);" /></a></div>` : "";
-  if(!isAdmin) return `<div class="detail-row">${label}${photoHtml}</div>`;
+  if(!isAdmin && !hasStaffPermission("progress.edit") && !hasStaffPermission("progress.delete")) return `<div class="detail-row">${label}${photoHtml}</div>`;
   return `<div class="detail-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
     <span style="flex:1;">${label}${photoHtml}</span>
     <span style="display:flex;gap:4px;flex-shrink:0;">
-      <button class="btn btn-light pr-log-edit" data-job="${jobId}" data-idx="${l._idx}" style="padding:3px 8px;font-size:11px;">Edit</button>
-      <button class="btn btn-red pr-log-delete" data-job="${jobId}" data-idx="${l._idx}" style="padding:3px 8px;font-size:11px;">Delete</button>
+      ${(isAdmin || hasStaffPermission("progress.edit")) ? `<button class="btn btn-light pr-log-edit" data-job="${jobId}" data-idx="${l._idx}" style="padding:3px 8px;font-size:11px;">Edit</button>` : ""}
+      ${(isAdmin || hasStaffPermission("progress.delete")) ? `<button class="btn btn-red pr-log-delete" data-job="${jobId}" data-idx="${l._idx}" style="padding:3px 8px;font-size:11px;">Delete</button>` : ""}
     </span>
   </div>`;
 }
@@ -5900,7 +6069,7 @@ async function prCompleteJob(jobId){
 }
 
 async function prApproveJob(jobId){
-  if(!isAdmin) return;
+  if(!isAdmin && !hasStaffPermission("progress.approve")) return;
   const job = prJobs.find(j=> j.id===jobId);
   if(!job) return;
   const staff = job.submittedStaff || job.currentStaff || "";
@@ -5931,7 +6100,7 @@ async function prApproveJob(jobId){
 // mixed state. Drops one "Closed by admin" line into History so it's clear
 // this one didn't go through the normal staff/approval cycle.
 async function prAdminCloseJob(jobId){
-  if(!isAdmin && !isAuthorizedStaffVerified) return;
+  if(!isAdmin && !hasStaffPermission("progress.close")) return;
   const job = prJobs.find(j=> j.id===jobId);
   if(!job) return;
   if(!confirm(`Close "${job.jobLabel}" as done? This skips staff name/note${job.photoRequired ? "/photo" : ""} and marks it as closed by admin.`)) return;
@@ -5966,7 +6135,7 @@ async function prAdminCloseJob(jobId){
 }
 
 async function prRejectJob(jobId){
-  if(!isAdmin) return;
+  if(!isAdmin && !hasStaffPermission("progress.approve")) return;
   const note = prompt("Reason for sending this back to staff (shown to them):", "");
   if(note === null) return;
   const entry = {
@@ -6007,7 +6176,7 @@ async function prResetToPending(jobId){
 }
 
 async function prReopenJob(jobId){
-  if(!isAdmin) return;
+  if(!isAdmin && !hasStaffPermission("progress.reopen")) return;
   const job = prJobs.find(j=> j.id===jobId);
   if(!job) return;
   if(!confirm(`Reopen "${job.jobLabel}"? It will go back to In Progress so it can be edited again.`)) return;
@@ -6023,7 +6192,7 @@ async function prReopenJob(jobId){
 }
 
 async function prEditLog(jobId, idx){
-  if(!isAdmin) return;
+  if(!isAdmin && !hasStaffPermission("progress.edit")) return;
   const job = prJobs.find(j=> j.id===jobId);
   if(!job || !job.logs || !job.logs[idx]) return;
   const entry = job.logs[idx];
@@ -6054,7 +6223,7 @@ async function prEditLog(jobId, idx){
 }
 
 async function prDeleteLog(jobId, idx){
-  if(!isAdmin) return;
+  if(!isAdmin && !hasStaffPermission("progress.delete")) return;
   if(!(await confirmDelete("Delete this history entry? This cannot be undone."))) return;
   const job = prJobs.find(j=> j.id===jobId);
   if(!job || !job.logs) return;
