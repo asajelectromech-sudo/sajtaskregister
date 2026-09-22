@@ -4531,13 +4531,27 @@ $("fab").addEventListener("click", async ()=>{
   if(activeTab === "daily"){
     dailyVerificationMode = "new";
     dailyResubmitId = null;
-    $("dailyVerifyError").textContent = "";
-    showModal("dailyVerifyModal");
+
+    // Admin and admin-approved staff are already authenticated/verified.
+    // Do not ask them to verify their Google account again.
+    if(isAdmin || isAuthorizedStaffVerified){
+      openDailyTaskForm();
+    }else{
+      $("dailyVerifyError").textContent = "";
+      showModal("dailyVerifyModal");
+    }
     return;
   }
   if(activeTab === "work"){
-    $("workVerifyError").textContent = "";
-    showModal("workVerifyModal");
+    // Admin and admin-approved staff are already authenticated/verified.
+    // Do not ask them to verify their Google account again.
+    if(isAdmin || isAuthorizedStaffVerified){
+      verifiedWorkReportEmail = currentUser ? (currentUser.email || null) : null;
+      openNewWorkReportForm();
+    }else{
+      $("workVerifyError").textContent = "";
+      showModal("workVerifyModal");
+    }
     return;
   }
 
