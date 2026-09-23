@@ -93,7 +93,7 @@
   .modal-overlay.modal-overlay-top{z-index:250;}
   .modal{background:#fff;width:100%;max-width:520px;max-height:92vh;overflow-y:auto;border-radius:16px 16px 0 0;padding:18px;}
   @media(min-width:600px){ .modal-overlay{align-items:center;} .modal{border-radius:16px;} }
-  .modal h2{font-size:16px;margin:0 0 14px;}
+  .modal h2{font-size:16px;margin:0 44px 14px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
   .field{margin-bottom:12px;}
   .checkbox-field label{display:flex;align-items:center;gap:8px;font-weight:normal;cursor:pointer;}
   .checkbox-field input[type="checkbox"]{width:18px;height:18px;flex:none;}
@@ -107,7 +107,8 @@
   .field textarea{min-height:70px;resize:vertical;}
   .modal-actions{display:flex;gap:8px;margin-top:16px;}
   .modal-actions .btn{flex:1;}
-  .close-x{position:absolute;top:14px;right:16px;background:none;border:none;font-size:22px;color:var(--text-muted);cursor:pointer;}
+  .close-x{position:absolute;top:10px;right:12px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;background:var(--bg);border:1px solid var(--border);border-radius:50%;font-size:19px;font-weight:700;line-height:1;color:var(--navy);cursor:pointer;z-index:2;box-shadow:0 1px 3px rgba(0,0,0,0.15);}
+  .close-x:active{background:var(--border);}
   .modal{position:relative;}
   video{width:100%;border-radius:10px;background:#000;max-height:340px;object-fit:cover;}
   canvas{display:none;}
@@ -1003,7 +1004,6 @@ let verifiedWorkReportEmail = null;
 
 // ---------- HELPERS ----------
 function $(id){ return document.getElementById(id); }
-function showModal(id){ $(id).classList.add("show"); }
 
 const LEGACY_STAFF_PERMISSIONS = {
   "project.create": true,
@@ -1021,22 +1021,34 @@ function hasStaffPermission(key){
   return LEGACY_STAFF_PERMISSIONS[key] === true;
 }
 
-// Mobile browser back/swipe support. The Progress Report keeps a small
-// navigation stack so the native Back button / edge swipe retraces the exact
-// path the user took: job -> item -> parent item -> Fill Progress -> close.
-let reportModalHistoryId = null;
-let prMobileHistory = [];
-let prMobileHistoryHandling = false;
-function pushReportModalHistory(id){
-  if(reportModalHistoryId) return;
-  reportModalHistoryId=id;
-  prMobileHistory = id === "prModal" ? [{tab:"fill",path:[],jobId:null}] : [];
-  history.pushState({sajReportModal:id,sajPrStep:0},"",location.href);
+// Mobile browser back/swipe support, for EVERY modal in the app — not just
+// the Progress Report. Every showModal() push adds one entry to the
+// browser's own history; the Android/Chrome back gesture (edge swipe) or
+// Back button then closes exactly the most-recently-opened modal, one at a
+// time, walking back out through however many are stacked (e.g. a confirm
+// dialog on top of an edit form on top of the Progress Report) until the
+// main page is showing. Only from the main page — with nothing left in our
+// own pushed history — does the gesture fall through to the browser's own
+// back/exit behavior.
+//
+// The Progress Report additionally tracks its own internal steps (tab
+// switches, drilling into an item/job) as a sub-stack (prMobileHistory) on
+// top of its single "prModal" entry, so backing out of e.g. Completion
+// Report returns to Fill Progress before the Progress Report itself closes.
+let modalStack = [];                  // ids of currently open modals, in the order opened (LIFO)
+let prMobileHistory = [];             // PR-internal steps; only meaningful while "prModal" is the top of modalStack
+let historyHandledInternally = false; // true while WE are driving a history.go()/back() ourselves, so the popstate handler below doesn't also process it
+
+function showModal(id){
+  $(id).classList.add("show");
+  modalStack.push(id);
+  if(id === "prModal") prMobileHistory = [{tab:"fill",path:[],jobId:null}];
+  history.pushState({sajModalDepth: modalStack.length}, "", location.href);
 }
 function pushPrMobileStep(step){
-  if(reportModalHistoryId !== "prModal") return;
+  if(modalStack[modalStack.length-1] !== "prModal") return;
   prMobileHistory.push({...step});
-  history.pushState({sajReportModal:"prModal",sajPrStep:prMobileHistory.length-1},"",location.href);
+  history.pushState({sajModalDepth: modalStack.length, sajPrStep: prMobileHistory.length-1}, "", location.href);
 }
 function applyPrMobileStep(step){
   if(!step) return;
@@ -1045,48 +1057,44 @@ function applyPrMobileStep(step){
   prExpandedJobId = step.jobId || null;
   if(step.tab === "fill") renderPrFillView();
 }
-function clearReportModalHistory(){
-  if(!reportModalHistoryId) return;
-  const id=reportModalHistoryId;
-  const steps = id === "prModal" ? Math.max(1, prMobileHistory.length) : 1;
-  reportModalHistoryId=null;
-  prMobileHistory=[];
-  if(id === "prModal" && history.state && history.state.sajReportModal){
-    prMobileHistoryHandling = true;
-    history.go(-steps);
-    setTimeout(()=>{ prMobileHistoryHandling=false; },250);
-  } else if(history.state && history.state.sajReportModal){
-    history.back();
-  }
-}
-window.addEventListener("popstate",()=>{
-  if(prMobileHistoryHandling) return;
-  const id=reportModalHistoryId;
-  if(!id) return;
-  if(id === "prModal" && prMobileHistory.length > 1){
-    prMobileHistory.pop();
-    const previous = prMobileHistory[prMobileHistory.length-1];
-    applyPrMobileStep(previous);
-    // Keep one history entry for the now-current in-app step so another
-    // swipe/back continues walking backward through the report.
-    history.pushState({sajReportModal:"prModal",sajPrStep:prMobileHistory.length-1},"",location.href);
-    return;
-  }
-  reportModalHistoryId=null;
-  prMobileHistory=[];
-  const el=$(id);
-  if(el && el.classList.contains("show")) el.classList.remove("show");
-  if(id==="prModal"){ prCleanupListeners(); maybeSignOutAfterFabFlow(); }
-});
 function hideModal(id){
   $(id).classList.remove("show");
   stopCamera();
+  // Assumes LIFO: a modal is only ever closed by the user/code while it is
+  // the topmost open one (true throughout this app — a covering modal
+  // otherwise intercepts the clicks that would close it).
+  const idx = modalStack.lastIndexOf(id);
+  if(idx === -1) return; // wasn't tracked as open — nothing to unwind
+  const stepsToConsume = (id === "prModal") ? Math.max(1, prMobileHistory.length) : 1;
+  modalStack.splice(idx, 1);
+  if(id === "prModal") prMobileHistory = [];
+  if(!historyHandledInternally && history.state && typeof history.state.sajModalDepth === "number"){
+    historyHandledInternally = true;
+    history.go(-stepsToConsume);
+    setTimeout(()=>{ historyHandledInternally = false; }, 300);
+  }
 }
+window.addEventListener("popstate", ()=>{
+  if(historyHandledInternally) return;
+  if(modalStack.length === 0) return; // nothing of ours open — let the browser's own back/exit happen
+  const topId = modalStack[modalStack.length-1];
+  if(topId === "prModal" && prMobileHistory.length > 1){
+    prMobileHistory.pop();
+    applyPrMobileStep(prMobileHistory[prMobileHistory.length-1]);
+    return; // one step back inside the Progress Report; it stays open
+  }
+  modalStack.pop();
+  if(topId === "prModal") prMobileHistory = [];
+  const el = $(topId);
+  if(el) el.classList.remove("show");
+  stopCamera();
+  if(topId === "prModal"){ prCleanupListeners(); maybeSignOutAfterFabFlow(); }
+  if(topId === "projectTasksModal" || topId === "newProjectTaskModal" || topId === "projectTaskProjectSelectModal") maybeSignOutAfterFabFlow();
+});
 document.querySelectorAll("[data-close]").forEach(btn=>{
   btn.addEventListener("click", ()=> {
     const id=btn.getAttribute("data-close");
     hideModal(id);
-    if(id==="prModal" || id==="projectTasksModal") clearReportModalHistory();
   });
 });
 // If a normal user backs out of the Project Reports + flow (cancels the
@@ -1183,6 +1191,87 @@ function buildPdfFilename(prefix, items, siteFilterValue, fromValue, toValue, da
 
 function escapeHtml(str){
   return (str||"").replace(/[&<>"']/g, m => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[m]));
+}
+
+// ---------- Shareable "assignment" notification images ----------
+// Turns a task/job assignment notification into a clean, self-contained
+// PNG image so it can be downloaded and forwarded — e.g. in a WhatsApp
+// group — instead of a screenshot of the whole app. Used by the Project
+// Reports task-assignment banner and the Progress Report's "Assigned to
+// staff" notification cards.
+function wrapCanvasText(ctx, text, maxWidth){
+  const words = String(text||"").split(/\s+/).filter(Boolean);
+  const lines = [];
+  let line = "";
+  words.forEach(word=>{
+    const test = line ? line + " " + word : word;
+    if(ctx.measureText(test).width > maxWidth && line){
+      lines.push(line);
+      line = word;
+    } else {
+      line = test;
+    }
+  });
+  if(line) lines.push(line);
+  return lines.length ? lines : [""];
+}
+function downloadAssignmentImage({ heading, title, rows, dateLabel }){
+  const width = 640, padX = 28, headerH = 64, titleSize = 22, rowSize = 16, lineGap = 10;
+  const cleanRows = (rows||[]).filter(r=> r && String(r).trim());
+
+  // Measure on a scratch canvas first so the real one can be sized exactly
+  // to the content — no wasted white space, no cut-off text.
+  const measure = document.createElement("canvas").getContext("2d");
+  measure.font = `bold ${titleSize}px Arial`;
+  const titleLines = wrapCanvasText(measure, title, width - padX*2);
+  measure.font = `${rowSize}px Arial`;
+  const rowLineGroups = cleanRows.map(r=> wrapCanvasText(measure, r, width - padX*2));
+
+  let height = headerH + 40 + titleLines.length * (titleSize + 8) + 10;
+  rowLineGroups.forEach(lines=> height += lines.length * (rowSize + lineGap));
+  height += 36;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = width; canvas.height = height;
+  const ctx = canvas.getContext("2d");
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+  ctx.strokeStyle = "#dfe4e9";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(1, 1, width-2, height-2);
+
+  ctx.fillStyle = "#123354";
+  ctx.fillRect(0, 0, width, headerH);
+  ctx.fillStyle = "#ffffff";
+  ctx.font = "bold 18px Arial";
+  ctx.fillText("SAJ Task Register", padX, 28);
+  ctx.fillStyle = "#cfe0f2";
+  ctx.font = "13px Arial";
+  ctx.fillText(heading || "Task Assigned", padX, 48);
+
+  let y = headerH + 34;
+  ctx.fillStyle = "#182430";
+  ctx.font = `bold ${titleSize}px Arial`;
+  titleLines.forEach(line=>{ ctx.fillText(line, padX, y); y += titleSize + 8; });
+  y += 10;
+
+  ctx.font = `${rowSize}px Arial`;
+  ctx.fillStyle = "#374252";
+  rowLineGroups.forEach(lines=>{
+    lines.forEach(line=>{ ctx.fillText(line, padX, y); y += rowSize + lineGap; });
+  });
+
+  ctx.fillStyle = "#647082";
+  ctx.font = "12px Arial";
+  ctx.fillText(dateLabel || "", padX, height - 16);
+
+  const link = document.createElement("a");
+  link.download = `Task_Assigned_${sanitizeForFilename(title)}.png`;
+  link.href = canvas.toDataURL("image/png");
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 // ---------- AUTH ----------
@@ -3930,10 +4019,25 @@ function renderTaskNotificationsBanner(){
           <div class="detail-row" style="cursor:pointer;color:var(--red);" data-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${escapeHtml(i.title)} <span class="meta">· ${escapeHtml(fmtDate(i.notificationAt))}</span></div>
         `).join("") : ""}
         ${newItems.length ? `<div class="detail-row" style="margin-top:6px;"><b>New tasks assigned to you (${newItems.length}):</b></div>` + newItems.map(i=>`
-          <div class="detail-row" style="cursor:pointer;color:var(--blue);" data-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${escapeHtml(i.title)} <span class="meta">· ${escapeHtml(fmtDate(i.notificationAt))}</span></div>
+          <div class="detail-row" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
+            <span style="cursor:pointer;color:var(--blue);" data-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${escapeHtml(i.title)} <span class="meta">· ${escapeHtml(fmtDate(i.notificationAt))}</span></span>
+            <button type="button" class="btn btn-light task-notif-download" data-download-title="${escapeHtml(i.title)}" data-download-project-name="${escapeHtml(i.projectName)}" data-download-date="${escapeHtml(fmtDate(i.notificationAt))}" style="padding:4px 9px;font-size:11px;flex-shrink:0;">⬇ Image</button>
+          </div>
         `).join("") : ""}
       </div>
     </div>`;
+
+  box.querySelectorAll(".task-notif-download").forEach(btn=>{
+    btn.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      downloadAssignmentImage({
+        heading: "Task Assigned — Project Reports",
+        title: btn.getAttribute("data-download-title") || "Task",
+        rows: [`Project: ${btn.getAttribute("data-download-project-name") || ""}`],
+        dateLabel: btn.getAttribute("data-download-date") || ""
+      });
+    });
+  });
 
   box.querySelectorAll("[data-notif-project]").forEach(el=>{
     el.addEventListener("click", ()=> openProject(el.getAttribute("data-notif-project")));
@@ -4176,7 +4280,6 @@ function openProject(id){
   // Task creation from Project Reports is handled only by the bottom-right
   // + button. There is no separate + Add Task button inside this project modal.
   showModal("projectTasksModal");
-  pushReportModalHistory("projectTasksModal");
 }
 
 $("projectTaskViewChips").querySelectorAll(".chip").forEach(chip=>{
@@ -5754,7 +5857,6 @@ function openProgressReport(projectId, projectName){
   startPrListeners();
   prSetActiveTab("fill");
   showModal("prModal");
-  pushReportModalHistory("prModal");
 }
 
 function prCleanupListeners(){
@@ -5762,7 +5864,7 @@ function prCleanupListeners(){
   if(prJobsListenerUnsub){ prJobsListenerUnsub(); prJobsListenerUnsub = null; }
 }
 const prModalCloseBtn = document.querySelector('#prModal [data-close="prModal"]');
-if(prModalCloseBtn) prModalCloseBtn.addEventListener("click", ()=>{ prCleanupListeners(); maybeSignOutAfterFabFlow(); clearReportModalHistory(); });
+if(prModalCloseBtn) prModalCloseBtn.addEventListener("click", ()=>{ prCleanupListeners(); maybeSignOutAfterFabFlow(); });
 
 function startPrListeners(){
   prCleanupListeners();
@@ -5776,10 +5878,12 @@ function startPrListeners(){
     if(!prJobsEditorPath) renderPrTreeEditor();
   }, err=> console.error("progressTrees listener:", err));
 
-  // Client-side filter by projectId instead of a where() query, so no extra
-  // Firestore import or composite index is needed.
-  prJobsListenerUnsub = onSnapshot(collection(db, "progressJobs"), snap=>{
-    prJobs = snap.docs.map(d=> ({ id: d.id, ...d.data() })).filter(j=> j.projectId === prCurrentProjectId);
+  // Query only this project's jobs directly, instead of downloading every
+  // job across every project and filtering on the device — this is the
+  // difference between reading a handful of docs and reading the whole
+  // (growing) collection every time a Progress Report is opened.
+  prJobsListenerUnsub = onSnapshot(query(collection(db, "progressJobs"), where("projectId","==",prCurrentProjectId)), snap=>{
+    prJobs = snap.docs.map(d=> ({ id: d.id, ...d.data() }));
     renderPrJobsChecklist();
     renderPrReportView();
     if(prJobsEditorPath) prOpenJobsEditor(prJobsEditorPath);
@@ -5803,7 +5907,16 @@ function prSetActiveTab(tab){
   if(tab==="notif") renderPrNotifView();
 }
 $("prTabs").querySelectorAll(".chip").forEach(chip=>{
-  chip.addEventListener("click", ()=> prSetActiveTab(chip.getAttribute("data-pr-tab")));
+  chip.addEventListener("click", ()=>{
+    const tab = chip.getAttribute("data-pr-tab");
+    if(tab === prActiveTab) return;
+    prSetActiveTab(tab);
+    // Record the tab switch as its own back-stack step, so swiping back
+    // returns to whichever tab (Fill Progress / Completion Report /
+    // Notifications) the user was on before, rather than closing the whole
+    // Progress Report immediately.
+    pushPrMobileStep({ tab, path: tab==="fill" ? prSelectedPath.slice() : [], jobId: tab==="fill" ? prExpandedJobId : null });
+  });
 });
 
 // ---------- FILL PROGRESS TAB (tap-through location browser) ----------
@@ -5885,6 +5998,7 @@ function prNotifJobCard(j, opts){
         <p class="card-title" style="margin:0;">${escapeHtml(j.jobLabel)}</p>
         ${j.unitLabel ? `<div class="meta">${escapeHtml(j.unitLabel)}</div>` : ""}
         ${opts && opts.extra ? opts.extra : ""}
+        ${opts && opts.downloadJobId ? `<button type="button" class="btn btn-light pr-notif-download" data-download-job="${escapeHtml(opts.downloadJobId)}" style="margin-top:8px;padding:5px 10px;font-size:12px;">⬇ Download as image</button>` : ""}
       </div>
     </div>`;
 }
@@ -5917,10 +6031,32 @@ function renderPrNotifView(){
       : j._kind==="rejected"
         ? `<div class="meta" style="color:${color};">${escapeHtml(j.rejectionNote||"")}</div>`
         : `<div class="meta" style="color:${color};font-weight:700;">${kindLabel}: ${escapeHtml(j.assignedStaff||"")}</div>`;
-    return prNotifJobCard(j,{extra: extra + `<div class="meta" style="margin-top:3px;">${escapeHtml(fmtDate(j._at))}</div>`});
+    return prNotifJobCard(j,{
+      extra: extra + `<div class="meta" style="margin-top:3px;">${escapeHtml(fmtDate(j._at))}</div>`,
+      downloadJobId: j._kind==="assigned" ? j.id : null
+    });
   }).join("");
 
   box.innerHTML = `<div class="section-label" style="margin-top:14px;">Newest first</div>${notifRows}`;
+
+  box.querySelectorAll(".pr-notif-download").forEach(btn=>{
+    btn.addEventListener("click", (e)=>{
+      e.stopPropagation();
+      const jobId = btn.getAttribute("data-download-job");
+      const job = prJobs.find(j=> j.id===jobId);
+      if(!job) return;
+      downloadAssignmentImage({
+        heading: "Job Assigned — Progress Report",
+        title: job.jobLabel || "Job",
+        rows: [
+          prCurrentProjectName ? `Project: ${prCurrentProjectName}` : "",
+          job.unitLabel ? `Location: ${job.unitLabel}` : "",
+          job.assignedStaff ? `Assigned to: ${job.assignedStaff}` : ""
+        ],
+        dateLabel: fmtDate(job.assignedAt || job.updatedAt || job.createdAt)
+      });
+    });
+  });
 
   box.querySelectorAll("[data-notif-job]").forEach(el=>{
     el.addEventListener("click", ()=>{
