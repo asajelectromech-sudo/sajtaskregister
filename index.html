@@ -1194,11 +1194,15 @@ function escapeHtml(str){
 }
 
 // ---------- Shareable "assignment" notification images ----------
-// Turns a task/job assignment notification into a clean, self-contained
-// PNG image so it can be downloaded and forwarded — e.g. in a WhatsApp
-// group — instead of a screenshot of the whole app. Used by the Project
-// Reports task-assignment banner and the Progress Report's "Assigned to
-// staff" notification cards.
+// Turns one or more task/job assignment notifications into a single,
+// clean, self-contained PNG image so it can be downloaded and forwarded —
+// e.g. in a WhatsApp group — instead of a screenshot of the whole app.
+// Admin and admin-approved staff only (see canDownloadAssignmentImages).
+// Used by the Project Reports task-assignment banner and the Progress
+// Report's "Assigned to staff" notification cards.
+function canDownloadAssignmentImages(){
+  return isAdmin || isAuthorizedStaffVerified;
+}
 function wrapCanvasText(ctx, text, maxWidth){
   const words = String(text||"").split(/\s+/).filter(Boolean);
   const lines = [];
@@ -1215,21 +1219,30 @@ function wrapCanvasText(ctx, text, maxWidth){
   if(line) lines.push(line);
   return lines.length ? lines : [""];
 }
-function downloadAssignmentImage({ heading, title, rows, dateLabel }){
-  const width = 640, padX = 28, headerH = 64, titleSize = 22, rowSize = 16, lineGap = 10;
-  const cleanRows = (rows||[]).filter(r=> r && String(r).trim());
+// items: [{ title, rows: [line, ...] }, ...] — each renders as its own
+// block, stacked in one image, separated by a divider. heading/dateLabel
+// are shared across the whole image (shown once, in the header/footer).
+function downloadAssignmentsImage(items, { heading, dateLabel } = {}){
+  const cleanItems = (items||[]).filter(it=> it && it.title);
+  if(!cleanItems.length) return;
+  const width = 640, padX = 28, headerH = 64, titleSize = 20, rowSize = 15, lineGap = 9, blockGap = 22;
 
-  // Measure on a scratch canvas first so the real one can be sized exactly
-  // to the content — no wasted white space, no cut-off text.
   const measure = document.createElement("canvas").getContext("2d");
-  measure.font = `bold ${titleSize}px Arial`;
-  const titleLines = wrapCanvasText(measure, title, width - padX*2);
-  measure.font = `${rowSize}px Arial`;
-  const rowLineGroups = cleanRows.map(r=> wrapCanvasText(measure, r, width - padX*2));
+  const blocks = cleanItems.map(item=>{
+    measure.font = `bold ${titleSize}px Arial`;
+    const titleLines = wrapCanvasText(measure, item.title, width - padX*2);
+    measure.font = `${rowSize}px Arial`;
+    const rowLineGroups = (item.rows||[]).filter(r=> r && String(r).trim()).map(r=> wrapCanvasText(measure, r, width - padX*2));
+    return { titleLines, rowLineGroups };
+  });
 
-  let height = headerH + 40 + titleLines.length * (titleSize + 8) + 10;
-  rowLineGroups.forEach(lines=> height += lines.length * (rowSize + lineGap));
-  height += 36;
+  let height = headerH + 30;
+  blocks.forEach(b=>{
+    height += b.titleLines.length * (titleSize + 6);
+    b.rowLineGroups.forEach(lines=> height += lines.length * (rowSize + lineGap));
+    height += blockGap;
+  });
+  height += 26; // footer
 
   const canvas = document.createElement("canvas");
   canvas.width = width; canvas.height = height;
@@ -1248,26 +1261,35 @@ function downloadAssignmentImage({ heading, title, rows, dateLabel }){
   ctx.fillText("SAJ Task Register", padX, 28);
   ctx.fillStyle = "#cfe0f2";
   ctx.font = "13px Arial";
-  ctx.fillText(heading || "Task Assigned", padX, 48);
+  ctx.fillText(heading || (cleanItems.length > 1 ? `Task Assignments (${cleanItems.length})` : "Task Assigned"), padX, 48);
 
-  let y = headerH + 34;
-  ctx.fillStyle = "#182430";
-  ctx.font = `bold ${titleSize}px Arial`;
-  titleLines.forEach(line=>{ ctx.fillText(line, padX, y); y += titleSize + 8; });
-  y += 10;
-
-  ctx.font = `${rowSize}px Arial`;
-  ctx.fillStyle = "#374252";
-  rowLineGroups.forEach(lines=>{
-    lines.forEach(line=>{ ctx.fillText(line, padX, y); y += rowSize + lineGap; });
+  let y = headerH + 30;
+  blocks.forEach((b, i)=>{
+    ctx.fillStyle = "#182430";
+    ctx.font = `bold ${titleSize}px Arial`;
+    b.titleLines.forEach(line=>{ ctx.fillText(line, padX, y); y += titleSize + 6; });
+    ctx.font = `${rowSize}px Arial`;
+    ctx.fillStyle = "#374252";
+    b.rowLineGroups.forEach(lines=>{
+      lines.forEach(line=>{ ctx.fillText(line, padX, y); y += rowSize + lineGap; });
+    });
+    y += blockGap * 0.4;
+    if(i < blocks.length - 1){
+      ctx.strokeStyle = "#eef1f5";
+      ctx.lineWidth = 1;
+      ctx.beginPath(); ctx.moveTo(padX, y); ctx.lineTo(width-padX, y); ctx.stroke();
+    }
+    y += blockGap * 0.6;
   });
 
   ctx.fillStyle = "#647082";
   ctx.font = "12px Arial";
-  ctx.fillText(dateLabel || "", padX, height - 16);
+  ctx.fillText(dateLabel || `Exported ${fmtDate(new Date())}`, padX, height - 14);
 
   const link = document.createElement("a");
-  link.download = `Task_Assigned_${sanitizeForFilename(title)}.png`;
+  link.download = cleanItems.length > 1
+    ? `Task_Assignments_${sanitizeForFilename(String(cleanItems.length))}_items.png`
+    : `Task_Assigned_${sanitizeForFilename(cleanItems[0].title)}.png`;
   link.href = canvas.toDataURL("image/png");
   document.body.appendChild(link);
   link.click();
@@ -3972,6 +3994,8 @@ function visibleProjects(){
   return allProjects;
 }
 
+let taskNotifSelectMode = false;   // true while picking multiple task-assignment notifications to combine into one downloadable image (staff banner only)
+let taskNotifSelectedIds = new Set();
 function renderTaskNotificationsBanner(){
   const box=$("taskNotificationsBanner");
   if(!box) return;
@@ -3994,6 +4018,7 @@ function renderTaskNotificationsBanner(){
     if(!isNew && !isRejected) return;
     const project = allProjects.find(p=>p.id===t.projectId);
     items.push({
+      id: t.id,
       projectId: t.projectId,
       projectName: project ? (project.name||"Project") : (t.projectName||"Project"),
       title: title || "Untitled task",
@@ -4002,10 +4027,23 @@ function renderTaskNotificationsBanner(){
     });
   });
 
-  if(!items.length){ box.style.display="none"; box.innerHTML=""; return; }
+  if(!items.length){ box.style.display="none"; box.innerHTML=""; taskNotifSelectMode=false; taskNotifSelectedIds=new Set(); return; }
 
   const rejectedItems = items.filter(i=>i.kind==="rejected");
   const newItems = items.filter(i=>i.kind==="new");
+
+  // Admin-approved staff only — a plain Google-verified visitor with no
+  // approval never sees the Select / download option here.
+  const canDownload = canDownloadAssignmentImages();
+  const newIds = new Set(newItems.map(i=>i.id));
+  taskNotifSelectedIds.forEach(id=>{ if(!newIds.has(id)) taskNotifSelectedIds.delete(id); });
+
+  const selectToggle = canDownload && newItems.length
+    ? `<button type="button" class="btn btn-light" id="taskNotifSelectToggle" style="padding:4px 10px;font-size:11px;">${taskNotifSelectMode ? "Cancel" : "Select"}</button>`
+    : "";
+  const downloadBar = (canDownload && taskNotifSelectMode && taskNotifSelectedIds.size)
+    ? `<button type="button" class="btn btn-primary" id="taskNotifDownloadSelected" style="width:100%;margin-top:10px;">⬇ Download ${taskNotifSelectedIds.size} selected as image</button>`
+    : "";
 
   box.style.display="block";
   box.innerHTML = `
@@ -4018,29 +4056,48 @@ function renderTaskNotificationsBanner(){
         ${rejectedItems.length ? `<div class="detail-row" style="margin-top:4px;"><b>Rejected — please review &amp; resubmit (${rejectedItems.length}):</b></div>` + rejectedItems.map(i=>`
           <div class="detail-row" style="cursor:pointer;color:var(--red);" data-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${escapeHtml(i.title)} <span class="meta">· ${escapeHtml(fmtDate(i.notificationAt))}</span></div>
         `).join("") : ""}
-        ${newItems.length ? `<div class="detail-row" style="margin-top:6px;"><b>New tasks assigned to you (${newItems.length}):</b></div>` + newItems.map(i=>`
-          <div class="detail-row" style="display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;">
-            <span style="cursor:pointer;color:var(--blue);" data-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${escapeHtml(i.title)} <span class="meta">· ${escapeHtml(fmtDate(i.notificationAt))}</span></span>
-            <button type="button" class="btn btn-light task-notif-download" data-download-title="${escapeHtml(i.title)}" data-download-project-name="${escapeHtml(i.projectName)}" data-download-date="${escapeHtml(fmtDate(i.notificationAt))}" style="padding:4px 9px;font-size:11px;flex-shrink:0;">⬇ Image</button>
+        ${newItems.length ? `<div class="detail-row" style="margin-top:6px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;"><b>New tasks assigned to you (${newItems.length}):</b> ${selectToggle}</div>` + newItems.map(i=>`
+          <div class="detail-row" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+            ${canDownload && taskNotifSelectMode ? `<input type="checkbox" class="task-notif-check" data-notif-check="${escapeHtml(i.id)}" ${taskNotifSelectedIds.has(i.id)?"checked":""} style="width:19px;height:19px;flex:none;" />` : ""}
+            <span style="cursor:pointer;color:var(--blue);flex:1;min-width:0;" data-notif-project="${i.projectId}">↳ ${escapeHtml(i.projectName)} — ${escapeHtml(i.title)} <span class="meta">· ${escapeHtml(fmtDate(i.notificationAt))}</span></span>
           </div>
-        `).join("") : ""}
+        `).join("") + downloadBar : ""}
       </div>
     </div>`;
 
-  box.querySelectorAll(".task-notif-download").forEach(btn=>{
-    btn.addEventListener("click", (e)=>{
-      e.stopPropagation();
-      downloadAssignmentImage({
-        heading: "Task Assigned — Project Reports",
-        title: btn.getAttribute("data-download-title") || "Task",
-        rows: [`Project: ${btn.getAttribute("data-download-project-name") || ""}`],
-        dateLabel: btn.getAttribute("data-download-date") || ""
-      });
+  const toggleBtn = $("taskNotifSelectToggle");
+  if(toggleBtn) toggleBtn.addEventListener("click", ()=>{
+    taskNotifSelectMode = !taskNotifSelectMode;
+    if(!taskNotifSelectMode) taskNotifSelectedIds = new Set();
+    renderTaskNotificationsBanner();
+  });
+
+  box.querySelectorAll(".task-notif-check").forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      const id = cb.getAttribute("data-notif-check");
+      if(cb.checked) taskNotifSelectedIds.add(id); else taskNotifSelectedIds.delete(id);
+      renderTaskNotificationsBanner();
     });
   });
 
+  const downloadBtn = $("taskNotifDownloadSelected");
+  if(downloadBtn) downloadBtn.addEventListener("click", ()=>{
+    const chosen = newItems.filter(i=> taskNotifSelectedIds.has(i.id));
+    if(!chosen.length) return;
+    downloadAssignmentsImage(
+      chosen.map(i=>({ title: i.title, rows: [`Project: ${i.projectName}`, fmtDate(i.notificationAt)] })),
+      { heading: "Task Assigned — Project Reports" }
+    );
+    taskNotifSelectMode = false;
+    taskNotifSelectedIds = new Set();
+    renderTaskNotificationsBanner();
+  });
+
   box.querySelectorAll("[data-notif-project]").forEach(el=>{
-    el.addEventListener("click", ()=> openProject(el.getAttribute("data-notif-project")));
+    el.addEventListener("click", ()=>{
+      if(taskNotifSelectMode) return;
+      openProject(el.getAttribute("data-notif-project"));
+    });
   });
 }
 
@@ -5768,6 +5825,8 @@ let prCurrentProjectName = "";
 let prTreeDoc = null;            // { nodes:[ {id,label,children:[...]} , ... ] }
 let prTreeListenerUnsub = null;
 let prJobs = [];                 // all progressJobs docs for the open project
+let prNotifSelectMode = false;   // true while picking multiple assignment notifications to combine into one downloadable image
+let prNotifSelectedIds = new Set();
 let prJobsListenerUnsub = null;
 let prSelectedPath = [];         // node ids drilled into so far, in the Fill Progress tab
 let prActiveTab = "fill";
@@ -5854,6 +5913,8 @@ function openProgressReport(projectId, projectName){
   prReportItemPickerOpen = false;
   prReportItemSearch = "";
   prReportSearchTerm = "";
+  prNotifSelectMode = false;
+  prNotifSelectedIds = new Set();
   startPrListeners();
   prSetActiveTab("fill");
   showModal("prModal");
@@ -5992,13 +6053,15 @@ function prNotifCount(){
 }
 
 function prNotifJobCard(j, opts){
+  const selectable = opts && opts.selectable;
+  const checked = prNotifSelectedIds.has(j.id);
   return `
-    <div class="card" style="cursor:pointer;" data-notif-job="${j.id}">
-      <div class="card-body">
+    <div class="card" style="cursor:pointer;display:flex;gap:10px;align-items:flex-start;" data-notif-job="${j.id}">
+      ${selectable ? `<input type="checkbox" class="pr-notif-check" data-notif-check="${j.id}" ${checked?"checked":""} style="width:20px;height:20px;flex:none;margin-top:2px;" />` : ""}
+      <div class="card-body" style="flex:1;min-width:0;">
         <p class="card-title" style="margin:0;">${escapeHtml(j.jobLabel)}</p>
         ${j.unitLabel ? `<div class="meta">${escapeHtml(j.unitLabel)}</div>` : ""}
         ${opts && opts.extra ? opts.extra : ""}
-        ${opts && opts.downloadJobId ? `<button type="button" class="btn btn-light pr-notif-download" data-download-job="${escapeHtml(opts.downloadJobId)}" style="margin-top:8px;padding:5px 10px;font-size:12px;">⬇ Download as image</button>` : ""}
       </div>
     </div>`;
 }
@@ -6018,6 +6081,18 @@ function renderPrNotifView(){
     return db-da;
   });
 
+  // Only admin / admin-approved staff can turn assignment notifications
+  // into a downloadable image, and only "assigned" notifications qualify
+  // (not "sent back for rework" or "awaiting approval").
+  const canDownload = canDownloadAssignmentImages();
+  const assignedIds = new Set(assigned.map(j=>j.id));
+  prNotifSelectedIds.forEach(id=>{ if(!assignedIds.has(id)) prNotifSelectedIds.delete(id); });
+
+  const selectToggle = canDownload && assigned.length
+    ? `<button type="button" class="btn btn-light" id="prNotifSelectToggle" style="padding:5px 12px;font-size:12px;">${prNotifSelectMode ? "Cancel" : "Select"}</button>`
+    : "";
+  const headerRow = `<div class="section-label" style="margin-top:14px;display:flex;align-items:center;justify-content:space-between;">Newest first ${selectToggle}</div>`;
+
   if(!notificationItems.length){
     box.innerHTML = `<div class="hint" style="text-align:center;padding:30px 10px;">No notifications right now.</div>`;
     return;
@@ -6033,33 +6108,58 @@ function renderPrNotifView(){
         : `<div class="meta" style="color:${color};font-weight:700;">${kindLabel}: ${escapeHtml(j.assignedStaff||"")}</div>`;
     return prNotifJobCard(j,{
       extra: extra + `<div class="meta" style="margin-top:3px;">${escapeHtml(fmtDate(j._at))}</div>`,
-      downloadJobId: j._kind==="assigned" ? j.id : null
+      selectable: canDownload && prNotifSelectMode && j._kind==="assigned"
     });
   }).join("");
 
-  box.innerHTML = `<div class="section-label" style="margin-top:14px;">Newest first</div>${notifRows}`;
+  const downloadBar = (canDownload && prNotifSelectMode && prNotifSelectedIds.size)
+    ? `<button type="button" class="btn btn-primary" id="prNotifDownloadSelected" style="width:100%;margin-top:12px;">⬇ Download ${prNotifSelectedIds.size} selected as image</button>`
+    : "";
 
-  box.querySelectorAll(".pr-notif-download").forEach(btn=>{
-    btn.addEventListener("click", (e)=>{
-      e.stopPropagation();
-      const jobId = btn.getAttribute("data-download-job");
-      const job = prJobs.find(j=> j.id===jobId);
-      if(!job) return;
-      downloadAssignmentImage({
-        heading: "Job Assigned — Progress Report",
+  box.innerHTML = headerRow + notifRows + downloadBar;
+
+  const toggleBtn = $("prNotifSelectToggle");
+  if(toggleBtn) toggleBtn.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    prNotifSelectMode = !prNotifSelectMode;
+    if(!prNotifSelectMode) prNotifSelectedIds = new Set();
+    renderPrNotifView();
+  });
+
+  box.querySelectorAll(".pr-notif-check").forEach(cb=>{
+    cb.addEventListener("click", (e)=> e.stopPropagation());
+    cb.addEventListener("change", ()=>{
+      const id = cb.getAttribute("data-notif-check");
+      if(cb.checked) prNotifSelectedIds.add(id); else prNotifSelectedIds.delete(id);
+      renderPrNotifView();
+    });
+  });
+
+  const downloadBtn = $("prNotifDownloadSelected");
+  if(downloadBtn) downloadBtn.addEventListener("click", (e)=>{
+    e.stopPropagation();
+    const items = prJobs
+      .filter(j=> prNotifSelectedIds.has(j.id))
+      .map(job=>({
         title: job.jobLabel || "Job",
         rows: [
           prCurrentProjectName ? `Project: ${prCurrentProjectName}` : "",
           job.unitLabel ? `Location: ${job.unitLabel}` : "",
-          job.assignedStaff ? `Assigned to: ${job.assignedStaff}` : ""
-        ],
-        dateLabel: fmtDate(job.assignedAt || job.updatedAt || job.createdAt)
-      });
-    });
+          job.assignedStaff ? `Assigned to: ${job.assignedStaff}` : "",
+          fmtDate(job.assignedAt || job.updatedAt || job.createdAt)
+        ]
+      }));
+    if(!items.length) return;
+    downloadAssignmentsImage(items, { heading: "Job Assigned — Progress Report" });
+    prNotifSelectMode = false;
+    prNotifSelectedIds = new Set();
+    renderPrNotifView();
   });
 
   box.querySelectorAll("[data-notif-job]").forEach(el=>{
     el.addEventListener("click", ()=>{
+      if(prNotifSelectMode) return; // selecting, not navigating
+
       const jobId = el.getAttribute("data-notif-job");
       const job = prJobs.find(j=> j.id===jobId);
       if(!job) return;
