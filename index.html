@@ -7169,8 +7169,21 @@ function prJobHistoryHtml(j){
 function renderPrReportView(){
   const box = $("prReportView");
   if(!box || !prTreeDoc) return;
+  // Every control in this view (item checkboxes, dates, rating, status
+  // chips) re-renders the whole thing on each change. Without this, that
+  // rebuild resets scroll to the top every time — capture it here and put
+  // it back after, same fix as the Customize copy panel.
+  const modalEl = box.closest(".modal");
+  const modalScrollTop = modalEl ? modalEl.scrollTop : 0;
+  const itemListScrollTop = (document.getElementById("prReportItemPickerList") || {}).scrollTop || 0;
+  function restorePrReportScroll(){
+    if(modalEl) modalEl.scrollTop = modalScrollTop;
+    const freshList = document.getElementById("prReportItemPickerList");
+    if(freshList) freshList.scrollTop = itemListScrollTop;
+  }
   if(!prJobs.length){
     box.innerHTML = `<div class="hint" style="padding:16px 0;">No jobs recorded yet.</div>`;
+    restorePrReportScroll();
     return;
   }
 
@@ -7207,7 +7220,7 @@ function renderPrReportView(){
       <button type="button" class="btn btn-light" id="prReportItemPickerBtn" style="width:100%;text-align:left;">${escapeHtml(itemButtonLabel)} ${prReportItemPickerOpen ? "▲" : "▼"}</button>
       ${prReportItemPickerOpen ? `
         <input type="text" id="prReportItemSearchInput" placeholder="Search items..." value="${escapeHtml(prReportItemSearch)}" style="width:100%;padding:8px;border:1px solid var(--border);border-radius:8px;margin-top:6px;" />
-        <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;">
+        <div id="prReportItemPickerList" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;margin-top:6px;">
           <label style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;cursor:pointer;">
             <input type="checkbox" class="pr-report-item-check" data-unit="all" ${prReportItemFilters.size===0 ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" /> <b>All items</b>
           </label>
@@ -7229,6 +7242,7 @@ function renderPrReportView(){
   if(!scopedJobs.length){
     box.innerHTML = itemPickerHtml + `<div class="hint" style="padding:16px 0;">No jobs match this filter.</div>`;
     prReportBindFilterControls(box);
+    restorePrReportScroll();
     return;
   }
 
@@ -7260,6 +7274,19 @@ function renderPrReportView(){
   allItems.forEach((u,idx)=>{ treeOrderIndex[u.unitPath] = idx; });
   const locPaths = Object.keys(byLoc).sort((a,b)=> (treeOrderIndex[a] ?? Infinity) - (treeOrderIndex[b] ?? Infinity));
 
+  const PR_STATUS_COLORS = {
+    done: { bg: "#e7f7ec", color: "#15803d", label: "Completed" },
+    submitted: { bg: "#e6edfd", color: "#1d4ed8", label: "Awaiting approval" },
+    in_progress: { bg: "#e6edfd", color: "#1d4ed8", label: "In progress" },
+    pending: { bg: "#fef3e2", color: "#b45309", label: "Pending" }
+  };
+  function prReportJobGroupHtml(statusKey, jobs){
+    if(!jobs.length) return "";
+    const c = PR_STATUS_COLORS[statusKey];
+    const jobSpans = jobs.map(p=> `<span style="background:#fff59d;border-radius:4px;padding:0 4px;">${escapeHtml(p.jobLabel)}</span>`).join(", ");
+    return `<div class="meta" style="margin-top:4px;"><span style="background:${c.bg};color:${c.color};font-weight:700;padding:1px 7px;border-radius:5px;">${c.label}</span>: ${jobSpans}</div>`;
+  }
+
   let completedLocs = 0;
   const rows = locPaths.map(path=>{
     const u = byLoc[path];
@@ -7277,10 +7304,10 @@ function renderPrReportView(){
         <div class="card-body">
           <p class="card-title">${escapeHtml(u.label)}</p>
           <span class="badge ${isComplete?'badge-closed':'badge-open'}">${done}/${total} done</span>
-          ${submitted.length ? `<div class="meta">Awaiting approval: ${submitted.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
-          ${inProgress.length ? `<div class="meta">In progress: ${inProgress.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
-          ${pending.length ? `<div class="meta">Pending: ${pending.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
-          ${prReportFilter.has("done") && doneHere.length ? `<div class="meta">Completed: ${doneHere.map(p=> escapeHtml(p.jobLabel)).join(", ")}</div>` : ""}
+          ${prReportJobGroupHtml("submitted", submitted)}
+          ${prReportJobGroupHtml("in_progress", inProgress)}
+          ${prReportJobGroupHtml("pending", pending)}
+          ${prReportFilter.has("done") ? prReportJobGroupHtml("done", doneHere) : ""}
           ${u.jobs.filter(j=> searchActive || ((j.status==="submitted" || j.status==="done") && prReportFilter.has(j.status))).map(prJobHistoryHtml).join("")}
         </div>
       </div>`;
@@ -7308,6 +7335,7 @@ function renderPrReportView(){
     ${locPaths.length ? rows : `<div class="hint" style="padding:10px 0;">No items match this filter.</div>`}
   `;
   prReportBindFilterControls(box);
+  restorePrReportScroll();
   const pdfBtn = document.getElementById("prDownloadPdfBtn");
   if(pdfBtn) pdfBtn.addEventListener("click", prDownloadPdf);
   // Tapping a "By item" card jumps straight to that item in Fill Progress —
