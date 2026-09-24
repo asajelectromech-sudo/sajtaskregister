@@ -4042,6 +4042,21 @@ function updateDailySelectionUi(){
   $("dailyUnarchiveSelectedBtn").style.display=(isAdmin && dailySelectMode && count && dailyArchiveView==="archived") ? "inline-block" : "none";
   $("dailySelectAllRow").style.display=dailySelectMode ? "flex" : "none";
 }
+// Field order in each report's stored data reflects whenever each value was
+// set (object key order), not the admin's configured column order — so two
+// reports can show the same fields in a different sequence. This always
+// orders them by dailyTaskColumns instead, falling back to whatever order
+// any leftover/legacy keys (no longer in the configured columns) were in.
+function orderedDailyFieldEntries(r){
+  const fields = r.fields || {};
+  const knownKeys = new Set(dailyTaskColumns.map(c=> c.key));
+  const ordered = dailyTaskColumns
+    .filter(col=> Object.prototype.hasOwnProperty.call(fields, col.key))
+    .map(col=> [col.key, fields[col.key]]);
+  const leftover = Object.entries(fields).filter(([key])=> !knownKeys.has(key));
+  return [...ordered, ...leftover];
+}
+
 function renderDailyTaskList(){
   const list=$("dailyList"), empty=$("dailyEmptyState");
   if(!list || !empty) return;
@@ -4049,7 +4064,7 @@ function renderDailyTaskList(){
   if(!items.length){list.innerHTML="";empty.style.display="block";updateDailySelectionUi();return;}
   empty.style.display="none";
   list.innerHTML=items.map(r=>{
-    const fields=Object.entries(r.fields||{}).map(([key,val])=>{
+    const fields=orderedDailyFieldEntries(r).map(([key,val])=>{
       const col=dailyTaskColumns.find(c=>c.key===key);
       return `<div style="font-size:12px;margin-top:4px;"><b>${escapeHtml(col?col.label:key)}:</b> ${escapeHtml(String(val??""))}</div>`;
     }).join("");
@@ -4185,7 +4200,7 @@ function generateDailyTaskPdf(items){
     pdf.setFontSize(9);
     const meta=`Report date: ${dailyReportDateKey(r)} | Submitted: ${fmtDate(r.createdAt)}${r.submittedByEmail?` | ${r.submittedByEmail}`:""}`;
     pdf.text(pdf.splitTextToSize(meta,width),margin,y); y+=22;
-    Object.entries(r.fields||{}).forEach(([key,val])=>{
+    orderedDailyFieldEntries(r).forEach(([key,val])=>{
       const col=dailyTaskColumns.find(c=>c.key===key); const row=`${col?col.label:key}: ${val??""}`;
       const lines=pdf.splitTextToSize(row,width); if(y+lines.length*11>pageH-45){pdf.addPage();y=50;} pdf.text(lines,margin,y); y+=lines.length*11+2;
     });
