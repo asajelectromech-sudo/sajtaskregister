@@ -32,7 +32,9 @@
   header .sub{font-size:11px;color:#bcd0e4;margin-top:2px;}
   #authBox{display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap;justify-content:flex-end;flex:1 1 auto;min-width:0;}
   #authBox .user-email{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
-  #authBox .auth-user{display:flex;flex-direction:column;align-items:flex-end;gap:1px;min-width:0;}
+  #prTreeEditor input:focus-visible,#prTreeEditor button:focus-visible{outline:2px solid var(--amber);outline-offset:2px;}
+  #prTreeEditor .card:focus-within{box-shadow:0 0 0 2px rgba(184,84,10,.35);}
+  #authBox .auth-user{;flex-direction:column;align-items:flex-end;gap:1px;min-width:0;}
   #authBox .req-auth-link{background:none;border:none;padding:0;color:#ffd08a;font-size:11px;font-weight:600;cursor:pointer;text-decoration:underline;}
   #authBox .req-auth-link:disabled{opacity:.8;text-decoration:none;cursor:default;}
   @media(max-width:480px){
@@ -551,20 +553,6 @@
 </div>
 
 <!-- DAILY TASK REPORTS -->
-<div class="modal-overlay" id="dailyNoticeModal">
-  <div class="modal">
-    <h2>Daily Task Report</h2>
-    <div class="hint" style="font-size:14px;color:var(--text);">General Maintenance &amp; Complaints only.<br><b>Not for Project work.</b></div>
-    <div class="modal-actions">
-      <button class="btn btn-light" data-close="dailyNoticeModal">Close</button>
-      <button class="btn btn-primary" id="dailyNoticeOkBtn">OK</button>
-    </div>
-    <div style="text-align:center;margin-top:12px;">
-      <button type="button" id="dailyNoticeProjectLink" style="background:none;border:none;padding:0;color:var(--text-muted);font-size:12px;text-decoration:underline;cursor:pointer;">Project work? Go to Project Reports &rarr;</button>
-    </div>
-  </div>
-</div>
-
 <div class="modal-overlay" id="dailyVerifyModal">
   <div class="modal">
     <button class="close-x" data-close="dailyVerifyModal">&times;</button>
@@ -5599,26 +5587,6 @@ $("workVerifyGoogleBtn").addEventListener("click", async ()=>{
 // Project Reports, Daily Task Reports and Service Action Reports require.
 // The old per-tab "verify" modals below are kept only as a defensive
 // fallback for the rare case isVerifiedStaff/isAdmin isn't set yet.
-function startNewDailyReport(){
-  dailyVerificationMode = "new";
-  dailyResubmitId = null;
-  if(isAdmin || isVerifiedStaff){
-    logStaffAction("Daily Task Report");
-    openDailyTaskForm();
-  }else{
-    $("dailyVerifyError").textContent = "";
-    showModal("dailyVerifyModal");
-  }
-}
-$("dailyNoticeOkBtn").addEventListener("click", ()=>{
-  hideModal("dailyNoticeModal");
-  startNewDailyReport();
-});
-$("dailyNoticeProjectLink").addEventListener("click", ()=>{
-  hideModal("dailyNoticeModal");
-  const tab = document.querySelector('#mainTabs [data-tab="projects"]');
-  if(tab) tab.click();
-});
 $("fab").addEventListener("click", async ()=>{
   if(activeTab === "projects"){
     // Project Reports +:
@@ -5636,8 +5604,16 @@ $("fab").addEventListener("click", async ()=>{
     return;
   }
   if(activeTab === "daily"){
-    // Every "+" tap shows the scope notice first; OK continues to the form.
-    showModal("dailyNoticeModal");
+    dailyVerificationMode = "new";
+    dailyResubmitId = null;
+
+    if(isAdmin || isVerifiedStaff){
+      logStaffAction("Daily Task Report");
+      openDailyTaskForm();
+    }else{
+      $("dailyVerifyError").textContent = "";
+      showModal("dailyVerifyModal");
+    }
     return;
   }
   if(activeTab === "work"){
@@ -7864,6 +7840,21 @@ function renderPrTreeEditor(){
   const box = $("prTreeEditor");
   if(!box || !prTreeDoc) return;
 
+  // Remember which box/name/button has keyboard focus so a re-draw (e.g. after
+  // ticking "Select all" or a live update) doesn't drop it.
+  let prFocusRestore = null;
+  const prActive = document.activeElement;
+  if(prActive && box.contains(prActive)){
+    prFocusRestore = {
+      kind: prActive.id === "prNodesSelectAll" ? "all"
+        : prActive.classList.contains("pr-node-select") ? "pr-node-select"
+        : prActive.classList.contains("pr-node-name") ? "pr-node-name"
+        : prActive.classList.contains("pr-node-drill") ? "pr-node-drill" : null,
+      id: prActive.getAttribute("data-id"),
+      s: prActive.selectionStart, e: prActive.selectionEnd
+    };
+  }
+
   // Only clear the checked selection when we've actually navigated to a
   // different level — NOT on every re-render, since this function also runs
   // reactively (e.g. a live update from someone else's activity elsewhere)
@@ -7910,7 +7901,8 @@ function renderPrTreeEditor(){
       <input type="checkbox" id="prNodesSelectAll" ${allNodesSelected ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" /> <b>Select all</b>
     </label>` : "";
 
-  box.innerHTML = jobsCard + selectAllNodesHtml + siblings.map(n=> `
+  const kbHint = siblings.length ? `<div class="meta" style="margin-bottom:8px;">Keyboard: &uarr;&darr; move between rows, &larr;&rarr; switch between tick box / name / Open. Enter = next row (on a tick box it ticks and moves down).</div>` : "";
+  box.innerHTML = jobsCard + kbHint + selectAllNodesHtml + siblings.map(n=> `
     <div class="card" style="cursor:default;">
       <div class="card-body">
         <div style="display:flex;gap:8px;align-items:center;">
@@ -7944,26 +7936,79 @@ function renderPrTreeEditor(){
       await prRenameNode(input.getAttribute("data-id"), input.value.trim() || "Untitled");
     });
   });
-  // Tab/Enter jumps straight to the next (or, with Shift, the previous)
-  // name box — skipping the Open/Delete buttons and checkbox in between —
-  // so typing a whole batch of names (e.g. after "+ Add item" x50) is just
-  // type -> Tab -> type -> Tab... without reaching for the mouse.
-  const nameInputs = Array.from(box.querySelectorAll(".pr-node-name"));
-  nameInputs.forEach((input, idx)=>{
-    input.addEventListener("keydown", (e)=>{
-      if(e.key === "Enter"){
-        e.preventDefault();
-        const next = nameInputs[idx+1];
-        if(next){ next.focus(); next.select(); }
-        else input.blur();
-      } else if(e.key === "Tab"){
-        e.preventDefault();
-        const target = e.shiftKey ? nameInputs[idx-1] : nameInputs[idx+1];
-        if(target){ target.focus(); target.select(); }
-        else input.blur();
-      }
+  // Keyboard navigation across the whole list. Columns per row:
+  // 0 = tick box, 1 = name, 2 = Open. Arrow keys move between cells; in the
+  // name box, Left/Right only jump out when the caret is at the very start/end
+  // (or the whole name is selected), so normal editing still works.
+  // Enter: name -> next row's name; tick box -> ticks it and moves down.
+  // Tab in a name box keeps jumping to the next/previous name box.
+  const gridRows = Array.from(box.querySelectorAll(".pr-node-select")).map(cb=>{
+    const row = cb.parentElement;
+    return [cb, row.querySelector(".pr-node-name"), row.querySelector(".pr-node-drill")];
+  });
+  const selAllEl = document.getElementById("prNodesSelectAll");
+  const focusCell = (r, c)=>{
+    const el = gridRows[r] && gridRows[r][c];
+    if(!el) return false;
+    el.focus();
+    if(el.type === "text") el.select();
+    el.scrollIntoView({block:"nearest"});
+    return true;
+  };
+  const navKeys = ["ArrowUp","ArrowDown","ArrowLeft","ArrowRight","Enter","Tab"];
+  gridRows.forEach((cells, r)=>{
+    cells.forEach((el, c)=>{
+      el.addEventListener("keydown", (e)=>{
+        if(e.ctrlKey || e.metaKey || e.altKey || !navKeys.includes(e.key)) return;
+        const isText = el.type === "text";
+        if(e.key === "ArrowDown"){ e.preventDefault(); focusCell(r+1, c); }
+        else if(e.key === "ArrowUp"){
+          e.preventDefault();
+          if(r === 0){ if(selAllEl) selAllEl.focus(); }
+          else focusCell(r-1, c);
+        }
+        else if(e.key === "ArrowRight"){
+          if(isText && el.selectionEnd !== el.value.length) return;
+          if(c < 2){ e.preventDefault(); focusCell(r, c+1); }
+        }
+        else if(e.key === "ArrowLeft"){
+          if(isText && el.selectionStart !== 0) return;
+          if(c > 0){ e.preventDefault(); focusCell(r, c-1); }
+        }
+        else if(e.key === "Enter"){
+          if(c === 0){
+            e.preventDefault();
+            el.checked = !el.checked;
+            el.dispatchEvent(new Event("change"));
+            focusCell(r+1, 0);
+          } else if(c === 1){
+            e.preventDefault();
+            if(!focusCell(r+1, 1)) el.blur();
+          }
+          // c === 2 (Open): leave Enter alone so it opens the item as before
+        }
+        else if(e.key === "Tab" && isText){
+          e.preventDefault();
+          const ok = focusCell(e.shiftKey ? r-1 : r+1, 1);
+          if(!ok) el.blur();
+        }
+      });
     });
   });
+  if(selAllEl){
+    selAllEl.addEventListener("keydown", (e)=>{
+      if(e.key === "ArrowDown"){ e.preventDefault(); focusCell(0, 0); }
+      else if(e.key === "Enter"){ e.preventDefault(); selAllEl.click(); }
+    });
+  }
+  if(prFocusRestore && prFocusRestore.kind){
+    const el = prFocusRestore.kind === "all" ? selAllEl
+      : Array.from(box.querySelectorAll("." + prFocusRestore.kind)).find(x=> x.getAttribute("data-id") === prFocusRestore.id);
+    if(el){
+      el.focus();
+      if(el.type === "text" && prFocusRestore.s != null){ try{ el.setSelectionRange(prFocusRestore.s, prFocusRestore.e); }catch(_){} }
+    }
+  }
   box.querySelectorAll(".pr-node-drill").forEach(btn=>{
     btn.addEventListener("click", ()=>{
       prCustomizeBreadcrumb.push(btn.getAttribute("data-id"));
