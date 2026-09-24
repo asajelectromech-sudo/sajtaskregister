@@ -32,10 +32,14 @@
   header .sub{font-size:11px;color:#bcd0e4;margin-top:2px;}
   #authBox{display:flex;align-items:center;gap:8px;font-size:12px;flex-wrap:wrap;justify-content:flex-end;flex:1 1 auto;min-width:0;}
   #authBox .user-email{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:150px;}
+  #authBox .auth-user{display:flex;flex-direction:column;align-items:flex-end;gap:1px;min-width:0;}
+  #authBox .req-auth-link{background:none;border:none;padding:0;color:#ffd08a;font-size:11px;font-weight:600;cursor:pointer;text-decoration:underline;}
+  #authBox .req-auth-link:disabled{opacity:.8;text-decoration:none;cursor:default;}
   @media(max-width:480px){
     header{padding:12px 14px;}
     #authBox{width:100%;justify-content:flex-start;}
-    #authBox .user-email{max-width:100%;flex:1 1 100%;order:-1;white-space:normal;}
+    #authBox .user-email{max-width:100%;white-space:normal;}
+    #authBox .auth-user{flex:1 1 100%;order:-1;align-items:flex-start;}
     #authBox .btn{padding:7px 10px;font-size:12px;}
   }
   .btn{border:none;border-radius:8px;padding:9px 14px;font-size:13px;font-weight:600;cursor:pointer;}
@@ -547,6 +551,20 @@
 </div>
 
 <!-- DAILY TASK REPORTS -->
+<div class="modal-overlay" id="dailyNoticeModal">
+  <div class="modal">
+    <h2>Daily Task Report</h2>
+    <div class="hint" style="font-size:14px;color:var(--text);">General Maintenance &amp; Complaints only.<br><b>Not for Project work.</b></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" data-close="dailyNoticeModal">Close</button>
+      <button class="btn btn-primary" id="dailyNoticeOkBtn">OK</button>
+    </div>
+    <div style="text-align:center;margin-top:12px;">
+      <button type="button" id="dailyNoticeProjectLink" style="background:none;border:none;padding:0;color:var(--text-muted);font-size:12px;text-decoration:underline;cursor:pointer;">Project work? Go to Project Reports &rarr;</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="dailyVerifyModal">
   <div class="modal">
     <button class="close-x" data-close="dailyVerifyModal">&times;</button>
@@ -1600,8 +1618,29 @@ function renderAuthBox(){
       showModal("appSettingsModal");
     });
   } else if(isVerifiedStaff){
-    box.innerHTML = `<span class="user-email">${escapeHtml(currentUser.email)}</span><button class="btn btn-outline" id="staffLogoutBtn">Sign out</button>`;
+    const reqEmail = (currentUser.email || "").toLowerCase();
+    const reqKey = "sajAuthReq:" + reqEmail;
+    let reqSent = false;
+    try{ reqSent = !!localStorage.getItem(reqKey); }catch(e){}
+    const reqHtml = isAuthorizedStaffVerified ? "" :
+      `<button type="button" class="req-auth-link" id="requestAuthBtn">${reqSent ? "Request sent ✓ (tap to resend)" : "Request authorization"}</button>`;
+    box.innerHTML = `<div class="auth-user"><span class="user-email">${escapeHtml(currentUser.email)}</span>${reqHtml}</div><button class="btn btn-outline" id="staffLogoutBtn">Sign out</button>`;
     $("staffLogoutBtn").addEventListener("click", ()=> signOut(auth));
+    const reqBtn = $("requestAuthBtn");
+    if(reqBtn){
+      reqBtn.addEventListener("click", async ()=>{
+        reqBtn.disabled = true;
+        try{
+          await setDoc(doc(db, "staffAccessRequests", reqEmail), { email: reqEmail, requestedAt: serverTimestamp() });
+          try{ localStorage.setItem(reqKey, "1"); }catch(e){}
+          reqBtn.textContent = "Request sent ✓ — waiting for admin";
+        }catch(err){
+          console.error(err);
+          reqBtn.textContent = "Could not send — tap to retry";
+          reqBtn.disabled = false;
+        }
+      });
+    }
   } else {
     box.innerHTML = `<button class="btn btn-outline" id="verifyEmailHeaderBtn">Verify email</button><button class="btn btn-outline" id="adminLoginBtn">Admin sign in</button>`;
     $("verifyEmailHeaderBtn").addEventListener("click", openVerifyEmailModal);
@@ -4397,6 +4436,10 @@ function visibleProjects(){
   return allProjects;
 }
 
+// Admin switch per project: may normal users add their own tasks here?
+// Missing field = allowed (so existing projects keep working); admin sets false to turn it off.
+function projectAllowsUserTasks(p){ return !!p && p.allowUserTasks !== false; }
+
 let taskNotifSelectMode = false;   // true while picking multiple task-assignment notifications to combine into one downloadable image (staff banner only)
 let taskNotifSelectedIds = new Set();
 function renderTaskNotificationsBanner(){
@@ -4649,18 +4692,16 @@ function renderProjectList(){
 
   const projects = visibleProjects().filter(p=>{
     if((projectArchiveView === "archived") !== !!p.archived) return false;
-    if(canManageProjects) return true;
-    const tasks = allProjectTasks.filter(t=>t.projectId===p.id);
-    // A project remains visible to staff while it has at least one task that
-    // has not yet been approved. Once every task is approved, it disappears.
-    return tasks.length === 0 || tasks.some(t=>t.status !== "approved");
+    // Active projects are never hidden from anyone, even when every task
+    // has been approved. Only the Archived toggle above hides a project.
+    return true;
   });
 
   if(projects.length === 0){
     list.innerHTML="";
     empty.textContent = isAuthorizedStaffVerified
       ? "No projects have been assigned to your account yet."
-      : "No projects with open tasks yet.";
+      : "No projects yet.";
     empty.style.display="block";
     return;
   }
@@ -4672,6 +4713,7 @@ function renderProjectList(){
     let projectCardButtons = "";
     if(isAdmin || hasStaffPermission("project.edit")) projectCardButtons += `<button class="btn btn-light edit-project" data-project-id="${p.id}">Edit</button>`;
     if(isAdmin || hasStaffPermission("project.delete")) projectCardButtons += `<button class="btn btn-red delete-project" data-project-id="${p.id}">Delete</button>`;
+    if(isAdmin) projectCardButtons += `<button class="btn btn-light toggle-user-add" data-project-id="${p.id}" title="Allow or block normal users from adding tasks in this project">User Add Task: ${projectAllowsUserTasks(p) ? "ON" : "OFF"}</button>`;
     if(canManageProjects && hasStaffPermission("project.export")) projectCardButtons += `<button class="btn btn-navy pdf-project" data-project-id="${p.id}">Download PDF</button>`;
     const adminActions = projectCardButtons ? `<div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;">${projectCardButtons}</div>` : "";
     return `<div class="card" data-project-id="${p.id}">
@@ -4698,6 +4740,15 @@ function renderProjectList(){
   list.querySelectorAll(".delete-project").forEach(btn=>btn.addEventListener("click", async e=>{
     e.stopPropagation();
     await deleteProject(btn.getAttribute("data-project-id"));
+  }));
+  list.querySelectorAll(".toggle-user-add").forEach(btn=>btn.addEventListener("click", async e=>{
+    e.stopPropagation();
+    const pr = allProjects.find(x=>x.id===btn.getAttribute("data-project-id"));
+    if(!pr) return;
+    btn.disabled = true;
+    try{
+      await updateDoc(doc(db,"projects",pr.id), { allowUserTasks: !projectAllowsUserTasks(pr), updatedAt: serverTimestamp() });
+    }catch(err){ console.error(err); alert("Could not change this setting. Check your connection and try again."); btn.disabled = false; }
   }));
   list.querySelectorAll(".pdf-project").forEach(btn=>btn.addEventListener("click", e=>{
     e.stopPropagation();
@@ -5300,7 +5351,7 @@ function openProjectTaskProjectSelector(createMode="progressOnly"){
   }
 
   $("projectTaskProjectSelectModal").querySelector("h2").textContent =
-    createMode === "admin" ? "Add Task to Project" : "Project Progress Report";
+    createMode === "progressOnly" ? "Project Progress Report" : "Add Task to Project";
   const projects = visibleProjects();
   const list = $("projectTaskProjectSelectList");
   const error = $("projectTaskProjectSelectError");
@@ -5333,9 +5384,8 @@ function openProjectTaskProjectSelector(createMode="progressOnly"){
       currentProjectName=p.name||"Project";
       $("projectTaskProjectSelectError").textContent="";
 
-      // Admin / admin-approved staff can assign a task. Normal users only
-      // get the Progress Report entry here — the ordinary user "Add Task"
-      // option has been removed from the + flow.
+      // Admin / admin-approved staff can Assign Task; normal users get
+      // Add Task. Everyone also gets the Progress Report entry.
       prShowProjectActionChooser(p, createMode);
     });
   });
@@ -5350,9 +5400,11 @@ function prShowProjectActionChooser(p, createMode){
   const list = $("projectTaskProjectSelectList");
   const submittedCount = prSubmittedCountForProject(p.id);
   const isElevated = createMode === "admin" && (isAdmin || hasStaffPermission("project.create"));
+  const canUserAdd = createMode === "user" && !isAdmin && !isAuthorizedStaffVerified && projectAllowsUserTasks(p);
   list.innerHTML = `
     <div class="hint" style="margin-bottom:10px;">${escapeHtml(p.name||"Project")}</div>
     ${isElevated ? `<button type="button" class="btn btn-navy" id="ptaskChooseAddTask" style="display:block;width:100%;margin-bottom:8px;padding:12px;">Assign Task</button>` : ""}
+    ${canUserAdd ? `<button type="button" class="btn btn-navy" id="ptaskChooseUserAdd" style="display:block;width:100%;margin-bottom:8px;padding:12px;">Add Task</button>` : ""}
     <button type="button" class="btn btn-navy" id="ptaskChooseProgress" style="display:block;width:100%;margin-bottom:8px;padding:12px;">Progress Report${prBadgeHtml(submittedCount)}</button>
     <button type="button" class="btn btn-light" id="ptaskChooseBack" style="display:block;width:100%;padding:10px;">&larr; Back to projects</button>
   `;
@@ -5363,6 +5415,17 @@ function prShowProjectActionChooser(p, createMode){
       $("projectTaskError").textContent="";
       renderProjectTaskFields({}, "admin");
       $("newProjectTaskTitle").textContent = "Assign Task";
+      $("saveProjectTaskBtn").textContent="Save";
+      showModal("newProjectTaskModal");
+    });
+  }
+  if(canUserAdd){
+    document.getElementById("ptaskChooseUserAdd").addEventListener("click", ()=>{
+      hideModal("projectTaskProjectSelectModal");
+      editingProjectTaskId=null;
+      $("projectTaskError").textContent="";
+      renderProjectTaskFields({}, "staffCreate");
+      $("newProjectTaskTitle").textContent = "Add Task";
       $("saveProjectTaskBtn").textContent="Save";
       showModal("newProjectTaskModal");
     });
@@ -5400,13 +5463,13 @@ $("saveProjectBtn").addEventListener("click",async()=>{
 
 $("saveProjectTaskBtn").addEventListener("click",async()=>{
   if(!currentUser || !currentProjectId){$("projectTaskError").textContent="Project not selected.";return;}
-  if(currentTaskFormMode === "staffCreate"){
-    $("projectTaskError").textContent="Only the admin or an admin-approved staff member can assign a Project Report task.";
-    return;
-  }
   if(!canAccessProject(currentProjectId)){
     $("projectTaskError").textContent="This project has not been assigned to your account by the admin.";
     return;
+  }
+  if(currentTaskFormMode === "staffCreate" && !isAdmin && !isAuthorizedStaffVerified){
+    const pr = allProjects.find(x=>x.id===currentProjectId);
+    if(!projectAllowsUserTasks(pr)){ $("projectTaskError").textContent="The admin has turned off adding tasks for this project."; return; }
   }
   const values=collectProjectTaskValues();
   const missing=currentTaskFormColumns.filter(c=>c.required && !String(values[c.key]||"").trim());
@@ -5536,17 +5599,36 @@ $("workVerifyGoogleBtn").addEventListener("click", async ()=>{
 // Project Reports, Daily Task Reports and Service Action Reports require.
 // The old per-tab "verify" modals below are kept only as a defensive
 // fallback for the rare case isVerifiedStaff/isAdmin isn't set yet.
+function startNewDailyReport(){
+  dailyVerificationMode = "new";
+  dailyResubmitId = null;
+  if(isAdmin || isVerifiedStaff){
+    logStaffAction("Daily Task Report");
+    openDailyTaskForm();
+  }else{
+    $("dailyVerifyError").textContent = "";
+    showModal("dailyVerifyModal");
+  }
+}
+$("dailyNoticeOkBtn").addEventListener("click", ()=>{
+  hideModal("dailyNoticeModal");
+  startNewDailyReport();
+});
+$("dailyNoticeProjectLink").addEventListener("click", ()=>{
+  hideModal("dailyNoticeModal");
+  const tab = document.querySelector('#mainTabs [data-tab="projects"]');
+  if(tab) tab.click();
+});
 $("fab").addEventListener("click", async ()=>{
   if(activeTab === "projects"){
     // Project Reports +:
     // 1) Admin / admin-approved staff can assign a task.
-    // 2) Any other signed-in user can open Progress Report only. The old
-    //    normal-user "Add Task" path is intentionally removed.
+    // 2) Any other signed-in user can Add Task or open Progress Report.
     if(isAdmin || isAuthorizedStaffVerified){
       openProjectTaskProjectSelector("admin");
     }else if(isVerifiedStaff){
-      logStaffAction("Project Progress Report (user)");
-      openProjectTaskProjectSelector("progressOnly");
+      logStaffAction("Project Report (user)");
+      openProjectTaskProjectSelector("user");
     }else{
       $("projectTaskVerifyError").textContent = "";
       showModal("projectTaskVerifyModal");
@@ -5554,16 +5636,8 @@ $("fab").addEventListener("click", async ()=>{
     return;
   }
   if(activeTab === "daily"){
-    dailyVerificationMode = "new";
-    dailyResubmitId = null;
-
-    if(isAdmin || isVerifiedStaff){
-      logStaffAction("Daily Task Report");
-      openDailyTaskForm();
-    }else{
-      $("dailyVerifyError").textContent = "";
-      showModal("dailyVerifyModal");
-    }
+    // Every "+" tap shows the scope notice first; OK continues to the form.
+    showModal("dailyNoticeModal");
     return;
   }
   if(activeTab === "work"){
