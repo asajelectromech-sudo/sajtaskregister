@@ -553,6 +553,20 @@
 </div>
 
 <!-- DAILY TASK REPORTS -->
+<div class="modal-overlay" id="dailyNoticeModal">
+  <div class="modal">
+    <h2>Daily Task Report</h2>
+    <div class="hint" style="font-size:14px;color:var(--text);">General Maintenance &amp; Complaints only.<br><b>Not for Project work.</b></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" data-close="dailyNoticeModal">Close</button>
+      <button class="btn btn-primary" id="dailyNoticeOkBtn">OK</button>
+    </div>
+    <div style="text-align:center;margin-top:12px;">
+      <button type="button" id="dailyNoticeProjectLink" style="background:none;border:none;padding:0;color:var(--text-muted);font-size:12px;text-decoration:underline;cursor:pointer;">Project work? Go to Project Reports &rarr;</button>
+    </div>
+  </div>
+</div>
+
 <div class="modal-overlay" id="dailyVerifyModal">
   <div class="modal">
     <button class="close-x" data-close="dailyVerifyModal">&times;</button>
@@ -885,6 +899,52 @@
     <div class="hint" id="prTreeBreadcrumb" style="margin-top:10px;"></div>
     <div id="prTreeEditor"></div>
     <div class="error-text" id="prCustomizeError"></div>
+  </div>
+</div>
+<div class="modal-overlay modal-overlay-top" id="prCopyItemsModal">
+  <div class="modal">
+    <button class="close-x" data-close="prCopyItemsModal">&times;</button>
+    <h2>Copy items to&hellip;</h2>
+    <div class="hint" id="prCopyItemsSummary"></div>
+    <div id="prCopyItemsList" style="max-height:50vh;overflow:auto;border:1px solid var(--border);border-radius:8px;padding:4px;margin:8px 0;"></div>
+    <div class="error-text" id="prCopyItemsError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" data-close="prCopyItemsModal">Cancel</button>
+      <button class="btn btn-primary" id="prCopyItemsGoBtn">Copy</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay modal-overlay-top" id="prFieldsModal">
+  <div class="modal">
+    <button class="close-x" data-close="prFieldsModal">&times;</button>
+    <h2 id="prFieldsTitle">Extra fields</h2>
+    <div class="hint">Boxes staff fill in for this job, next to Staff name and Note (e.g. Unit capacity, Unit model). Leave options empty for a text box, or list options for a dropdown.</div>
+    <div id="prFieldsList" style="margin:8px 0;"></div>
+    <div class="field"><label>Field name</label><input type="text" id="prFieldName" placeholder="e.g. Unit capacity" /></div>
+    <div class="field"><label>Dropdown options (optional, comma separated)</label><input type="text" id="prFieldOptions" placeholder="e.g. 1.5 TR, 2 TR, 3 TR" /></div>
+    <div class="error-text" id="prFieldsError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" data-close="prFieldsModal">Close</button>
+      <button class="btn btn-primary" id="prFieldAddBtn">+ Add field</button>
+    </div>
+  </div>
+</div>
+<div class="modal-overlay modal-overlay-top" id="prNumItemsModal">
+  <div class="modal">
+    <button class="close-x" data-close="prNumItemsModal">&times;</button>
+    <h2>Add numbered items</h2>
+    <div class="hint">Creates a run of items in one go, e.g. AHU 1 to AHU 50. Use # in the name to place the number, or leave it out and the number is added at the end.</div>
+    <div class="field"><label>Name</label><input type="text" id="prNumName" placeholder="AHU" /></div>
+    <div style="display:flex;gap:8px;">
+      <div class="field" style="flex:1;"><label>From</label><input type="number" id="prNumFrom" value="1" min="0" /></div>
+      <div class="field" style="flex:1;"><label>To</label><input type="number" id="prNumTo" value="10" min="0" /></div>
+    </div>
+    <div class="hint" id="prNumPreview"></div>
+    <div class="error-text" id="prNumError"></div>
+    <div class="modal-actions">
+      <button class="btn btn-light" data-close="prNumItemsModal">Cancel</button>
+      <button class="btn btn-primary" id="prNumGoBtn">Add items</button>
+    </div>
   </div>
 </div>
 <!-- ============ END PROGRESS REPORT ADDITION — MODALS ============ -->
@@ -3796,11 +3856,12 @@ async function downloadFullProjectExcel(projectId, btn){
     tasks.forEach((t,i)=> taskRows.push([i+1, ...projectColumns.map(c=> String(getProjectTaskValue(t,c) ?? "")), t.status||"pending"]));
 
     const { jobs } = await fetchProjectProgressData(projectId);
-    const jobRows = [["Unit","Job","Status","Assigned/Current Staff","Note","Completed By","Completed At"]];
+    const jobRows = [["Unit","Job","Status","Assigned/Current Staff","Note","Extra Details","Completed By","Completed At"]];
     jobs.forEach(j=> jobRows.push([
       j.unitLabel||"", j.jobLabel||"", prJobStatusLabel(j),
       j.completedStaff || j.currentStaff || j.assignedStaff || "",
       j.currentNote || j.completedNote || "",
+      prExtrasText(j),
       j.completedBy || "", fmtDate(j.completedAt)
     ]));
 
@@ -5587,6 +5648,26 @@ $("workVerifyGoogleBtn").addEventListener("click", async ()=>{
 // Project Reports, Daily Task Reports and Service Action Reports require.
 // The old per-tab "verify" modals below are kept only as a defensive
 // fallback for the rare case isVerifiedStaff/isAdmin isn't set yet.
+function startNewDailyReport(){
+  dailyVerificationMode = "new";
+  dailyResubmitId = null;
+  if(isAdmin || isVerifiedStaff){
+    logStaffAction("Daily Task Report");
+    openDailyTaskForm();
+  }else{
+    $("dailyVerifyError").textContent = "";
+    showModal("dailyVerifyModal");
+  }
+}
+$("dailyNoticeOkBtn").addEventListener("click", ()=>{
+  hideModal("dailyNoticeModal");
+  startNewDailyReport();
+});
+$("dailyNoticeProjectLink").addEventListener("click", ()=>{
+  hideModal("dailyNoticeModal");
+  const tab = document.querySelector('#mainTabs [data-tab="projects"]');
+  if(tab) tab.click();
+});
 $("fab").addEventListener("click", async ()=>{
   if(activeTab === "projects"){
     // Project Reports +:
@@ -5604,16 +5685,8 @@ $("fab").addEventListener("click", async ()=>{
     return;
   }
   if(activeTab === "daily"){
-    dailyVerificationMode = "new";
-    dailyResubmitId = null;
-
-    if(isAdmin || isVerifiedStaff){
-      logStaffAction("Daily Task Report");
-      openDailyTaskForm();
-    }else{
-      $("dailyVerifyError").textContent = "";
-      showModal("dailyVerifyModal");
-    }
+    // Every "+" tap shows the scope notice first; OK continues to the form.
+    showModal("dailyNoticeModal");
     return;
   }
   if(activeTab === "work"){
@@ -6684,6 +6757,86 @@ function prRenderJobPhotoPicker(jobId){
     </div>`;
 }
 
+// ---- Extra (custom) fields per job: defined by admin, filled by staff ----
+function prRenderExtraInputs(j){
+  const fields = j.customFields || [];
+  if(!fields.length) return "";
+  const dEx = (prJobDrafts[j.id] && prJobDrafts[j.id].extras) || j.currentExtras || {};
+  return fields.map(f=>{
+    const v = dEx[f.id] || "";
+    const opts = Array.isArray(f.options) ? f.options : [];
+    const attrs = `class="pr-job-extra" data-id="${j.id}" data-field="${escapeHtml(f.id)}"`;
+    const ctl = opts.length
+      ? `<select ${attrs}><option value=""></option>${opts.map(o=> `<option value="${escapeHtml(o)}" ${o===v ? "selected" : ""}>${escapeHtml(o)}</option>`).join("")}${v && !opts.includes(v) ? `<option value="${escapeHtml(v)}" selected>${escapeHtml(v)}</option>` : ""}</select>`
+      : `<input type="text" ${attrs} value="${escapeHtml(v)}" placeholder="${escapeHtml(f.label)}" />`;
+    return `<div class="field"><label>${escapeHtml(f.label)}</label>${ctl}</div>`;
+  }).join("");
+}
+function prExtrasPairs(j){
+  const ex = j.currentExtras || {};
+  return (j.customFields || []).filter(f=> ex[f.id]).map(f=> ({ label: f.label, value: ex[f.id] }));
+}
+function prExtrasMeta(j){
+  const parts = prExtrasPairs(j).map(x=> `${escapeHtml(x.label)}: ${escapeHtml(x.value)}`);
+  return parts.length ? `<div class="meta">${parts.join(" &middot; ")}</div>` : "";
+}
+function prExtrasText(j){ return prExtrasPairs(j).map(x=> `${x.label}: ${x.value}`).join(" | "); }
+function prCollectExtras(job, jobId){
+  const map = {}, arr = [];
+  const box = $("prJobsChecklist");
+  ((job && job.customFields) || []).forEach(f=>{
+    const el = box ? box.querySelector(`.pr-job-extra[data-id="${jobId}"][data-field="${f.id}"]`) : null;
+    const v = (el ? el.value : (((prJobDrafts[jobId]||{}).extras||{})[f.id] || "")).trim();
+    if(v){ map[f.id] = v; arr.push({ label: f.label, value: v }); }
+  });
+  return { map, arr };
+}
+
+let prFieldsJobId = null;
+function prOpenFieldsModal(jobId){
+  prFieldsJobId = jobId;
+  $("prFieldName").value = ""; $("prFieldOptions").value = ""; $("prFieldsError").textContent = "";
+  renderPrFieldsModal();
+  showModal("prFieldsModal");
+}
+function renderPrFieldsModal(){
+  const job = prJobs.find(j=> j.id===prFieldsJobId);
+  if(!job) return;
+  $("prFieldsTitle").textContent = `Extra fields — ${job.jobLabel}`;
+  const fields = job.customFields || [];
+  $("prFieldsList").innerHTML = fields.length ? fields.map(f=>{
+    const opts = Array.isArray(f.options) ? f.options : [];
+    return `<div class="detail-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
+      <span><b>${escapeHtml(f.label)}</b> <span class="meta">${opts.length ? "(dropdown: " + escapeHtml(opts.join(", ")) + ")" : "(text box)"}</span></span>
+      <button type="button" class="btn btn-red pr-field-remove" data-field="${escapeHtml(f.id)}" style="padding:3px 8px;font-size:11px;">Remove</button>
+    </div>`;
+  }).join("") : `<div class="hint">No extra fields yet.</div>`;
+  $("prFieldsList").querySelectorAll(".pr-field-remove").forEach(btn=>{
+    btn.addEventListener("click", ()=> prSaveFields(job, (job.customFields||[]).filter(f=> f.id !== btn.getAttribute("data-field"))));
+  });
+}
+async function prSaveFields(job, fields){
+  $("prFieldsError").textContent = "";
+  try{
+    await updateDoc(doc(db,"progressJobs",job.id), { customFields: fields, updatedAt: serverTimestamp() });
+    job.customFields = fields;
+    renderPrFieldsModal();
+  }catch(err){ console.error(err); $("prFieldsError").textContent = "Could not save. Check your connection and try again."; }
+}
+$("prFieldAddBtn").addEventListener("click", async ()=>{
+  const job = prJobs.find(j=> j.id===prFieldsJobId);
+  if(!job) return;
+  const label = $("prFieldName").value.trim();
+  if(!label){ $("prFieldsError").textContent = "Enter a field name."; return; }
+  const existing = job.customFields || [];
+  if(existing.some(f=> f.label.toLowerCase() === label.toLowerCase())){ $("prFieldsError").textContent = "This job already has a field with that name."; return; }
+  const options = Array.from(new Set($("prFieldOptions").value.split(",").map(x=> x.trim()).filter(Boolean)));
+  await prSaveFields(job, [...existing, { id: prNodeIdGen(), label, options }]);
+  $("prFieldName").value = ""; $("prFieldOptions").value = "";
+  $("prFieldName").focus();
+});
+$("prFieldName").addEventListener("keydown", (e)=>{ if(e.key === "Enter"){ e.preventDefault(); $("prFieldAddBtn").click(); } });
+
 function prRenderJobCard(j){
   const expanded = prExpandedJobId === j.id;
   const draft = prJobDrafts[j.id] || { staff: j.currentStaff||"", note: j.currentNote||"" };
@@ -6698,6 +6851,7 @@ function prRenderJobCard(j){
         </div>
         ${j.assignedStaff ? `<div class="meta" style="color:var(--blue);font-weight:700;">Assigned to: ${escapeHtml(j.assignedStaff)}</div>` : ""}
         ${j.currentStaff ? `<div class="meta">Last: ${escapeHtml(j.currentStaff)}${j.currentNote ? " — "+escapeHtml(j.currentNote) : ""}</div>` : ""}
+        ${prExtrasMeta(j)}
         ${j.status==="in_progress" && j.rejectionNote ? `<div class="meta" style="color:var(--red);">Sent back by admin: ${escapeHtml(j.rejectionNote)}</div>` : ""}
         ${expanded ? `
           <div style="margin-top:10px;border-top:1px solid var(--border);padding-top:10px;">
@@ -6713,6 +6867,7 @@ function prRenderJobCard(j){
             ${canEdit ? `
               <div class="field"><label>Staff name</label><input type="text" class="pr-job-staff" data-id="${j.id}" value="${escapeHtml(draft.staff)}" placeholder="Who is doing this?" /></div>
               <div class="field"><label>Note</label><textarea class="pr-job-note" data-id="${j.id}" placeholder="What's today's update?">${escapeHtml(draft.note)}</textarea></div>
+              ${prRenderExtraInputs(j)}
               <div class="modal-actions" style="margin-top:0;">
                 <button class="btn btn-light pr-job-save" data-id="${j.id}">Save Progress</button>
                 <button class="btn btn-green pr-job-complete" data-id="${j.id}">Submit as Completed</button>
@@ -6721,6 +6876,7 @@ function prRenderJobCard(j){
             ` : (j.status==="submitted" ? `
               <div class="detail-row"><b>Submitted by:</b> ${escapeHtml(j.submittedStaff || j.currentStaff || "")}${j.submittedBy ? ` <span style="color:var(--text-muted);font-weight:400;">(${escapeHtml(j.submittedBy)})</span>` : ""}</div>
               ${j.submittedNote ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(j.submittedNote)}</div>` : ""}
+              ${prExtrasMeta(j)}
               ${(isAdmin || hasStaffPermission("progress.approve")) ? `
                 <div class="hint">Waiting on your review.</div>
                 <div class="modal-actions">
@@ -6731,6 +6887,7 @@ function prRenderJobCard(j){
             ` : (j.status==="done" ? `
               <div class="detail-row"><b>Completed by:</b> ${escapeHtml(j.completedStaff || j.currentStaff || "")}${j.completedBy ? ` <span style="color:var(--text-muted);font-weight:400;">(${escapeHtml(j.completedBy)})</span>` : ""}</div>
               ${j.completedNote ? `<div class="detail-row"><b>Note:</b> ${escapeHtml(j.completedNote)}</div>` : ""}
+              ${prExtrasMeta(j)}
               ${(isAdmin || hasStaffPermission("progress.reopen")) ? `<button class="btn btn-red pr-job-reopen" data-id="${j.id}" style="width:100%;margin-top:6px;">Reopen</button>` : ""}
             ` : `<div class="hint">Sign in with your Google account to update this job.</div>`))}
             ${j.photoRequired && j.status!=="done" && (canEdit || isAdmin || isAuthorizedStaffVerified) ? prRenderJobPhotoPicker(j.id) : ""}
@@ -6747,10 +6904,11 @@ function prRenderJobCard(j){
 
 function prRenderLogEntry(jobId, l){
   const label = `${escapeHtml(l.date||"")} &middot; <b>${escapeHtml(l.staffName||"")}</b>${l.savedBy ? ` <span style="color:var(--text-muted);font-weight:400;">(${escapeHtml(l.savedBy)})</span>` : ""}${l.completion ? " (Submitted as completed)" : ""}${l.approved ? " (Approved)" : ""}${l.rejected ? " (Rejected)" : ""}${l.adminClosed ? " (Closed by admin)" : ""}${l.note ? " — "+escapeHtml(l.note) : ""}`;
+  const extrasHtml = (Array.isArray(l.extras) && l.extras.length) ? `<div class="meta">${l.extras.map(e=> `${escapeHtml(e.label)}: ${escapeHtml(e.value)}`).join(" &middot; ")}</div>` : "";
   const photoHtml = l.photo ? `<div style="margin-top:4px;"><a href="${l.photo}" download="job-photo-${escapeHtml(l.date||"photo")}.jpg" target="_blank" rel="noopener"><img src="${l.photo}" style="width:64px;height:64px;object-fit:cover;border-radius:6px;border:1px solid var(--border);" /></a></div>` : "";
-  if(!isAdmin && !hasStaffPermission("progress.edit") && !hasStaffPermission("progress.delete")) return `<div class="detail-row">${label}${photoHtml}</div>`;
+  if(!isAdmin && !hasStaffPermission("progress.edit") && !hasStaffPermission("progress.delete")) return `<div class="detail-row">${label}${extrasHtml}${photoHtml}</div>`;
   return `<div class="detail-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px;">
-    <span style="flex:1;">${label}${photoHtml}</span>
+    <span style="flex:1;">${label}${extrasHtml}${photoHtml}</span>
     <span style="display:flex;gap:4px;flex-shrink:0;">
       ${(isAdmin || hasStaffPermission("progress.edit")) ? `<button class="btn btn-light pr-log-edit" data-job="${jobId}" data-idx="${l._idx}" style="padding:3px 8px;font-size:11px;">Edit</button>` : ""}
       ${(isAdmin || hasStaffPermission("progress.delete")) ? `<button class="btn btn-red pr-log-delete" data-job="${jobId}" data-idx="${l._idx}" style="padding:3px 8px;font-size:11px;">Delete</button>` : ""}
@@ -6780,6 +6938,17 @@ function prWireJobCards(box){
       if(!prJobDrafts[id]) prJobDrafts[id] = { staff:"", note:"" };
       prJobDrafts[id].note = inp.value;
     });
+  });
+  box.querySelectorAll(".pr-job-extra").forEach(inp=>{
+    const handler = ()=>{
+      const id = inp.getAttribute("data-id"), fid = inp.getAttribute("data-field");
+      const job = prJobs.find(x=> x.id===id) || {};
+      if(!prJobDrafts[id]) prJobDrafts[id] = { staff: job.currentStaff||"", note: job.currentNote||"", extras: {...(job.currentExtras||{})} };
+      if(!prJobDrafts[id].extras) prJobDrafts[id].extras = {...(job.currentExtras||{})};
+      prJobDrafts[id].extras[fid] = inp.value;
+    };
+    inp.addEventListener("input", handler);
+    inp.addEventListener("change", handler);
   });
   box.querySelectorAll(".pr-job-assign-save").forEach(btn=> btn.addEventListener("click", ()=> prAssignJob(btn.getAttribute("data-id"))));
   box.querySelectorAll(".pr-job-save").forEach(btn=> btn.addEventListener("click", ()=> prSaveProgress(btn.getAttribute("data-id"))));
@@ -6898,10 +7067,13 @@ async function prSaveProgress(jobId){
     savedAt: Timestamp.now()
   };
   if(job && job.photoRequired && prJobPendingPhoto[jobId]) entry.photo = prJobPendingPhoto[jobId];
+  const ex = prCollectExtras(job, jobId);
+  if(ex.arr.length) entry.extras = ex.arr;
   try{
     await updateDoc(doc(db,"progressJobs",jobId), {
       status: "in_progress",
       currentStaff: staff, currentNote: note,
+      currentExtras: ex.map,
       logs: arrayUnion(entry),
       updatedAt: serverTimestamp()
     });
@@ -6926,6 +7098,8 @@ async function prCompleteJob(jobId){
     completion: true
   };
   if(job && job.photoRequired && prJobPendingPhoto[jobId]) entry.photo = prJobPendingPhoto[jobId];
+  const ex = prCollectExtras(job, jobId);
+  if(ex.arr.length) entry.extras = ex.arr;
   try{
     // Submitting doesn't close the job by itself — it goes to "submitted"
     // and waits for admin approval (Approve -> done, Reject -> back to
@@ -6933,6 +7107,7 @@ async function prCompleteJob(jobId){
     await updateDoc(doc(db,"progressJobs",jobId), {
       status: "submitted",
       currentStaff: staff, currentNote: note,
+      currentExtras: ex.map,
       submittedStaff: staff, submittedNote: note,
       submittedAt: serverTimestamp(),
       submittedBy: currentUser ? (currentUser.email||null) : null,
@@ -7225,6 +7400,7 @@ function prJobHistoryHtml(j){
     if(l.rejected) line += " (Rejected)";
     if(l.adminClosed) line += " (Closed by admin)";
     if(l.note) line += `: ${l.note}`;
+    if(Array.isArray(l.extras) && l.extras.length) line += ` [${l.extras.map(e=> `${e.label}: ${e.value}`).join(" | ")}]`;
     const photoHtml = l.photo ? `<div style="padding-left:12px;margin:2px 0 4px;"><a href="${l.photo}" download="job-photo-${escapeHtml(l.date||"photo")}.jpg" target="_blank" rel="noopener"><img src="${l.photo}" style="width:56px;height:56px;object-fit:cover;border-radius:6px;border:1px solid var(--border);" /></a></div>` : "";
     return `<div class="meta" style="padding-left:12px;">${escapeHtml(line)}</div>${photoHtml}`;
   }).join("");
@@ -7835,6 +8011,125 @@ async function prDeleteNodesBulk(ids){
   }catch(err){ console.error("Could not clean up jobs for deleted nodes:", err); }
 }
 
+// ---- Add numbered items (e.g. AHU 1 .. AHU 50) ----
+function prNumberedLabel(pattern, n){
+  const pt = String(pattern||"").trim();
+  return pt.includes("#") ? pt.replace(/#/g, String(n)) : `${pt} ${n}`;
+}
+function prReadNumInputs(){
+  return { name: $("prNumName").value.trim(), from: parseInt($("prNumFrom").value,10), to: parseInt($("prNumTo").value,10) };
+}
+function prUpdateNumPreview(){
+  const { name, from, to } = prReadNumInputs();
+  const box = $("prNumPreview");
+  if(!name || isNaN(from) || isNaN(to) || to < from){ box.textContent = ""; return; }
+  const count = to - from + 1;
+  box.textContent = count === 1 ? `Will add: ${prNumberedLabel(name, from)}`
+    : `Will add ${count} items: ${prNumberedLabel(name, from)}, ${prNumberedLabel(name, from+1)} … ${prNumberedLabel(name, to)}`;
+}
+["prNumName","prNumFrom","prNumTo"].forEach(id=>{
+  $(id).addEventListener("input", prUpdateNumPreview);
+  $(id).addEventListener("keydown", (e)=>{ if(e.key === "Enter"){ e.preventDefault(); $("prNumGoBtn").click(); } });
+});
+$("prNumGoBtn").addEventListener("click", async ()=>{
+  const { name, from, to } = prReadNumInputs();
+  const err = $("prNumError"); err.textContent = "";
+  if(!name){ err.textContent = "Enter a name, e.g. AHU."; return; }
+  if(isNaN(from) || isNaN(to) || from < 0 || to < from){ err.textContent = "Enter a valid From and To (To must not be less than From)."; return; }
+  if(to - from + 1 > 500){ err.textContent = "Please add at most 500 items at a time."; return; }
+  $("prNumGoBtn").disabled = true;
+  try{
+    const nodes = prCloneNodes();
+    const siblings = prGetSiblingsRef(nodes, prCustomizeBreadcrumb);
+    if(!siblings){ err.textContent = "Could not find this location."; $("prNumGoBtn").disabled = false; return; }
+    const have = new Set(siblings.map(n=> String(n.label||"").trim().toLowerCase()));
+    let added = 0, skipped = 0;
+    for(let n = from; n <= to; n++){
+      const label = prNumberedLabel(name, n);
+      if(have.has(label.toLowerCase())){ skipped++; continue; }
+      siblings.push({ id: prNodeIdGen() + "_" + n, label, children: [] });
+      have.add(label.toLowerCase());
+      added++;
+    }
+    if(added) await prSaveTree({ nodes });
+    hideModal("prNumItemsModal");
+    if(skipped) alert(`Added ${added} item(s). ${skipped} skipped because the same name already exists here.`);
+  }catch(e){
+    console.error(e);
+    err.textContent = "Could not add. Check your connection and try again.";
+  }
+  $("prNumGoBtn").disabled = false;
+});
+
+// ---- Copy items (tree nodes) to other places in the tree ----
+// Copies the ticked items, with everything nested under them, into one or more
+// destinations. Jobs are NOT copied here (use "Copy jobs to other units").
+// Items whose name already exists at the destination are skipped.
+let prCopyItemsIds = [];
+let prCopyItemsTargets = new Set();
+
+function prCloneNodeFresh(n){
+  return { id: prNodeIdGen(), label: n.label, children: (n.children||[]).map(prCloneNodeFresh) };
+}
+
+function prOpenCopyItems(ids){
+  prCopyItemsIds = ids;
+  prCopyItemsTargets = new Set();
+  $("prCopyItemsError").textContent = "";
+  const here = prCustomizeBreadcrumb.join(">");
+  const srcPaths = ids.map(id=> [...prCustomizeBreadcrumb, id].join(">"));
+  $("prCopyItemsSummary").textContent = `Copying ${ids.length} item(s) with everything inside them. Tick where to put them. Jobs are not copied.`;
+  const rows = [];
+  // top level, only when we're not already there
+  rows.push({ path:"", label:"(Top level)", depth:0, disabled: prCustomizeBreadcrumb.length===0 });
+  prFlattenTree().forEach(u=>{
+    const inSource = srcPaths.some(sp=> u.unitPath===sp || u.unitPath.startsWith(sp+">"));
+    rows.push({ path:u.unitPath, label:u.leafLabel, depth:u.depth+1, disabled: u.unitPath===here || inSource });
+  });
+  $("prCopyItemsList").innerHTML = rows.map(r=> `
+    <label style="display:flex;align-items:center;gap:8px;padding:7px 6px 7px ${6+r.depth*16}px;font-size:14px;${r.disabled?"opacity:.4;":"cursor:pointer;"}">
+      <input type="checkbox" class="pr-copyitems-target" data-path="${escapeHtml(r.path)}" ${r.disabled?"disabled":""} style="width:17px;height:17px;flex-shrink:0;" />
+      <span>${escapeHtml(r.label)}</span>
+    </label>`).join("");
+  $("prCopyItemsList").querySelectorAll(".pr-copyitems-target").forEach(cb=>{
+    cb.addEventListener("change", ()=>{
+      const path = cb.getAttribute("data-path");
+      if(cb.checked) prCopyItemsTargets.add(path); else prCopyItemsTargets.delete(path);
+    });
+  });
+  showModal("prCopyItemsModal");
+}
+
+$("prCopyItemsGoBtn").addEventListener("click", async ()=>{
+  if(!prCopyItemsTargets.size){ $("prCopyItemsError").textContent = "Tick at least one place to copy to."; return; }
+  $("prCopyItemsGoBtn").disabled = true;
+  try{
+    const nodes = prCloneNodes();
+    const src = prGetSiblingsRef(nodes, prCustomizeBreadcrumb);
+    const items = (src||[]).filter(n=> prCopyItemsIds.includes(n.id));
+    let added = 0, skipped = 0;
+    for(const tp of prCopyItemsTargets){
+      const dest = tp === "" ? nodes : prGetSiblingsRef(nodes, tp.split(">"));
+      if(!dest) continue;
+      items.forEach(n=>{
+        const exists = dest.some(x=> String(x.label||"").trim().toLowerCase() === String(n.label||"").trim().toLowerCase());
+        if(exists){ skipped++; return; }
+        dest.push(prCloneNodeFresh(n));
+        added++;
+      });
+    }
+    if(added) await prSaveTree({ nodes });
+    hideModal("prCopyItemsModal");
+    alert(added
+      ? `Copied ${added} item(s).${skipped ? ` ${skipped} skipped because the same name already exists there.` : ""}`
+      : "Nothing copied — the same names already exist in the chosen place(s).");
+  }catch(err){
+    console.error(err);
+    $("prCopyItemsError").textContent = "Could not copy. Check your connection and try again.";
+  }
+  $("prCopyItemsGoBtn").disabled = false;
+});
+
 function renderPrTreeEditor(){
   const crumbBox = $("prTreeBreadcrumb");
   const box = $("prTreeEditor");
@@ -7911,8 +8206,9 @@ function renderPrTreeEditor(){
           <button class="btn btn-light pr-node-drill" data-id="${n.id}" style="padding:8px 10px;">Open &rarr;</button>
         </div>
       </div>
-    </div>`).join("") + `<div class="modal-actions"><button class="btn btn-light" id="prAddNodeBtn" style="width:100%;">+ Add item${crumbNames.length ? ` under "${escapeHtml(crumbNames[crumbNames.length-1])}"` : ""}</button></div>`
-    + (siblings.length ? `<button class="btn btn-red" id="prDeleteSelectedNodesBtn" style="width:100%;margin-top:6px;">Delete selected</button>` : "");
+    </div>`).join("") + `<div class="modal-actions" style="margin-bottom:6px;"><button class="btn btn-navy" id="prAddNumberedBtn" style="width:100%;">+ Add numbered items (e.g. AHU 1&ndash;50)</button></div><div class="modal-actions"><button class="btn btn-light" id="prAddNodeBtn" style="width:100%;">+ Add item${crumbNames.length ? ` under "${escapeHtml(crumbNames[crumbNames.length-1])}"` : ""}</button></div>`
+    + (siblings.length ? `<button class="btn btn-red" id="prDeleteSelectedNodesBtn" style="width:100%;margin-top:6px;">Delete selected</button>` : "")
+    + (siblings.length ? `<button class="btn btn-navy" id="prCopyItemsBtn" style="width:100%;margin-top:6px;">Copy selected items to&hellip;</button>` : "");
 
   if(prCustomizeBreadcrumb.length){
     document.getElementById("prJobsHereBtn").addEventListener("click", ()=> prOpenJobsEditor(prCustomizeBreadcrumb.slice()));
@@ -8028,6 +8324,23 @@ function renderPrTreeEditor(){
       await prDeleteNodesBulk(ids);
     });
   }
+  const copyItemsBtn = document.getElementById("prCopyItemsBtn");
+  if(copyItemsBtn){
+    copyItemsBtn.addEventListener("click", ()=>{
+      const ids = siblings.filter(n=> prNodesSelectedIds.has(n.id)).map(n=> n.id);
+      if(!ids.length){ alert("Tick at least one item to copy."); return; }
+      prOpenCopyItems(ids);
+    });
+  }
+  const addNumberedBtn = document.getElementById("prAddNumberedBtn");
+  if(addNumberedBtn){
+    addNumberedBtn.addEventListener("click", ()=>{
+      $("prNumError").textContent = "";
+      prUpdateNumPreview();
+      showModal("prNumItemsModal");
+      setTimeout(()=>{ $("prNumName").focus(); $("prNumName").select(); }, 50);
+    });
+  }
   const addNodeBtn = document.getElementById("prAddNodeBtn");
   if(addNodeBtn){
     addNodeBtn.addEventListener("click", async ()=>{
@@ -8080,6 +8393,7 @@ function prOpenJobsEditor(path){
           <input type="checkbox" class="pr-job-copy-check" data-id="${j.id}" ${prJobsSelectedIds.has(j.id) ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" />
           <span style="flex:1;">${escapeHtml(j.jobLabel)}</span>
           <button type="button" class="btn btn-light pr-job-photo-toggle" data-id="${j.id}" title="Require a photo when staff save progress on this job" style="padding:4px 10px;font-size:11px;flex-shrink:0;${j.photoRequired ? "background:var(--blue-bg);color:var(--blue);font-weight:700;" : ""}">${j.photoRequired ? "📷 Photo required" : "📷 Add photo requirement"}</button>
+          <button type="button" class="btn btn-light pr-job-fields-btn" data-id="${j.id}" title="Extra boxes staff fill in for this job" style="padding:4px 10px;font-size:11px;flex-shrink:0;${(j.customFields||[]).length ? "background:var(--blue-bg);color:var(--blue);font-weight:700;" : ""}">🧾 ${(j.customFields||[]).length ? `Fields (${(j.customFields||[]).length})` : "Add fields"}</button>
           ${prStatusBadge(j.status)}
         </div>
       </div>
@@ -8176,6 +8490,9 @@ function prOpenJobsEditor(path){
       });
     });
   }
+  box.querySelectorAll(".pr-job-fields-btn").forEach(btn=>{
+    btn.addEventListener("click", ()=>{ if(isAdmin) prOpenFieldsModal(btn.getAttribute("data-id")); });
+  });
   box.querySelectorAll(".pr-job-photo-toggle").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
       if(!isAdmin) return;
@@ -8270,6 +8587,7 @@ function prOpenJobsEditor(path){
               jobLabel: j.jobLabel, status: "pending",
               currentStaff: null, currentNote: null,
               photoRequired: j.photoRequired || false,
+              customFields: (j.customFields || []).map(f=> ({ id: prNodeIdGen(), label: f.label, options: f.options || [] })),
               logs: [],
               completedAt: null, completedBy: null, completedStaff: null, completedNote: null,
               createdAt: serverTimestamp(), createdBy: currentUser ? (currentUser.email||null) : null
