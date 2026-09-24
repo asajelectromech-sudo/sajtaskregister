@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1" />
 <title>SAJ Task Register</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root{
     --navy:#123354;
@@ -168,6 +169,10 @@
   </div>
 
   <div id="snagsView" style="display:none;">
+    <div class="chips" id="snagArchiveChips" style="display:none;">
+      <button class="chip active" data-archive-view="active">Active</button>
+      <button class="chip" data-archive-view="archived">Archived</button>
+    </div>
     <div class="chips" id="statusChips">
       <button class="chip active" data-status="all">All</button>
       <button class="chip" data-status="open">Open</button>
@@ -179,11 +184,14 @@
       <input type="text" id="searchBox" placeholder="Search location or description…" />
       <button class="btn btn-light" id="selectModeBtn">Select</button>
       <button class="btn btn-light" id="exportBtn">Export PDF</button>
+      <button class="btn btn-light" id="exportSnagExcelBtn">Export Excel</button>
     </div>
 
     <div class="toolbar" id="snagSelectAllRow" style="display:none;">
       <button class="btn btn-light" id="selectAllSnagsBtn">Select all</button>
       <button class="btn btn-light" id="clearSnagsBtn">Clear selection</button>
+      <button class="btn btn-navy" id="archiveSelectedSnagsBtn" style="display:none;">Archive selected</button>
+      <button class="btn btn-light" id="unarchiveSelectedSnagsBtn" style="display:none;">Unarchive selected</button>
       <button class="btn btn-red" id="deleteSelectedSnagsBtn" style="display:none;">Delete selected</button>
     </div>
 
@@ -192,6 +200,10 @@
   </div>
 
   <div id="workView" style="display:none;">
+    <div class="chips" id="workArchiveChips" style="display:none;">
+      <button class="chip active" data-archive-view="active">Active</button>
+      <button class="chip" data-archive-view="archived">Archived</button>
+    </div>
     <div class="chips" id="workStatusChips">
       <button class="chip active" data-status="all">All</button>
       <button class="chip" data-status="incomplete">Open</button>
@@ -203,11 +215,14 @@
       <input type="text" id="workSearchBox" placeholder="Search location or problem/task…" />
       <button class="btn btn-light" id="workSelectModeBtn">Select</button>
       <button class="btn btn-light" id="workExportBtn">Export PDF</button>
+      <button class="btn btn-light" id="exportWorkExcelBtn">Export Excel</button>
     </div>
 
     <div class="toolbar" id="workSelectAllRow" style="display:none;">
       <button class="btn btn-light" id="selectAllWorkBtn">Select all</button>
       <button class="btn btn-light" id="clearWorkBtn">Clear selection</button>
+      <button class="btn btn-navy" id="archiveSelectedWorkBtn" style="display:none;">Archive selected</button>
+      <button class="btn btn-light" id="unarchiveSelectedWorkBtn" style="display:none;">Unarchive selected</button>
       <button class="btn btn-red" id="deleteSelectedWorkBtn" style="display:none;">Delete selected</button>
     </div>
 
@@ -219,6 +234,10 @@
     <div id="taskNotificationsBanner" style="display:none;"></div>
     <div id="progressApprovalBanner" style="display:none;"></div>
     <div id="progressAssignedBanner" style="display:none;"></div>
+    <div class="chips" id="projectArchiveChips" style="display:none;">
+      <button class="chip active" data-archive-view="active">Active</button>
+      <button class="chip" data-archive-view="archived">Archived</button>
+    </div>
     <div class="toolbar">
       <button class="btn btn-primary" id="newProjectBtn" style="display:none;">+ New Project</button>
     </div>
@@ -227,6 +246,10 @@
   </div>
 
   <div id="dailyView" style="display:none;">
+    <div class="chips" id="dailyArchiveChips" style="display:none;">
+      <button class="chip active" data-archive-view="active">Active</button>
+      <button class="chip" data-archive-view="archived">Archived</button>
+    </div>
     <div class="toolbar">
       <input type="text" id="dailySearchBox" placeholder="Search all daily task report fields…" style="flex:1;min-width:180px;" />
       <input type="date" id="dailyFromDate" title="From date" />
@@ -234,10 +257,13 @@
       <button class="btn btn-light" id="dailyClearFiltersBtn">Clear</button>
       <button class="btn btn-light" id="dailySelectModeBtn" style="display:none;">Select</button>
       <button class="btn btn-light" id="dailyExportBtn" style="display:none;">Export PDF</button>
+      <button class="btn btn-light" id="dailyExportExcelBtn" style="display:none;">Export Excel</button>
     </div>
     <div class="toolbar" id="dailySelectAllRow" style="display:none;">
       <button class="btn btn-light" id="dailySelectAllBtn">Select all</button>
       <button class="btn btn-light" id="dailyClearSelectionBtn">Clear selection</button>
+      <button class="btn btn-navy" id="dailyArchiveSelectedBtn" style="display:none;">Archive selected</button>
+      <button class="btn btn-light" id="dailyUnarchiveSelectedBtn" style="display:none;">Unarchive selected</button>
       <button class="btn btn-red" id="dailyDeleteSelectedBtn" style="display:none;">Delete selected</button>
     </div>
     <div id="dailyList"></div>
@@ -899,11 +925,14 @@ let blockedEmailUnsub = null; // live listener on the current user's blockedEmai
 let allSnags = [];
 let listenerStarted = false;
 let filters = { status: "all", site: "", search: "" };
+let snagArchiveView = "active"; // "active" | "archived" — admin only; everyone else always sees "active"
 
 let allWorkReports = [];
 let workListenerStarted = false;
 let workFilters = { status: "all", site: "", search: "" };
+let workArchiveView = "active";
 let activeTab = "projects";
+let projectArchiveView = "active";
 let allProjects = [];
 let allProjectTasks = [];
 // Progress Report jobs waiting on admin approval, across ALL projects —
@@ -976,6 +1005,7 @@ let dailyTaskColumns = [
 let allDailyTaskReports = [];
 let dailyTaskListenerStarted = false;
 let dailyFilters = {search:"", from:"", to:""};
+let dailyArchiveView = "active";
 let dailySelectMode = false;
 let selectedDailyTaskIds = new Set();
 let dailyVerificationMode = "new"; // "new" | "resubmit"
@@ -1296,6 +1326,18 @@ function downloadAssignmentsImage(items, { heading, dateLabel } = {}){
   link.remove();
 }
 
+// ---------- Shared Excel (.xlsx) export helper ----------
+// sheets: [{ name, rows: [[cell, cell, ...], ...] }, ...] — first row of
+// each is treated as the header. Used by every report type's Excel export.
+function downloadExcel(filename, sheets){
+  const wb = XLSX.utils.book_new();
+  (sheets||[]).forEach(sheet=>{
+    const ws = XLSX.utils.aoa_to_sheet(sheet.rows||[[]]);
+    XLSX.utils.book_append_sheet(wb, ws, (sheet.name||"Sheet").slice(0,31));
+  });
+  XLSX.writeFile(wb, filename);
+}
+
 // ---------- AUTH ----------
 const googleProvider = new GoogleAuthProvider();
 
@@ -1512,8 +1554,23 @@ function applyMainTabView(){
   const dailyElevated = isAdmin || hasStaffPermission("daily.export");
   $("dailySelectModeBtn").style.display = dailyElevated ? "inline-block" : "none";
   $("dailyExportBtn").style.display = dailyElevated ? "inline-block" : "none";
+  $("dailyExportExcelBtn").style.display = dailyElevated ? "inline-block" : "none";
+  // Archiving (and browsing archived items) is admin-only across every
+  // report type — everyone else only ever sees the Active view.
+  $("snagArchiveChips").style.display = isAdmin ? "flex" : "none";
+  $("workArchiveChips").style.display = isAdmin ? "flex" : "none";
+  $("dailyArchiveChips").style.display = isAdmin ? "flex" : "none";
+  $("projectArchiveChips").style.display = isAdmin ? "flex" : "none";
+  if(!isAdmin){
+    if(snagArchiveView !== "active"){ snagArchiveView = "active"; }
+    if(workArchiveView !== "active"){ workArchiveView = "active"; }
+    if(dailyArchiveView !== "active"){ dailyArchiveView = "active"; }
+    if(projectArchiveView !== "active"){ projectArchiveView = "active"; }
+  }
   renderProjectList();
   renderDailyTaskList();
+  renderList();
+  renderWorkList();
   updateFabVisibility();
 }
 
@@ -2324,7 +2381,54 @@ $("selectModeBtn").addEventListener("click", ()=>{
 function updateSnagExportLabel(){
   $("exportBtn").textContent = (selectMode && selectedSnagIds.size > 0) ? `Export Selected (${selectedSnagIds.size})` : "Export PDF";
   $("deleteSelectedSnagsBtn").style.display = (isAdmin && selectMode && selectedSnagIds.size > 0) ? "block" : "none";
+  $("archiveSelectedSnagsBtn").style.display = (isAdmin && selectMode && selectedSnagIds.size > 0 && snagArchiveView === "active") ? "inline-block" : "none";
+  $("unarchiveSelectedSnagsBtn").style.display = (isAdmin && selectMode && selectedSnagIds.size > 0 && snagArchiveView === "archived") ? "inline-block" : "none";
 }
+document.querySelectorAll('#snagArchiveChips [data-archive-view]').forEach(chip=>{
+  chip.addEventListener("click", ()=>{
+    document.querySelectorAll('#snagArchiveChips [data-archive-view]').forEach(c=>c.classList.remove("active"));
+    chip.classList.add("active");
+    snagArchiveView = chip.getAttribute("data-archive-view");
+    selectedSnagIds.clear();
+    renderList();
+    updateSnagExportLabel();
+  });
+});
+$("archiveSelectedSnagsBtn").addEventListener("click", async ()=>{
+  if(!isAdmin || !selectedSnagIds.size) return;
+  if(!(await confirmDelete(`Archive ${selectedSnagIds.size} selected snag(s)? They'll move out of the Active list but nothing is deleted.`))) return;
+  $("archiveSelectedSnagsBtn").disabled = true;
+  try{
+    await Promise.all(Array.from(selectedSnagIds).map(id=> updateDoc(doc(db,"snags",id), { archived:true, archivedAt: serverTimestamp(), archivedBy: currentUser.email||null })));
+    selectedSnagIds.clear();
+    renderList();
+    updateSnagExportLabel();
+  }catch(err){
+    console.error(err);
+    alert("Could not archive some records. Check your connection and try again.");
+  }
+  $("archiveSelectedSnagsBtn").disabled = false;
+});
+$("unarchiveSelectedSnagsBtn").addEventListener("click", async ()=>{
+  if(!isAdmin || !selectedSnagIds.size) return;
+  $("unarchiveSelectedSnagsBtn").disabled = true;
+  try{
+    await Promise.all(Array.from(selectedSnagIds).map(id=> updateDoc(doc(db,"snags",id), { archived:false, archivedAt:null, archivedBy:null })));
+    selectedSnagIds.clear();
+    renderList();
+    updateSnagExportLabel();
+  }catch(err){
+    console.error(err);
+    alert("Could not unarchive some records. Check your connection and try again.");
+  }
+  $("unarchiveSelectedSnagsBtn").disabled = false;
+});
+$("exportSnagExcelBtn").addEventListener("click", ()=>{
+  const items = selectMode && selectedSnagIds.size ? getFiltered().filter(s=>selectedSnagIds.has(s.id)) : getFiltered();
+  const rows = [["Site","Location","Description","Status","Opened By","Opened At","Closed By","Closed At"]];
+  items.forEach(s=> rows.push([s.site||"", s.location||"", s.description||"", s.status||"", s.openedBy||"", fmtDate(s.openedAt), s.closedBy||"", fmtDate(s.closedAt)]));
+  downloadExcel(`Snag_Reports_${sanitizeForFilename(fmtDateOnly(new Date()))}.xlsx`, [{ name:"Snags", rows }]);
+});
 $("selectAllSnagsBtn").addEventListener("click", ()=>{
   getFiltered().forEach(s=> selectedSnagIds.add(s.id));
   renderList();
@@ -2353,6 +2457,7 @@ $("deleteSelectedSnagsBtn").addEventListener("click", async ()=>{
 
 function getFiltered(){
   return allSnags.filter(s=>{
+    if((snagArchiveView === "archived") !== !!s.archived) return false;
     if(filters.status !== "all" && s.status !== filters.status) return false;
     if(filters.site && s.site !== filters.site) return false;
     if(filters.search){
@@ -2383,6 +2488,9 @@ function renderList(){
     const checkbox = selectMode
       ? `<input type="checkbox" class="card-check" ${selectedSnagIds.has(s.id) ? "checked" : ""} />`
       : "";
+    const archiveBtn = isAdmin && !selectMode
+      ? `<button type="button" class="btn btn-light snag-archive-btn" data-id="${escapeHtml(s.id)}" style="margin-top:6px;padding:4px 10px;font-size:12px;">${s.archived ? "Unarchive" : "Archive"}</button>`
+      : "";
     return `
       <div class="card" data-id="${s.id}">
         ${checkbox}
@@ -2392,9 +2500,29 @@ function renderList(){
           <p class="card-desc">${escapeHtml(s.description)}</p>
           ${badge}
           <div class="meta">Opened by ${escapeHtml(s.openedBy||"")} &middot; ${fmtDate(s.openedAt)}</div>
+          ${archiveBtn}
         </div>
       </div>`;
   }).join("");
+  list.querySelectorAll(".snag-archive-btn").forEach(btn=>{
+    btn.addEventListener("click", async (e)=>{
+      e.stopPropagation();
+      const id = btn.getAttribute("data-id");
+      const snag = allSnags.find(s=>s.id===id);
+      if(!snag) return;
+      const willArchive = !snag.archived;
+      btn.disabled = true;
+      try{
+        await updateDoc(doc(db,"snags",id), willArchive
+          ? { archived:true, archivedAt: serverTimestamp(), archivedBy: currentUser.email||null }
+          : { archived:false, archivedAt:null, archivedBy:null });
+      }catch(err){
+        console.error(err);
+        alert("Could not update this snag. Check your connection and try again.");
+        btn.disabled = false;
+      }
+    });
+  });
   list.querySelectorAll(".card").forEach(card=>{
     card.addEventListener("click", ()=>{
       const id = card.getAttribute("data-id");
@@ -2462,7 +2590,54 @@ $("workSelectModeBtn").addEventListener("click", ()=>{
 function updateWorkExportLabel(){
   $("workExportBtn").textContent = (workSelectMode && selectedWorkIds.size > 0) ? `Export Selected (${selectedWorkIds.size})` : "Export PDF";
   $("deleteSelectedWorkBtn").style.display = (isAdmin && workSelectMode && selectedWorkIds.size > 0) ? "block" : "none";
+  $("archiveSelectedWorkBtn").style.display = (isAdmin && workSelectMode && selectedWorkIds.size > 0 && workArchiveView === "active") ? "inline-block" : "none";
+  $("unarchiveSelectedWorkBtn").style.display = (isAdmin && workSelectMode && selectedWorkIds.size > 0 && workArchiveView === "archived") ? "inline-block" : "none";
 }
+document.querySelectorAll('#workArchiveChips [data-archive-view]').forEach(chip=>{
+  chip.addEventListener("click", ()=>{
+    document.querySelectorAll('#workArchiveChips [data-archive-view]').forEach(c=>c.classList.remove("active"));
+    chip.classList.add("active");
+    workArchiveView = chip.getAttribute("data-archive-view");
+    selectedWorkIds.clear();
+    renderWorkList();
+    updateWorkExportLabel();
+  });
+});
+$("archiveSelectedWorkBtn").addEventListener("click", async ()=>{
+  if(!isAdmin || !selectedWorkIds.size) return;
+  if(!(await confirmDelete(`Archive ${selectedWorkIds.size} selected service action report(s)? They'll move out of the Active list but nothing is deleted.`))) return;
+  $("archiveSelectedWorkBtn").disabled = true;
+  try{
+    await Promise.all(Array.from(selectedWorkIds).map(id=> updateDoc(doc(db,"workreports",id), { archived:true, archivedAt: serverTimestamp(), archivedBy: currentUser.email||null })));
+    selectedWorkIds.clear();
+    renderWorkList();
+    updateWorkExportLabel();
+  }catch(err){
+    console.error(err);
+    alert("Could not archive some records. Check your connection and try again.");
+  }
+  $("archiveSelectedWorkBtn").disabled = false;
+});
+$("unarchiveSelectedWorkBtn").addEventListener("click", async ()=>{
+  if(!isAdmin || !selectedWorkIds.size) return;
+  $("unarchiveSelectedWorkBtn").disabled = true;
+  try{
+    await Promise.all(Array.from(selectedWorkIds).map(id=> updateDoc(doc(db,"workreports",id), { archived:false, archivedAt:null, archivedBy:null })));
+    selectedWorkIds.clear();
+    renderWorkList();
+    updateWorkExportLabel();
+  }catch(err){
+    console.error(err);
+    alert("Could not unarchive some records. Check your connection and try again.");
+  }
+  $("unarchiveSelectedWorkBtn").disabled = false;
+});
+$("exportWorkExcelBtn").addEventListener("click", ()=>{
+  const items = workSelectMode && selectedWorkIds.size ? getWorkFiltered().filter(s=>selectedWorkIds.has(s.id)) : getWorkFiltered();
+  const rows = [["Site","Location","Problem/Task","Status","Reported By","Created At","Closed By"]];
+  items.forEach(s=> rows.push([s.site||"", s.location||"", s.problemTask||"", s.status||"", s.reportedBy||"", fmtDate(s.createdAt), s.closedBy||""]));
+  downloadExcel(`Service_Action_Reports_${sanitizeForFilename(fmtDateOnly(new Date()))}.xlsx`, [{ name:"Service Actions", rows }]);
+});
 $("selectAllWorkBtn").addEventListener("click", ()=>{
   getWorkFiltered().forEach(s=> selectedWorkIds.add(s.id));
   renderWorkList();
@@ -2491,6 +2666,7 @@ $("deleteSelectedWorkBtn").addEventListener("click", async ()=>{
 
 function getWorkFiltered(){
   return allWorkReports.filter(s=>{
+    if((workArchiveView === "archived") !== !!s.archived) return false;
     if(workFilters.status !== "all" && s.status !== workFilters.status) return false;
     if(workFilters.site && s.site !== workFilters.site) return false;
     if(workFilters.search){
@@ -2521,6 +2697,9 @@ function renderWorkList(){
     const checkbox = workSelectMode
       ? `<input type="checkbox" class="card-check" ${selectedWorkIds.has(s.id) ? "checked" : ""} />`
       : "";
+    const archiveBtn = isAdmin && !workSelectMode
+      ? `<button type="button" class="btn btn-light work-archive-btn" data-id="${escapeHtml(s.id)}" style="margin-top:6px;padding:4px 10px;font-size:12px;">${s.archived ? "Unarchive" : "Archive"}</button>`
+      : "";
     return `
       <div class="card" data-id="${s.id}">
         ${checkbox}
@@ -2530,9 +2709,29 @@ function renderWorkList(){
           <p class="card-desc">${escapeHtml(s.problemTask)}</p>
           ${badge}
           <div class="meta">Reported by ${escapeHtml(s.reportedBy||"")} &middot; ${fmtDate(s.createdAt)}</div>
+          ${archiveBtn}
         </div>
       </div>`;
   }).join("");
+  list.querySelectorAll(".work-archive-btn").forEach(btn=>{
+    btn.addEventListener("click", async (e)=>{
+      e.stopPropagation();
+      const id = btn.getAttribute("data-id");
+      const rep = allWorkReports.find(s=>s.id===id);
+      if(!rep) return;
+      const willArchive = !rep.archived;
+      btn.disabled = true;
+      try{
+        await updateDoc(doc(db,"workreports",id), willArchive
+          ? { archived:true, archivedAt: serverTimestamp(), archivedBy: currentUser.email||null }
+          : { archived:false, archivedAt:null, archivedBy:null });
+      }catch(err){
+        console.error(err);
+        alert("Could not update this report. Check your connection and try again.");
+        btn.disabled = false;
+      }
+    });
+  });
   list.querySelectorAll(".card").forEach(card=>{
     card.addEventListener("click", ()=>{
       const id = card.getAttribute("data-id");
@@ -3462,6 +3661,133 @@ function downloadProjectPdf(projectId, taskIdsFilter){
   pdf.save(filename);
 }
 
+// ---------- Full Project Report (Task Register + Progress Report combined) ----------
+// Used when archiving/wrapping up a project, so there's a single copy of
+// everything — the task register AND every unit/job in its Progress Report
+// — independent of whatever (if anything) is currently open in the
+// Progress Report modal.
+async function fetchProjectProgressData(projectId){
+  let treeNodes = [];
+  try{
+    const treeSnap = await getDoc(doc(db,"progressTrees",projectId));
+    treeNodes = (treeSnap.exists() && treeSnap.data().nodes) || [];
+  }catch(e){ console.error("Could not load progress tree", e); }
+  let jobs = [];
+  try{
+    const jobsSnap = await getDocs(query(collection(db,"progressJobs"), where("projectId","==",projectId)));
+    jobs = jobsSnap.docs.map(d=>({ id:d.id, ...d.data() }));
+  }catch(e){ console.error("Could not load progress jobs", e); }
+  return { treeNodes, jobs };
+}
+function prJobStatusLabel(j){
+  return j.status==="completed" ? "Completed"
+    : j.status==="submitted" ? "Awaiting approval"
+    : j.status==="rejected" ? "Rejected — rework"
+    : "Pending";
+}
+async function downloadFullProjectReport(projectId, btn){
+  const p = allProjects.find(x=>x.id===projectId);
+  if(!p) return;
+  if(btn) btn.disabled = true;
+  try{
+    const { jsPDF } = window.jspdf;
+    const pdf = new jsPDF({unit:"pt", format:"a4"});
+    const marginL=40, marginR=555, pageH=800;
+    let y=50;
+
+    pdf.setFontSize(16); pdf.setFont(undefined,"bold");
+    pdf.text(`Full Project Report — ${p.name||"Project"}`, marginL, y); y+=20;
+    pdf.setFontSize(10); pdf.setFont(undefined,"normal");
+    pdf.text(`Generated ${fmtDate(new Date())}`, marginL, y); y+=24;
+
+    pdf.setFontSize(13); pdf.setFont(undefined,"bold");
+    pdf.text("Task Register", marginL, y); y+=18;
+    pdf.setFont(undefined,"normal"); pdf.setFontSize(9);
+    const tasks = allProjectTasks.filter(t=>t.projectId===projectId);
+    if(!tasks.length){
+      pdf.text("No tasks.", marginL, y); y+=14;
+    } else {
+      const nameCol = projectColumns.find(c=>c.key==="taskName") || projectColumns[0];
+      tasks.forEach((t,i)=>{
+        if(y > pageH-60){ pdf.addPage(); y=50; }
+        const title = nameCol ? getProjectTaskValue(t,nameCol) : "Task";
+        pdf.setFont(undefined,"bold");
+        pdf.text(`${i+1}. ${title||"Untitled task"}  [${(t.status||"pending").toUpperCase()}]`, marginL, y); y+=12;
+        pdf.setFont(undefined,"normal");
+        projectColumns.filter(c=>c!==nameCol).forEach(c=>{
+          const val = getProjectTaskValue(t,c);
+          if(String(val||"").trim()){
+            const lines = pdf.splitTextToSize(`${c.label}: ${val}`, marginR-marginL-10);
+            if(y + lines.length*11 > pageH-40){ pdf.addPage(); y=50; }
+            pdf.text(lines, marginL+10, y); y += lines.length*11;
+          }
+        });
+        y+=6;
+      });
+    }
+
+    y += 12;
+    if(y > pageH-80){ pdf.addPage(); y=50; }
+    pdf.setFontSize(13); pdf.setFont(undefined,"bold");
+    pdf.text("Progress Report — Job Summary", marginL, y); y+=18;
+    pdf.setFont(undefined,"normal"); pdf.setFontSize(9);
+
+    const { jobs } = await fetchProjectProgressData(projectId);
+    if(!jobs.length){
+      pdf.text("No progress jobs recorded.", marginL, y); y+=14;
+    } else {
+      const byUnit = {};
+      jobs.forEach(j=>{ (byUnit[j.unitLabel||"—"] = byUnit[j.unitLabel||"—"] || []).push(j); });
+      Object.keys(byUnit).sort().forEach(unitLabel=>{
+        if(y > pageH-60){ pdf.addPage(); y=50; }
+        pdf.setFont(undefined,"bold");
+        pdf.text(unitLabel, marginL, y); y+=13;
+        pdf.setFont(undefined,"normal");
+        byUnit[unitLabel].forEach(j=>{
+          if(y > pageH-40){ pdf.addPage(); y=50; }
+          const who = j.completedStaff || j.currentStaff || j.assignedStaff || "";
+          pdf.text(`• ${j.jobLabel||"Job"} — ${prJobStatusLabel(j)}${who ? ` (${who})` : ""}`, marginL+10, y); y+=12;
+        });
+        y+=6;
+      });
+    }
+
+    pdf.save(`Full_Project_Report_${sanitizeForFilename(p.name)}_${sanitizeForFilename(fmtDateOnly(new Date()))}.pdf`);
+  }catch(err){
+    console.error(err);
+    alert("Could not build the full project report. Check your connection and try again.");
+  }
+  if(btn) btn.disabled = false;
+}
+async function downloadFullProjectExcel(projectId, btn){
+  const p = allProjects.find(x=>x.id===projectId);
+  if(!p) return;
+  if(btn) btn.disabled = true;
+  try{
+    const tasks = allProjectTasks.filter(t=>t.projectId===projectId);
+    const taskRows = [["#", ...projectColumns.map(c=>c.label), "Status"]];
+    tasks.forEach((t,i)=> taskRows.push([i+1, ...projectColumns.map(c=> String(getProjectTaskValue(t,c) ?? "")), t.status||"pending"]));
+
+    const { jobs } = await fetchProjectProgressData(projectId);
+    const jobRows = [["Unit","Job","Status","Assigned/Current Staff","Note","Completed By","Completed At"]];
+    jobs.forEach(j=> jobRows.push([
+      j.unitLabel||"", j.jobLabel||"", prJobStatusLabel(j),
+      j.completedStaff || j.currentStaff || j.assignedStaff || "",
+      j.currentNote || j.completedNote || "",
+      j.completedBy || "", fmtDate(j.completedAt)
+    ]));
+
+    downloadExcel(`Full_Project_Report_${sanitizeForFilename(p.name)}_${sanitizeForFilename(fmtDateOnly(new Date()))}.xlsx`, [
+      { name:"Task Register", rows: taskRows },
+      { name:"Progress Jobs", rows: jobRows }
+    ]);
+  }catch(err){
+    console.error(err);
+    alert("Could not build the full project report. Check your connection and try again.");
+  }
+  if(btn) btn.disabled = false;
+}
+
 // ============================================================================
 // DAILY TASK REPORTS
 // ============================================================================
@@ -3687,6 +4013,7 @@ function dailyReportSearchText(r){
 function getFilteredDailyTaskReports(){
   const q=dailyFilters.search.trim().toLowerCase();
   return allDailyTaskReports.filter(r=>{
+    if((dailyArchiveView === "archived") !== !!r.archived) return false;
     const date=dailyReportDateKey(r);
     if(dailyFilters.from && date < dailyFilters.from) return false;
     if(dailyFilters.to && date > dailyFilters.to) return false;
@@ -3711,6 +4038,8 @@ function updateDailySelectionUi(){
   const count=selectedDailyTaskIds.size;
   $("dailyExportBtn").textContent=count ? `Export Selected (${count})` : "Export PDF";
   $("dailyDeleteSelectedBtn").style.display=(isAdmin && dailySelectMode && count) ? "inline-block" : "none";
+  $("dailyArchiveSelectedBtn").style.display=(isAdmin && dailySelectMode && count && dailyArchiveView==="active") ? "inline-block" : "none";
+  $("dailyUnarchiveSelectedBtn").style.display=(isAdmin && dailySelectMode && count && dailyArchiveView==="archived") ? "inline-block" : "none";
   $("dailySelectAllRow").style.display=dailySelectMode ? "flex" : "none";
 }
 function renderDailyTaskList(){
@@ -3734,6 +4063,7 @@ function renderDailyTaskList(){
       actions.push(`<button class="btn btn-light daily-resubmit-btn" data-id="${escapeHtml(r.id)}">Resubmit</button>`);
     }
     if(elevated) actions.push(`<button class="btn btn-navy daily-pdf-btn" data-id="${escapeHtml(r.id)}">PDF</button>`);
+    if(isAdmin && !dailySelectMode) actions.push(`<button class="btn btn-light daily-archive-btn" data-id="${escapeHtml(r.id)}">${r.archived ? "Unarchive" : "Archive"}</button>`);
     if(isAdmin || hasStaffPermission("daily.delete")) actions.push(`<button class="btn btn-red daily-delete-btn" data-id="${escapeHtml(r.id)}">Delete</button>`);
     return `<div class="card" data-daily-id="${escapeHtml(r.id)}">
       <div style="display:flex;align-items:flex-start;gap:9px;">
@@ -3784,6 +4114,22 @@ function renderDailyTaskList(){
     if(!isAdmin && !hasStaffPermission("daily.delete")) return; if(!(await confirmDelete("Delete this Daily Task Report?"))) return;
     try{await deleteDoc(doc(db,"dailyTaskReports",btn.getAttribute("data-id")));selectedDailyTaskIds.delete(btn.getAttribute("data-id"));}
     catch(err){console.error(err);alert("Could not delete the Daily Task Report.");}
+  }));
+  list.querySelectorAll(".daily-archive-btn").forEach(btn=>btn.addEventListener("click",async()=>{
+    if(!isAdmin) return;
+    const id=btn.getAttribute("data-id");
+    const r=allDailyTaskReports.find(x=>x.id===id); if(!r) return;
+    const willArchive=!r.archived;
+    btn.disabled=true;
+    try{
+      await updateDoc(doc(db,"dailyTaskReports",id), willArchive
+        ? { archived:true, archivedAt: serverTimestamp(), archivedBy: currentUser.email||null }
+        : { archived:false, archivedAt:null, archivedBy:null });
+    }catch(err){
+      console.error(err);
+      alert("Could not update this report. Check your connection and try again.");
+      btn.disabled=false;
+    }
   }));
   updateDailySelectionUi();
 }
@@ -3887,6 +4233,48 @@ $("dailyDeleteSelectedBtn").addEventListener("click",async()=>{
   if(!(await confirmDelete(`Delete ${selectedDailyTaskIds.size} selected Daily Task Report(s)? This cannot be undone.`))) return;
   try{await Promise.all([...selectedDailyTaskIds].map(id=>deleteDoc(doc(db,"dailyTaskReports",id))));selectedDailyTaskIds.clear();renderDailyTaskList();}
   catch(err){console.error(err);alert("Could not delete some Daily Task Reports.");}
+});
+document.querySelectorAll('#dailyArchiveChips [data-archive-view]').forEach(chip=>{
+  chip.addEventListener("click", ()=>{
+    document.querySelectorAll('#dailyArchiveChips [data-archive-view]').forEach(c=>c.classList.remove("active"));
+    chip.classList.add("active");
+    dailyArchiveView = chip.getAttribute("data-archive-view");
+    selectedDailyTaskIds.clear();
+    renderDailyTaskList();
+  });
+});
+$("dailyArchiveSelectedBtn").addEventListener("click", async ()=>{
+  if(!isAdmin || !selectedDailyTaskIds.size) return;
+  if(!(await confirmDelete(`Archive ${selectedDailyTaskIds.size} selected Daily Task Report(s)? They'll move out of the Active list but nothing is deleted.`))) return;
+  $("dailyArchiveSelectedBtn").disabled = true;
+  try{
+    await Promise.all([...selectedDailyTaskIds].map(id=> updateDoc(doc(db,"dailyTaskReports",id), { archived:true, archivedAt: serverTimestamp(), archivedBy: currentUser.email||null })));
+    selectedDailyTaskIds.clear();
+    renderDailyTaskList();
+  }catch(err){ console.error(err); alert("Could not archive some records. Check your connection and try again."); }
+  $("dailyArchiveSelectedBtn").disabled = false;
+});
+$("dailyUnarchiveSelectedBtn").addEventListener("click", async ()=>{
+  if(!isAdmin || !selectedDailyTaskIds.size) return;
+  $("dailyUnarchiveSelectedBtn").disabled = true;
+  try{
+    await Promise.all([...selectedDailyTaskIds].map(id=> updateDoc(doc(db,"dailyTaskReports",id), { archived:false, archivedAt:null, archivedBy:null })));
+    selectedDailyTaskIds.clear();
+    renderDailyTaskList();
+  }catch(err){ console.error(err); alert("Could not unarchive some records. Check your connection and try again."); }
+  $("dailyUnarchiveSelectedBtn").disabled = false;
+});
+$("dailyExportExcelBtn").addEventListener("click", ()=>{
+  if(!(isAdmin || hasStaffPermission("daily.export"))) return;
+  const items = selectedDailyTaskIds.size ? allDailyTaskReports.filter(r=>selectedDailyTaskIds.has(r.id)) : getFilteredDailyTaskReports();
+  if(!items.length){ alert("No Daily Task Reports match the current filter."); return; }
+  const cols = dailyTaskColumns;
+  const rows = [["Report Date","Submitted At","Submitted By","Status", ...cols.map(c=>c.label)]];
+  items.forEach(r=> rows.push([
+    dailyReportDateKey(r), fmtDate(r.createdAt), r.submittedByEmail||"", dailyStatusLabel(r.status),
+    ...cols.map(c=> String((r.fields||{})[c.key] ?? ""))
+  ]));
+  downloadExcel(`Daily_Task_Reports_${sanitizeForFilename(fmtDateOnly(new Date()))}.xlsx`, [{ name:"Daily Task Reports", rows }]);
 });
 $("dailyReviewCancelBtn").addEventListener("click",()=>hideModal("dailyReviewModal"));
 $("dailyReviewApproveBtn").addEventListener("click",()=>saveDailyReview("approve"));
@@ -4245,6 +4633,7 @@ function renderProjectList(){
   const canManageProjects = isAdmin || isAuthorizedStaffVerified;
 
   const projects = visibleProjects().filter(p=>{
+    if((projectArchiveView === "archived") !== !!p.archived) return false;
     if(canManageProjects) return true;
     const tasks = allProjectTasks.filter(t=>t.projectId===p.id);
     // A project remains visible to staff while it has at least one task that
@@ -4972,6 +5361,14 @@ function prShowProjectActionChooser(p, createMode){
   });
 }
 
+document.querySelectorAll('#projectArchiveChips [data-archive-view]').forEach(chip=>{
+  chip.addEventListener("click", ()=>{
+    document.querySelectorAll('#projectArchiveChips [data-archive-view]').forEach(c=>c.classList.remove("active"));
+    chip.classList.add("active");
+    projectArchiveView = chip.getAttribute("data-archive-view");
+    renderProjectList();
+  });
+});
 $("newProjectBtn").addEventListener("click",()=>{
   $("projectNameInput").value=""; $("projectError").textContent=""; showModal("newProjectModal");
 });
@@ -4981,7 +5378,7 @@ $("saveProjectBtn").addEventListener("click",async()=>{
   const name=$("projectNameInput").value.trim(); $("projectError").textContent="";
   if(!name){$("projectError").textContent="Project name is required.";return;}
   $("saveProjectBtn").disabled=true;
-  try{await addDoc(collection(db,"projects"),{name,status:"active",createdBy:currentUser.email||null,createdByUid:currentUser.uid,createdAt:serverTimestamp()});hideModal("newProjectModal");}
+  try{await addDoc(collection(db,"projects"),{name,status:"active",archived:false,createdBy:currentUser.email||null,createdByUid:currentUser.uid,createdAt:serverTimestamp()});hideModal("newProjectModal");}
   catch(err){console.error(err);$("projectError").textContent = isAdmin ? "Could not save project. Check your connection and try again." : "Could not save project. Your verification may have expired — verify your email again and retry.";}
   $("saveProjectBtn").disabled=false;
 });
@@ -5838,6 +6235,7 @@ let prJobDrafts = {};            // jobId -> {staff, note} — unsaved text type
 let prJobPendingPhoto = {};      // jobId -> compressed photo dataURL, captured but not yet saved with a progress entry
 let prCopyPanelOpen = false;     // whether the "copy jobs to other units" picker is showing in the Jobs editor
 let prJobsSelectedIds = new Set();  // job ids checked in Customize > Jobs — kept in memory (not just the DOM) so a live update from someone else's activity elsewhere doesn't silently wipe selections while checking boxes one by one. Cleared when navigating to a different item's job list.
+let prCopyTargetIds = new Set();    // unit paths checked in the "copy jobs to other units" destination tree — same reasoning as prJobsSelectedIds above, plus this list re-renders on every checkbox click (for the parent-selects-children cascade), so without this it would forget selections between clicks, not just between live updates.
 let prNodesSelectedIds = new Set(); // same idea, for the Customize > Items (tree) checkboxes. Cleared when navigating to a different tree level.
 let prTreeEditorLastPath = null;    // last breadcrumb path (as a ">"-joined key) the tree editor rendered, so it can tell a real navigation apart from a reactive re-render of the same level.
 
@@ -5905,6 +6303,8 @@ function openProgressReport(projectId, projectName){
   prCustomizeBreadcrumb = [];
   prJobsEditorPath = null;
   prCopyPanelOpen = false;
+  prJobsSelectedIds = new Set();
+  prCopyTargetIds = new Set();
   prReportFilter = new Set();
   prReportItemFilters = new Set();
   prReportDateFrom = "";
@@ -7100,6 +7500,39 @@ function prDownloadPdf(){
     pdf.text("No items match this filter.", margin, y);
   }
 
+  const PR_PDF_STATUS_COLORS = {
+    done: { bg: "#e7f7ec", text: "#15803d" },
+    submitted: { bg: "#e6edfd", text: "#1d4ed8" },
+    in_progress: { bg: "#e6edfd", text: "#1d4ed8" },
+    pending: { bg: "#fef3e2", text: "#b45309" }
+  };
+  // Draws a line built from {text, highlight, color, bold} segments,
+  // wrapping to the next line if it runs past maxWidth, so the job name
+  // and status can each get their own highlight color instead of one flat
+  // block of plain text.
+  function prPdfDrawSegments(segments, x, yStart, maxWidth, lineH){
+    let curX = x, curY = yStart;
+    segments.forEach(seg=>{
+      pdf.setFont(undefined, seg.bold ? "bold" : "normal");
+      if(curX + pdf.getTextWidth(seg.text) > x + maxWidth && curX > x){
+        curY += lineH;
+        curX = x;
+      }
+      if(curY > 780){ pdf.addPage(); curY = 50; }
+      const w = pdf.getTextWidth(seg.text);
+      if(seg.highlight){
+        pdf.setFillColor(seg.highlight);
+        pdf.rect(curX - 1, curY - 8, w + 2, 11, "F");
+      }
+      pdf.setTextColor(seg.color || "#111111");
+      pdf.text(seg.text, curX, curY);
+      curX += w;
+    });
+    pdf.setTextColor("#111111");
+    pdf.setFont(undefined, "normal");
+    return curY + lineH;
+  }
+
   locPaths.forEach(path=>{
     const u = byLoc[path];
     if(y > 740){ pdf.addPage(); y = 50; }
@@ -7110,14 +7543,20 @@ function prDownloadPdf(){
     pdf.setFontSize(9);
     u.jobs.forEach(j=>{
       const statusLabel = j.status==="done" ? "Completed" : j.status==="submitted" ? "Awaiting approval" : j.status==="in_progress" ? "In progress" : "Pending";
-      let line = `- ${j.jobLabel}: ${statusLabel}`;
-      if(j.rating) line += ` — Rating ${Number(j.rating)}/5`;
-      if(j.status==="done") line += ` (by ${j.completedStaff||""}, ${fmtDate(j.completedAt)})`;
-      else if(j.currentStaff) line += ` (last: ${j.currentStaff})`;
-      const wrapped = pdf.splitTextToSize(line, 500);
-      if(y > 770){ pdf.addPage(); y = 50; }
-      pdf.text(wrapped, margin+10, y);
-      y += lineHeight * wrapped.length;
+      const statusColors = PR_PDF_STATUS_COLORS[j.status] || PR_PDF_STATUS_COLORS.pending;
+      let trailing = "";
+      if(j.rating) trailing += ` — Rating ${Number(j.rating)}/5`;
+      if(j.status==="done") trailing += ` (by ${j.completedStaff||""}, ${fmtDate(j.completedAt)})`;
+      else if(j.currentStaff) trailing += ` (last: ${j.currentStaff})`;
+      pdf.setFontSize(9);
+      const segments = [
+        { text: "- " },
+        { text: j.jobLabel, highlight: "#fff59d", bold: true },
+        { text: ": " },
+        { text: statusLabel, highlight: statusColors.bg, color: statusColors.text, bold: true }
+      ];
+      if(trailing) segments.push({ text: trailing });
+      y = prPdfDrawSegments(segments, margin+10, y, 490, lineHeight);
 
       // In Progress, Awaiting Approval and Completed jobs also get their full day-by-day
       // history printed underneath — date, who, and the note for each entry
@@ -7189,6 +7628,7 @@ $("prCustomizeBtn").addEventListener("click", ()=>{
   prCustomizeBreadcrumb = [];
   prJobsEditorPath = null;
   prCopyPanelOpen = false;
+  prCopyTargetIds = new Set();
   $("prCustomizeError").textContent = "";
   renderPrTreeEditor();
   showModal("prCustomizeModal");
@@ -7451,15 +7891,25 @@ function prOpenJobsEditor(path){
   // progress elsewhere triggers this to re-run with the same path).
   if(prJobsEditorPath === null || prJobsEditorPath.join(">") !== newUnitPath){
     prJobsSelectedIds = new Set();
+    prCopyTargetIds = new Set();
   }
   prJobsEditorPath = path.slice();
   const unitPath = prJobsEditorPath.join(">");
   const box = $("prTreeEditor");
+  // Every checkbox click in the copy-target tree re-renders this whole
+  // block (needed for the parent-selects-children cascade below), and the
+  // live progressJobs listener can also re-render it mid-selection. Neither
+  // should visibly move the page — capture scroll position here and put it
+  // back after the DOM is rebuilt.
+  const modalEl = box ? box.closest(".modal") : null;
+  const modalScrollTop = modalEl ? modalEl.scrollTop : 0;
+  const targetListEl = document.getElementById("prCopyTargetList");
+  const targetListScrollTop = targetListEl ? targetListEl.scrollTop : 0;
   const crumbBox = $("prTreeBreadcrumb");
   const unitJobs = prJobs.filter(j=> j.unitPath===unitPath);
   const labelParts = prPathLabels(prJobsEditorPath);
   crumbBox.innerHTML = `Jobs for <b>${escapeHtml(labelParts.join(" / "))}</b> <button class="btn btn-light" id="prJobsBackBtn" style="padding:3px 10px;font-size:12px;">&larr; Back</button>`;
-  document.getElementById("prJobsBackBtn").addEventListener("click", ()=>{ prJobsEditorPath=null; prCopyPanelOpen=false; renderPrTreeEditor(); });
+  document.getElementById("prJobsBackBtn").addEventListener("click", ()=>{ prJobsEditorPath=null; prCopyPanelOpen=false; prCopyTargetIds=new Set(); renderPrTreeEditor(); });
 
   const jobRows = unitJobs.map(j=> `
     <div class="card" style="cursor:default;">
@@ -7481,18 +7931,27 @@ function prOpenJobsEditor(path){
   // history here are untouched.
   const copyPanelHtml = prCopyPanelOpen ? (()=>{
     const others = prFlattenTree().filter(u=> u.unitPath !== unitPath);
+    // Drop selections for units that no longer exist (deleted elsewhere
+    // while this panel was open).
+    const otherPaths = new Set(others.map(u=> u.unitPath));
+    Array.from(prCopyTargetIds).forEach(id=>{ if(!otherPaths.has(id)) prCopyTargetIds.delete(id); });
     if(!others.length){
       return `<div class="hint" style="margin-top:8px;">No other items exist yet to copy into. Add more items via Customize first.</div>`;
     }
+    const allTargetsSelected = others.every(u=> prCopyTargetIds.has(u.unitPath));
     return `
       <div class="section-label" style="margin-top:14px;">Copy the checked job(s) above to:</div>
-      <div style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;">
+      <label style="display:flex;align-items:center;gap:8px;padding:4px 0 6px;font-size:13px;cursor:pointer;">
+        <input type="checkbox" id="prCopyTargetSelectAll" ${allTargetsSelected ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" /> <b>Select all</b>
+      </label>
+      <div id="prCopyTargetList" style="max-height:220px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:8px;">
         ${others.map(u=> `
-          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;font-size:13px;cursor:pointer;">
-            <input type="checkbox" class="pr-copy-target" data-unit="${escapeHtml(u.unitPath)}" style="width:17px;height:17px;flex-shrink:0;" />
-            <span>${escapeHtml(u.label)}</span>
+          <label style="display:flex;align-items:center;gap:8px;padding:5px 0;padding-left:${8 + u.depth*18}px;font-size:13px;cursor:pointer;">
+            <input type="checkbox" class="pr-copy-target" data-unit="${escapeHtml(u.unitPath)}" ${prCopyTargetIds.has(u.unitPath) ? "checked" : ""} style="width:17px;height:17px;flex-shrink:0;" />
+            <span>${escapeHtml(u.leafLabel)}</span>
           </label>`).join("")}
       </div>
+      <div class="hint" style="margin-top:4px;">Checking an item also checks everything under it. Uncheck it to clear the whole branch.</div>
       <div class="modal-actions">
         <button class="btn btn-light" id="prCopyCancelBtn">Cancel</button>
         <button class="btn btn-green" id="prCopyConfirmBtn">Copy</button>
@@ -7513,6 +7972,12 @@ function prOpenJobsEditor(path){
     + (unitJobs.length ? `<button class="btn btn-navy" id="prCopyJobsBtn" style="width:100%;margin-top:6px;">${prCopyPanelOpen ? "Hide copy panel" : "Copy jobs to other units"}</button>` : "")
     + copyPanelHtml;
 
+  // Restore whatever was scrolled before this rebuild (see the capture at
+  // the top of this function) so ticking a box never visibly moves the page.
+  if(modalEl) modalEl.scrollTop = modalScrollTop;
+  const newTargetListEl = document.getElementById("prCopyTargetList");
+  if(newTargetListEl) newTargetListEl.scrollTop = targetListScrollTop;
+
   const selectAllJobsCb = document.getElementById("prJobsSelectAll");
   if(selectAllJobsCb){
     selectAllJobsCb.addEventListener("change", ()=>{
@@ -7527,6 +7992,28 @@ function prOpenJobsEditor(path){
       if(cb.checked) prJobsSelectedIds.add(id); else prJobsSelectedIds.delete(id);
     });
   });
+  if(prCopyPanelOpen){
+    const allOtherUnits = prFlattenTree().filter(u=> u.unitPath !== unitPath);
+    const selectAllTargetsCb = document.getElementById("prCopyTargetSelectAll");
+    if(selectAllTargetsCb){
+      selectAllTargetsCb.addEventListener("change", ()=>{
+        if(selectAllTargetsCb.checked) allOtherUnits.forEach(u=> prCopyTargetIds.add(u.unitPath));
+        else prCopyTargetIds.clear();
+        prOpenJobsEditor(prJobsEditorPath);
+      });
+    }
+    box.querySelectorAll(".pr-copy-target").forEach(cb=>{
+      cb.addEventListener("change", ()=>{
+        const targetPath = cb.getAttribute("data-unit");
+        // Tree-structure selection: checking a node also checks everything
+        // under it; unchecking it clears the whole branch below it too.
+        const branch = allOtherUnits.filter(u=> u.unitPath === targetPath || u.unitPath.startsWith(targetPath + ">"));
+        if(cb.checked) branch.forEach(u=> prCopyTargetIds.add(u.unitPath));
+        else branch.forEach(u=> prCopyTargetIds.delete(u.unitPath));
+        prOpenJobsEditor(prJobsEditorPath);
+      });
+    });
+  }
   box.querySelectorAll(".pr-job-photo-toggle").forEach(btn=>{
     btn.addEventListener("click", async ()=>{
       if(!isAdmin) return;
@@ -7586,6 +8073,7 @@ function prOpenJobsEditor(path){
   if(copyJobsBtn){
     copyJobsBtn.addEventListener("click", ()=>{
       prCopyPanelOpen = !prCopyPanelOpen;
+      if(!prCopyPanelOpen) prCopyTargetIds = new Set();
       prOpenJobsEditor(prJobsEditorPath);
     });
   }
@@ -7593,6 +8081,7 @@ function prOpenJobsEditor(path){
   if(copyCancelBtn){
     copyCancelBtn.addEventListener("click", ()=>{
       prCopyPanelOpen = false;
+      prCopyTargetIds = new Set();
       prOpenJobsEditor(prJobsEditorPath);
     });
   }
@@ -7600,7 +8089,7 @@ function prOpenJobsEditor(path){
   if(copyConfirmBtn){
     copyConfirmBtn.addEventListener("click", async ()=>{
       const selectedJobIds = unitJobs.filter(j=> prJobsSelectedIds.has(j.id)).map(j=> j.id);
-      const selectedTargets = Array.from(box.querySelectorAll(".pr-copy-target:checked")).map(el=> el.getAttribute("data-unit"));
+      const selectedTargets = Array.from(prCopyTargetIds);
       if(!selectedJobIds.length || !selectedTargets.length){
         alert("Check at least one job above and at least one target unit below.");
         return;
@@ -7627,6 +8116,7 @@ function prOpenJobsEditor(path){
         });
         await Promise.all(writes);
         prCopyPanelOpen = false;
+        prCopyTargetIds = new Set();
         alert(`Copied ${jobsToClone.length} job(s) to ${selectedTargets.length} unit(s).`);
       }catch(err){
         console.error(err);
@@ -7655,12 +8145,50 @@ function prInjectProjectCardButtons(){
       const proj = allProjects.find(p=> p.id===pid);
       openProgressReport(pid, proj ? (proj.name||"Project") : "Project");
     });
+
+    const fullPdfBtn = document.createElement("button");
+    fullPdfBtn.className = "btn btn-light";
+    fullPdfBtn.textContent = "Full Report (PDF)";
+    fullPdfBtn.addEventListener("click", (e)=>{ e.stopPropagation(); downloadFullProjectReport(pid, fullPdfBtn); });
+
+    const fullXlsBtn = document.createElement("button");
+    fullXlsBtn.className = "btn btn-light";
+    fullXlsBtn.textContent = "Full Report (Excel)";
+    fullXlsBtn.addEventListener("click", (e)=>{ e.stopPropagation(); downloadFullProjectExcel(pid, fullXlsBtn); });
+
+    const extraButtons = [btn, fullPdfBtn, fullXlsBtn];
+
+    if(isAdmin){
+      const proj = allProjects.find(p=> p.id===pid);
+      const archiveBtn = document.createElement("button");
+      archiveBtn.className = "btn btn-light";
+      archiveBtn.textContent = (proj && proj.archived) ? "Unarchive project" : "Archive project (completed)";
+      archiveBtn.addEventListener("click", async (e)=>{
+        e.stopPropagation();
+        const willArchive = !(proj && proj.archived);
+        if(willArchive){
+          if(!(await confirmDelete(`Archive "${proj ? proj.name : "this project"}"? It'll move out of the Active list — nothing is deleted, and you can unarchive it any time from the Archived view.`))) return;
+        }
+        archiveBtn.disabled = true;
+        try{
+          await updateDoc(doc(db,"projects",pid), willArchive
+            ? { archived:true, archivedAt: serverTimestamp(), archivedBy: currentUser.email||null }
+            : { archived:false, archivedAt:null, archivedBy:null });
+        }catch(err){
+          console.error(err);
+          alert("Could not update this project. Check your connection and try again.");
+          archiveBtn.disabled = false;
+        }
+      });
+      extraButtons.push(archiveBtn);
+    }
+
     if(actionsRow){
-      actionsRow.appendChild(btn);
+      extraButtons.forEach(b=> actionsRow.appendChild(b));
     } else {
       const wrap = document.createElement("div");
       wrap.style.cssText = "margin-top:8px;display:flex;gap:6px;flex-wrap:wrap;";
-      wrap.appendChild(btn);
+      extraButtons.forEach(b=> wrap.appendChild(b));
       const cardBody = card.querySelector(".card-body");
       if(cardBody) cardBody.appendChild(wrap);
     }
