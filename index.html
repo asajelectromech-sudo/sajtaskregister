@@ -3855,9 +3855,19 @@ async function downloadFullProjectExcel(projectId, btn){
     const taskRows = [["#", ...projectColumns.map(c=>c.label), "Status"]];
     tasks.forEach((t,i)=> taskRows.push([i+1, ...projectColumns.map(c=> String(getProjectTaskValue(t,c) ?? "")), t.status||"pending"]));
 
-    const { jobs } = await fetchProjectProgressData(projectId);
+    const { treeNodes, jobs } = await fetchProjectProgressData(projectId);
+    // Sort jobs into the same order as the location tree itself (each item,
+    // then its sub-items, in the order they appear in Customize) instead of
+    // Firestore's arbitrary return order, then by job name within a unit.
+    const treeOrderIndexXl = {};
+    prFlattenTreeNodes(treeNodes).forEach((u,idx)=>{ treeOrderIndexXl[u.unitPath] = idx; });
+    const sortedJobs = jobs.slice().sort((a,b)=>{
+      const ai = treeOrderIndexXl[a.unitPath] ?? Infinity, bi = treeOrderIndexXl[b.unitPath] ?? Infinity;
+      if(ai !== bi) return ai - bi;
+      return String(a.jobLabel||"").localeCompare(String(b.jobLabel||""));
+    });
     const jobRows = [["Unit","Job","Status","Assigned/Current Staff","Note","Extra Details","Completed By","Completed At"]];
-    jobs.forEach(j=> jobRows.push([
+    sortedJobs.forEach(j=> jobRows.push([
       j.unitLabel||"", j.jobLabel||"", prJobStatusLabel(j),
       j.completedStaff || j.currentStaff || j.assignedStaff || "",
       j.currentNote || j.completedNote || "",
@@ -6409,7 +6419,7 @@ function prPathLabels(path){
 // leafLabel} — every node at every depth, with its full "Building / Floor /
 // Unit" label — used by the job-sharing picker (copy a job set onto other
 // units) and by the Completion Report's item filter dropdown.
-function prFlattenTree(){
+function prFlattenTreeNodes(treeNodes){
   const out = [];
   function walk(nodes, path, labels, depth){
     (nodes||[]).forEach(n=>{
@@ -6419,8 +6429,11 @@ function prFlattenTree(){
       walk(n.children||[], p, l, depth+1);
     });
   }
-  walk((prTreeDoc && prTreeDoc.nodes) || [], [], [], 0);
+  walk(treeNodes || [], [], [], 0);
   return out;
+}
+function prFlattenTree(){
+  return prFlattenTreeNodes((prTreeDoc && prTreeDoc.nodes) || []);
 }
 
 // ---------- ENTRY POINTS ----------
@@ -7802,37 +7815,78 @@ function prDownloadPdf(){
     return curY + lineH;
   }
 
-  locPaths.forEach(path=>{
+  locPaths.forEach((path, locIdx)=>{
     const u = byLoc[path];
-    if(y > 740){ pdf.addPage(); y = 50; }
+    if(y > 720){ pdf.addPage(); y = 50; }
+    if(locIdx > 0){
+      pdf.setDrawColor("#d0d0d0");
+      pdf.line(margin, y, margin+515, y);
+      y += 14;
+    }
     pdf.setFontSize(12);
+    pdf.setFont(undefined, "bold");
     const wrappedTitle = pdf.splitTextToSize(u.label, 515);
     pdf.text(wrappedTitle, margin, y);
-    y += lineHeight * wrappedTitle.length;
-    pdf.setFontSize(9);
-    u.jobs.forEach(j=>{
-      const statusLabel = j.status==="done" ? "Completed" : j.status==="submitted" ? "Awaiting approval" : j.status==="in_progress" ? "In progress" : "Pending";
-      const statusColors = PR_PDF_STATUS_COLORS[j.status] || PR_PDF_STATUS_COLORS.pending;
-      let trailing = "";
-      if(j.rating) trailing += ` — Rating ${Number(j.rating)}/5`;
-      if(j.status==="done") trailing += ` (by ${j.completedStaff||""}, ${fmtDate(j.completedAt)})`;
-      else if(j.currentStaff) trailing += ` (last: ${j.currentStaff})`;
-      pdf.setFontSize(9);
-      const segments = [
-        { text: "- " },
-        { text: j.jobLabel, highlight: "#fff59d", bold: true },
-        { text: ": " },
-        { text: statusLabel, highlight: statusColors.bg, color: statusColors.text, bold: true }
-      ];
-      if(trailing) segments.push({ text: trailing });
-      y = prPdfDrawSegments(segments, margin+10, y, 490, lineHeight);
+    pdf.setFont(undefined, "normal");
+    y += lineHeight * wrappedTitle.length + 4;
 
-      // In Progress, Awaiting Approval and Completed jobs also get their full day-by-day
-      // history printed underneath — date, who, and the note for each entry
-      // — so this doubles as a proper work report for the staff group
-      // instead of just a status snapshot.
-      if((j.status==="in_progress" || j.status==="submitted" || j.status==="done") && j.logs && j.logs.length){
-        pdf.setFontSize(8);
+    u.jobs.forEach(j=>{
+      const statusLabel = j.status==="done" ? "COMPLETED" : j.status==="submitted" ? "AWAITING APPROVAL" : j.status==="in_progress" ? "IN PROGRESS" : "PENDING";
+      const statusColors = PR_PDF_STATUS_COLORS[j.status] || PR_PDF_STATUS_COLORS.pending;
+      if(y > 760){ pdf.addPage(); y = 50; }
+
+      // Job name (left) and status (right), clearly separated instead of
+      // run together in one wrapped line, so the job and its state are
+      // each easy to spot at a glance.
+      pdf.setFontSize(10.5);
+      pdf.setFont(undefined, "bold");
+      pdf.setTextColor("#111111");
+      const wrappedJob = pdf.splitTextToSize(j.jobLabel, 340);
+      pdf.text(wrappedJob, margin+12, y);
+      pdf.setTextColor(statusColors.text);
+      pdf.text(statusLabel, margin+525-pdf.getTextWidth(statusLabel), y, {align:"left"});
+      pdf.setTextColor("#111111");
+      pdf.setFont(undefined, "normal");
+      y += lineHeight * wrappedJob.length;
+
+      // One clean detail line: who + when, kept separate from the job/status
+      // line so nothing has to wrap around a colored badge.
+      const detailBits = [];
+      if(j.status==="done") detailBits.push(`By ${j.completedStaff||"-"} on ${fmtDate(j.completedAt)}`);
+      else if(j.currentStaff) detailBits.push(`Last by ${j.currentStaff}`);
+      if(j.rating) detailBits.push(`Rating ${Number(j.rating)}/5`);
+      if(detailBits.length){
+        pdf.setFontSize(9);
+        pdf.setTextColor("#555555");
+        const wrappedDetail = pdf.splitTextToSize(detailBits.join("   |   "), 500);
+        pdf.text(wrappedDetail, margin+22, y);
+        pdf.setTextColor("#111111");
+        y += lineHeight * wrappedDetail.length * 0.8;
+      }
+
+      // Extra (custom) fields the admin added for this job, e.g. Unit
+      // capacity / Unit model, each on its own short "Label: value" line.
+      const extraPairsPdf = prExtrasPairs(j);
+      if(extraPairsPdf.length){
+        pdf.setFontSize(9);
+        pdf.setTextColor("#1d4ed8");
+        extraPairsPdf.forEach(ex=>{
+          const wrappedEx = pdf.splitTextToSize(`${ex.label}: ${ex.value}`, 490);
+          if(y > 780){ pdf.addPage(); y = 50; }
+          pdf.text(wrappedEx, margin+22, y);
+          y += lineHeight * 0.8 * wrappedEx.length;
+        });
+        pdf.setTextColor("#111111");
+      }
+
+      // Day-by-day history for every job that has any, regardless of
+      // status — a Pending or In Progress job can still carry earlier
+      // entries (e.g. it was rejected back from Awaiting Approval), so
+      // this is no longer limited to In Progress / Awaiting / Completed
+      // only. This is what makes the PDF a real standalone work record.
+      if(j.logs && j.logs.length){
+        pdf.setFontSize(8.5);
+        pdf.setTextColor("#333333");
         const historyEntries = j.logs.slice().reverse(); // newest first, matching the on-screen History list
         historyEntries.forEach(l=>{
           let hLine = `${l.date||""} - ${l.staffName||""}`;
@@ -7842,10 +7896,11 @@ function prDownloadPdf(){
           if(l.rejected) hLine += " (Rejected)";
           if(l.adminClosed) hLine += " (Closed by admin)";
           if(l.note) hLine += `: ${l.note}`;
-          const wrappedH = pdf.splitTextToSize(hLine, 480);
-          if(y > 775){ pdf.addPage(); y = 50; }
-          pdf.text(wrappedH, margin+22, y);
-          y += lineHeight * wrappedH.length;
+          if(Array.isArray(l.extras) && l.extras.length) hLine += ` [${l.extras.map(e=> `${e.label}: ${e.value}`).join(", ")}]`;
+          const wrappedH = pdf.splitTextToSize(hLine, 470);
+          if(y > 778){ pdf.addPage(); y = 50; }
+          pdf.text(wrappedH, margin+32, y);
+          y += lineHeight * 0.8 * wrappedH.length;
 
           // Before/after-style evidence photos attached to this entry (see
           // the "photo required" job setting) get embedded right under
@@ -7855,14 +7910,16 @@ function prDownloadPdf(){
           if(l.photo){
             const imgSize = 70;
             if(y + imgSize > 780){ pdf.addPage(); y = 50; }
-            try{ pdf.addImage(l.photo, "JPEG", margin+22, y, imgSize, imgSize); }catch(e){ /* skip a malformed image rather than fail the whole export */ }
+            try{ pdf.addImage(l.photo, "JPEG", margin+32, y, imgSize, imgSize); }catch(e){ /* skip a malformed image rather than fail the whole export */ }
             y += imgSize + 8;
           }
         });
+        pdf.setTextColor("#111111");
         pdf.setFontSize(9);
       }
+      y += 8;
     });
-    y += 10;
+    y += 8;
   });
 
   const filename = `SAJ_Progress_Report_${sanitizeForFilename(prCurrentProjectName)}_${fmtDateOnly()}.pdf`;
