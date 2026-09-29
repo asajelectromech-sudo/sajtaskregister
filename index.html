@@ -3695,35 +3695,86 @@ function downloadProjectPdf(projectId, taskIdsFilter){
   const { jsPDF } = window.jspdf;
   const pdf = new jsPDF({unit:"pt",format:"a4"});
   const margin=40;
-  let y=50;
-  const lineHeight=16;
-  pdf.setFontSize(18);
-  pdf.text("SAJ Project Report", margin, y);
-  y+=28;
-  pdf.setFontSize(12);
-  pdf.text(`Project: ${p.name||""}`, margin, y);
-  y+=18;
-  pdf.text(`Status: ${p.status === "approved" ? "Approved" : "Pending admin approval"}`, margin, y);
-  y+=18;
-  pdf.text(`Created by: ${p.createdByName || p.createdBy || "User"}`, margin, y);
-  y+=18;
-  pdf.text(`Created: ${fmtDate(p.createdAt)}`, margin, y);
-  y+=28;
-  pdf.setFontSize(13);
-  pdf.text(isFiltered ? `Selected Tasks (${tasks.length})` : "Tasks", margin, y);
+  const pageW=595.28, pageH=841.89;
+  const contentW=pageW-margin*2;
+  let y=54;
+  const lineHeight=13;
+
+  // Overall status is computed from the tasks actually in THIS report, not
+  // from the project's own (often stale) status field — a project stays
+  // "pending" at the project level even after every task in it has been
+  // individually approved, which used to make the header say "Pending
+  // admin approval" right above a task that clearly says "Approved".
+  const approvedCount = tasks.filter(t=>t.status==="approved").length;
+  const total = tasks.length;
+  let overallStatus, overallFill, overallText;
+  if(total===0){ overallStatus="No tasks"; overallFill=[238,237,232]; overallText=[85,84,79]; }
+  else if(approvedCount===total){ overallStatus="Approved"; overallFill=[200,236,192]; overallText=[39,80,10]; }
+  else if(approvedCount>0){ overallStatus=`In progress (${approvedCount} of ${total} approved)`; overallFill=[253,229,176]; overallText=[107,68,0]; }
+  else{ overallStatus="Pending admin approval"; overallFill=[214,230,250]; overallText=[12,68,124]; }
+
+  function statusPill(label, fillRgb, textRgb, x, yTop, fontSize){
+    pdf.setFontSize(fontSize);
+    pdf.setFont(undefined,"bold");
+    const w = pdf.getTextWidth(label) + 18;
+    pdf.setFillColor(...fillRgb);
+    pdf.roundedRect(x, yTop-fontSize+2, w, fontSize+7, 6, 6, "F");
+    pdf.setTextColor(...textRgb);
+    pdf.text(label, x+9, yTop+1);
+    pdf.setTextColor(20,20,20);
+    pdf.setFont(undefined,"normal");
+    return w;
+  }
+
+  pdf.setFontSize(8);
+  pdf.setTextColor(138,137,131);
+  pdf.text("SAJ ELECTROMECH  |  PROJECT REPORT", margin, y);
+  pdf.setTextColor(20,20,20);
   y+=20;
-  pdf.setFontSize(10);
+  pdf.setFontSize(18);
+  pdf.setFont(undefined,"bold");
+  pdf.text(p.name||"", margin, y);
+  pdf.setFont(undefined,"normal");
+  y+=14;
+  pdf.setDrawColor(217,216,210);
+  pdf.line(margin,y,pageW-margin,y);
+  y+=26;
+
+  // Status summary card
+  pdf.setFillColor(...overallFill.map(c=>Math.round(c+(255-c)*0.55)));
+  pdf.roundedRect(margin, y-16, contentW, 44, 6, 6, "F");
+  statusPill(overallStatus.toUpperCase(), overallFill, overallText, margin+16, y+6, 10);
+  y+=44;
+  pdf.setFontSize(9);
+  pdf.setTextColor(138,137,131);
+  pdf.text("Created by", margin, y);
+  pdf.text(`${isFiltered ? "Selected tasks" : "Tasks"} in this report`, margin+260, y);
+  y+=13;
+  pdf.setFontSize(9.5);
+  pdf.setTextColor(20,20,20);
+  pdf.text(p.createdByName || p.createdBy || "User", margin, y);
+  pdf.text(String(total), margin+260, y);
+  y+=26;
+
+  pdf.setFontSize(11);
+  pdf.setFont(undefined,"bold");
+  pdf.text("Task details", margin, y);
+  pdf.setFont(undefined,"normal");
+  y+=6;
+  pdf.setDrawColor(217,216,210);
+  pdf.line(margin,y,pageW-margin,y);
+  y+=18;
+
   if(!tasks.length){
+    pdf.setFontSize(10);
     pdf.text("No tasks added.", margin, y);
   }else{
     tasks.forEach((t,i)=>{
-      const rows=[`${i+1}.`];
+      const rows=[];
       projectColumns.forEach(c=>{
         const v=getProjectTaskValue(t,c);
         rows.push(`${c.label}: ${v || (c.key === "staffName" ? "Not assigned" : "")}`);
       });
-      const statusLabel = t.status === "approved" ? "Approved" : (t.status === "rejected" ? "Rejected" : "Pending admin approval");
-      rows.push(`Status: ${statusLabel}`);
       // Only report a completion time once Job Details has actually been
       // filled in — otherwise it's just the assignment/creation time.
       const staffColsPdf = projectColumns.filter(c=>c.filledBy==="staff");
@@ -3735,16 +3786,47 @@ function downloadProjectPdf(projectId, taskIdsFilter){
         t.resubmissions.forEach((ts,idx)=> rows.push(`Resubmitted${t.resubmissions.length>1?` (${idx+1})`:""}: ${fmtDate(ts)}`));
       }
       if(t.status === "approved" && t.rating) rows.push(`Rating: ${t.rating}/5`);
-      rows.forEach(row=>{
-        const wrapped=pdf.splitTextToSize(row, 515);
-        if(y > 760){ pdf.addPage(); y=50; }
-        pdf.text(wrapped, margin, y);
-        y += lineHeight * wrapped.length;
+
+      pdf.setFontSize(9.5);
+      const wrapped = rows.map(r=>pdf.splitTextToSize(r, contentW-24));
+      const bodyLines = wrapped.reduce((n,w)=>n+w.length,0);
+      const cardH = 26 + bodyLines*lineHeight + 10;
+      if(y + cardH > pageH-50){ pdf.addPage(); y=50; }
+
+      const cardTop=y;
+      pdf.setDrawColor(217,216,210);
+      pdf.setFillColor(255,255,255);
+      pdf.roundedRect(margin, cardTop, contentW, cardH, 6, 6, "FD");
+      const taskFill = t.status==="approved" ? [12,163,12] : t.status==="rejected" ? [208,59,59] : [42,120,214];
+      pdf.setFillColor(...taskFill);
+      pdf.rect(margin, cardTop, 4, cardH, "F");
+
+      let ty=cardTop+20;
+      pdf.setFontSize(11);
+      pdf.setFont(undefined,"bold");
+      const titleText = getProjectTaskValue(t, projectColumns.find(c=>c.key==="jobDetails")||{}) || `Task ${i+1}`;
+      pdf.text(`${i+1}. ${titleText}`, margin+16, ty);
+      const label = t.status === "approved" ? "Approved" : (t.status === "rejected" ? "Rejected" : "Pending admin approval");
+      const fill = t.status==="approved" ? [200,236,192] : t.status==="rejected" ? [249,212,212] : [214,230,250];
+      const txt = t.status==="approved" ? [39,80,10] : t.status==="rejected" ? [138,28,28] : [12,68,124];
+      statusPill(label, fill, txt, pageW-margin-16-(pdf.getTextWidth(label)+18), ty, 8.5);
+      pdf.setFont(undefined,"normal");
+      ty+=10;
+      pdf.setDrawColor(217,216,210);
+      pdf.line(margin+16, ty, pageW-margin-16, ty);
+      ty+=14;
+
+      pdf.setFontSize(9.5);
+      pdf.setTextColor(20,20,20);
+      wrapped.forEach(w=>{
+        pdf.text(w, margin+16, ty);
+        ty += lineHeight*w.length;
       });
-      y+=8;
+      y = cardTop + cardH + 12;
     });
   }
-  const filename=`SAJ_Project_Report_${sanitizeForFilename(p.name)}${isFiltered ? "_selected" : ""}_${fmtDateOnly(p.createdAt)}.pdf`;
+
+  const filename=`SAJ_Project_Report_${sanitizeForFilename(p.name)}${isFiltered ? "_selected" : ""}_${fmtDateOnly(new Date())}.pdf`;
   pdf.save(filename);
 }
 
@@ -7701,251 +7783,228 @@ function prReportBindFilterControls(box){
 // itemized list, same as on screen).
 function prDownloadPdf(){
   if(!isAdmin && !isAuthorizedStaffVerified) return;
-  // ---- helpers ----
-  const MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
-  const now=new Date();
-  const dateStr=`${String(now.getDate()).padStart(2,"0")} ${MON[now.getMonth()]} ${now.getFullYear()}`;
-  const toDate=ts=> ts ? (ts.toDate ? ts.toDate() : new Date(ts)) : null;
-  const shortDate=d=> d && !isNaN(d) ? `${d.getDate()} ${MON[d.getMonth()]}` : "";
-  const dayStart=d=> new Date(d.getFullYear(),d.getMonth(),d.getDate()).getTime();
-  const daysSince=d=> d && !isNaN(d) ? Math.max(0,Math.round((dayStart(now)-dayStart(d))/864e5)) : 0;
-  const ACR=new Set(["CDP","GI","DB","AHU","FAHU","VRV","DX","FCU","AC","MCB"]);
-  const sentence=s=>{
-    const w=String(s||"").trim().replace(/\.+$/,"").split(/\s+/).filter(Boolean).map(x=> ACR.has(x.toUpperCase()) ? x.toUpperCase() : x.toLowerCase());
-    if(w.length) w[0]=w[0].charAt(0).toUpperCase()+w[0].slice(1);
-    return w.join(" ");
-  };
-  const nice=s=> String(s||"").split(/(\s+)/).map(w=> (w.length>4 && w===w.toUpperCase() && /[A-Z]/.test(w)) ? w.charAt(0)+w.slice(1).toLowerCase() : w).join("");
-  const person=s=> String(s||"").replace(/\S+/g,w=> w.charAt(0).toUpperCase()+w.slice(1).toLowerCase());
-  const typeOf=l=> /\bFAHU\b/i.test(l) ? "FAHU" : /\bAHU\b/i.test(l) ? "AHU" : /VRV/i.test(l) ? "VRV FCU" : /\bDX\b/i.test(l) ? "DX FCU" : "Other";
-  const TYPES=["AHU","FAHU","VRV FCU","DX FCU","Other"];
-  const pct=(n,t)=> t ? Math.round(n/t*100) : 0;
-  const stOf=j=> j.status==="done" ? "done" : j.status==="submitted" ? "sub" : j.status==="in_progress" ? (j.rejectionNote ? "redo" : "started") : "todo";
-  const project=prCurrentProjectName||"Project";
-  const tally=list=>{
-    const r={t:list.length,done:0,sub:0,redo:0,started:0,todo:0};
-    list.forEach(j=>{ r[stOf(j)]++; });
-    r.prog=r.redo+r.started; r.pct=pct(r.done,r.t); return r;
-  };
-
-  // ---- data ----
-  const allItems=prFlattenTree(); const order={}; allItems.forEach((u,i)=>{ order[u.unitPath]=i; });
-  const jobs=prJobsInItemScope(prJobs).filter(prJobDateInScope);
-  const units={};
-  jobs.forEach(j=>{
-    const k=j.unitPath||j.unitLabel||"?";
-    if(!units[k]){
-      const label=j.unitLabel||k; const parts=label.split(/\s*\/\s*/); const type=typeOf(label);
-      const leaf=parts[parts.length-1]; const building=parts[0];
-      units[k]={ path:k, label, parts, leaf, building, type, jobs:[],
-        group: type==="FAHU" ? "All buildings FAHU" : nice(parts.length>1 ? parts.slice(0,-1).join(" ") : parts[0]),
-        col: type==="FAHU" ? `${building} ${leaf}` : leaf };
-    }
-    units[k].jobs.push(j);
+  const statusFilterLabel = prReportFilter.size===0 ? "All" : PR_FILTERS.filter(f=> prReportFilter.has(f.key)).map(f=> f.label).join(", ");
+  const ratingFilterLabel = prReportRatingFilter > 0 ? `${prReportRatingFilter}/5 stars` : "All ratings";
+  const allItems = prFlattenTree();
+  const pickedLabels = allItems.filter(u=> prReportItemFilters.has(u.unitPath)).map(u=> u.leafLabel);
+  const itemFilterLabel = pickedLabels.join(", ");
+  const dateFilterLabel = (prReportDateFrom || prReportDateTo)
+    ? `${prReportDateFrom || "the start"} to ${prReportDateTo || "now"}`
+    : "";
+  const scopedJobs = prJobsInItemScope(prJobs).filter(prJobDateInScope);
+  const filteredJobs = prFilteredJobs();
+  const byLoc = {};
+  filteredJobs.forEach(j=>{
+    if(!byLoc[j.unitPath]) byLoc[j.unitPath] = { label: j.unitLabel || j.unitPath, jobs: [] };
+    byLoc[j.unitPath].jobs.push(j);
   });
-  const unitList=Object.values(units).sort((a,b)=> (order[a.path]??1e9)-(order[b.path]??1e9));
-  const buildings=[]; unitList.forEach(u=>{ if(!buildings.includes(u.building)) buildings.push(u.building); });
-  const groups=[]; unitList.forEach(u=>{ let g=groups.find(x=>x.name===u.group); if(!g){ g={name:u.group,units:[]}; groups.push(g); } g.units.push(u); });
-  groups.sort((a,b)=> (a.name==="All buildings FAHU"?1:0)-(b.name==="All buildings FAHU"?1:0));
-  const P=tally(jobs);
-  const uShort=j=> (j.unitLabel||"").split(/\s*\/\s*/).filter(p=>!/^rooftop$/i.test(p)).join(" / ");
+  // Same tree-order sort as the on-screen report, so the PDF lists items in
+  // the same first-item-then-its-first-sub-item order, not Firestore's
+  // arbitrary return order.
+  const treeOrderIndex = {};
+  allItems.forEach((u,idx)=>{ treeOrderIndex[u.unitPath] = idx; });
+  const locPaths = Object.keys(byLoc).sort((a,b)=> (treeOrderIndex[a] ?? Infinity) - (treeOrderIndex[b] ?? Infinity));
+  const totalJobs = scopedJobs.length;
+  const doneN = scopedJobs.filter(j=> j.status==="done").length;
+  const submittedN = scopedJobs.filter(j=> j.status==="submitted").length;
+  const progressN = scopedJobs.filter(j=> j.status==="in_progress").length;
+  const pendingN = scopedJobs.filter(j=> j.status==="pending").length;
+  const pct = n=> totalJobs ? Math.round((n/totalJobs)*100) : 0;
 
-  // ---- pdf setup ----
-  const { jsPDF }=window.jspdf; const pdf=new jsPDF({unit:"pt",format:"a4"});
-  const M=40, W=515, TOP=92, BOT=795;
-  const INK="#1a1a1a", MUTED="#777777", GREEN="#15a30f", BLUE="#2b6fd6", AMBER="#f2a900", RED="#d32f2f", GRAY="#d4d4cd", GRAYL="#ebeae4", PANEL="#f4f3ee";
-  const COL={done:GREEN,sub:BLUE,started:AMBER,redo:RED,todo:GRAY};
-  const metas=[]; let y=TOP;
-  const newPage=m=>{ if(metas.length) pdf.addPage(); metas.push(m); y=TOP; return m; };
-  const T=(s,x,yy,o={})=>{ pdf.setFont("helvetica",o.b?"bold":"normal"); pdf.setFontSize(o.s||9); pdf.setTextColor(o.c||INK); pdf.text(String(s),x,yy,o.a?{align:o.a}:undefined); };
-  const H=s=>{ T(s,M,y,{b:1,s:11}); pdf.setDrawColor("#dddddd"); pdf.setLineWidth(0.5); pdf.line(M,y+5,M+W,y+5); y+=20; };
-  const stack=(x,yy,w,h,c)=>{
-    pdf.setFillColor(GRAY); pdf.rect(x,yy,w,h,"F");
-    let cx=x; [[c.done,GREEN],[c.sub,BLUE],[c.prog,AMBER]].forEach(([n,col])=>{
-      const sw=c.t ? w*n/c.t : 0; if(sw>0){ pdf.setFillColor(col); pdf.rect(cx,yy,sw,h,"F"); cx+=sw; }
-    });
-  };
-  const pill=(x,yy,s,fill,col)=>{ pdf.setFont("helvetica","bold"); pdf.setFontSize(8); const w=pdf.getTextWidth(s)+14; pdf.setFillColor(fill); pdf.roundedRect(x,yy,w,14,7,7,"F"); T(s,x+7,yy+10,{b:1,s:8,c:col}); return x+w+8; };
-  const cell=(x,yy,w,h,k)=>{
-    if(k==="na"){ pdf.setDrawColor("#c9c9c2"); pdf.setLineWidth(0.5); pdf.setLineDashPattern([1.5,1.5],0); pdf.roundedRect(x,yy,w,h,2,2,"S"); pdf.setLineDashPattern([],0); return; }
-    pdf.setFillColor(COL[k]); pdf.roundedRect(x,yy,w,h,2,2,"F");
-    const l={sub:"A",started:"S",redo:"R"}[k]; if(l) T(l,x+w/2,yy+h-2.5,{b:1,s:6.5,c:"#ffffff",a:"center"});
-  };
-  const ensure=(h,meta)=>{ if(y+h>BOT){ newPage(meta); return true; } return false; };
-
-  // ================= PAGE 1: management summary =================
-  const filt=[];
-  const picked=allItems.filter(u=>prReportItemFilters.has(u.unitPath)).map(u=>u.leafLabel);
-  if(picked.length) filt.push(`Item(s): ${picked.join(", ")}`);
-  if(prReportDateFrom||prReportDateTo) filt.push(`Date: ${prReportDateFrom||"start"} to ${prReportDateTo||"now"}`);
-  newPage({kind:"A",big:project,r1:`Status as of ${dateStr}`,r2:"Management summary"});
-  if(filt.length){ T("Filtered - "+filt.join("  |  "),M,y-12,{s:7.5,c:MUTED}); }
-  { const cx=M+52, cy=y+52, r=40;
-    pdf.setLineWidth(14); pdf.setDrawColor(GRAYL); pdf.circle(cx,cy,r,"S");
-    if(P.done>0){ pdf.setDrawColor(GREEN); const a1=P.done/P.t*360; const pt=k=>[cx+r*Math.sin(k*Math.PI/180),cy-r*Math.cos(k*Math.PI/180)];
-      for(let a=0;a<a1;a+=2){ const s=pt(a), e=pt(Math.min(a+2.6,a1)); pdf.line(s[0],s[1],e[0],e[1]); } }
-    pdf.setLineWidth(0.5);
-    T(P.pct+"%",cx,cy+4,{b:1,s:19,a:"center"}); T("complete",cx,cy+15,{s:7,c:MUTED,a:"center"});
-    const tiles=[["Completed",GREEN,P.done,`${P.pct}% of ${P.t} jobs`],["Awaiting approval",BLUE,P.sub,`${pct(P.sub,P.t)}%  |  needs your review`],
-      ["In progress",AMBER,P.prog,`${P.redo} rejected, ${P.started} started`],["Not started",GRAY,P.todo,`${pct(P.todo,P.t)}% of all jobs`]];
-    tiles.forEach((t,i)=>{ const x=M+130+(i%2)*190, yy=y+(i>>1)*62;
-      pdf.setFillColor(PANEL); pdf.roundedRect(x,yy,180,52,4,4,"F");
-      pdf.setFillColor(t[1]); pdf.rect(x+9,yy+9,6,6,"F"); T(t[0],x+19,yy+15,{s:7.5,c:"#444444"});
-      T(t[2],x+9,yy+36,{b:1,s:19}); T(t[3],x+9,yy+47,{s:6.5,c:MUTED}); });
-    y+=124; stack(M,y,W,10,P); y+=36; }
-  H("Progress by building");
-  const bStats=buildings.map(b=>({name:b,...tally(unitList.filter(u=>u.building===b).flatMap(u=>u.jobs))}));
-  bStats.forEach(b=>{ T(b.name,M,y,{b:1,s:10}); stack(M+70,y-8,260,10,b); T(b.pct+"%",M+390,y,{b:1,s:11,a:"right"}); T(`${b.done} of ${b.t} jobs`,M+W,y,{s:8,c:MUTED,a:"right"}); y+=22; });
-  y+=10; H("Needs management attention");
-  { let x=M; if(P.sub) x=pill(x,y-4,`${P.sub} jobs awaiting approval`,"#dbe7fb","#1d4ed8");
-    if(P.redo) x=pill(x,y-4,`${P.redo} jobs rejected, need rework`,"#fdeec8","#92610a");
-    const subs0=jobs.filter(j=>stOf(j)==="sub"); const oldest=subs0.length ? Math.max(...subs0.map(j=>daysSince(toDate(j.submittedAt||j.updatedAt||j.createdAt)))) : 0;
-    if(subs0.length) x=pill(x,y-4,`Oldest waiting: ${oldest} days`,"#f9d7d7","#b91c1c");
-    if(!P.sub && !P.redo) T("Nothing needs attention right now.",M,y+6,{s:9,c:MUTED});
-    y+=30; }
-  H("Key findings");
-  const F=[];
-  if(bStats.length>1){ const lo=[...bStats].sort((a,b)=>a.pct-b.pct)[0], hi=[...bStats].sort((a,b)=>b.pct-a.pct)[0];
-    if(lo.pct!==hi.pct) F.push(`${lo.name} is the furthest behind at ${lo.pct}% complete; ${hi.name} leads at ${hi.pct}%.`); }
-  const tStats=TYPES.map(t=>{ const us=unitList.filter(u=>u.type===t); const c=tally(us.flatMap(u=>u.jobs)); return {name:t,units:us,...c}; }).filter(t=>t.t>0);
-  tStats.forEach(t=>{
-    if(t.done===0 && t.sub+t.prog===0){ const bl=[...new Set(t.units.map(u=>u.building))]; F.push(`${t.name} units (${bl.join(" and ")}, ${t.t} jobs) have not started.`); }
-    else if(t.pct<10) F.push(`${t.name} is at ${t.pct}%.`); });
-  { const best=[...tStats].sort((a,b)=>b.pct-a.pct)[0];
-    if(best && best.pct>=50) F.push(`${best.name} work is progressing well at ${best.pct}%${best.done>P.done/2 ? " and drives most of the completed jobs" : ""}.`); }
-  if(P.sub){ const top=[...bStats].map(b=>({n:b.name,c:b.sub})).sort((a,b)=>b.c-a.c)[0];
-    F.push(`${top.c===P.sub ? `All ${P.sub}` : `${top.c} of the ${P.sub}`} approvals waiting are in ${top.n}. Approving them moves the total from ${P.pct}% to ${pct(P.done+P.sub,P.t)}%.`); }
-  F.forEach(f=>{ const ls=(pdf.setFont("helvetica","normal"),pdf.setFontSize(9),pdf.splitTextToSize(f,W-14)); pdf.setFillColor(INK); pdf.circle(M+3,y-3,1.3,"F"); T(ls.join("\n"),M+14,y,{s:9}); y+=ls.length*11+7; });
-
-  // ================= PAGE 2: where the work stands =================
-  newPage({kind:"A",big:project,r1:`Status as of ${dateStr}`,r2:"Where the work stands"});
-  H("Progress by equipment type");
-  tStats.forEach(t=>{ T(t.name,M,y,{b:1,s:10}); stack(M+70,y-8,260,10,t); T(t.pct+"%",M+390,y,{b:1,s:11,a:"right"}); T(`${t.done} of ${t.t} jobs`,M+W,y,{s:8,c:MUTED,a:"right"}); y+=22; });
-  y+=10; H("Building by equipment type (jobs done / total)");
-  { const lw=80, cw=(W-lw)/Math.max(1,tStats.length);
-    pdf.setFillColor(PANEL); pdf.rect(M,y-10,W,16,"F"); T("",M,y);
-    tStats.forEach((t,i)=>T(t.name,M+lw+i*cw+cw/2,y+1,{b:1,s:8.5,a:"center"})); y+=20;
-    buildings.forEach(b=>{ T(b,M+4,y+6,{b:1,s:10});
-      tStats.forEach((t,i)=>{ const us=unitList.filter(u=>u.building===b && u.type===t.name); const c=tally(us.flatMap(u=>u.jobs)); const cx=M+lw+i*cw+cw/2;
-        if(!c.t) T("-",cx,y+8,{s:9,c:MUTED,a:"center"}); else { T(`${c.done} / ${c.t}`,cx,y+4,{b:1,s:8.5,a:"center"}); T(c.pct+"%",cx,y+14,{s:7.5,c:MUTED,a:"center"}); } });
-      pdf.setDrawColor("#e3e3dd"); pdf.line(M,y+20,M+W,y+20); y+=26; }); }
-  y+=12; H("Progress by work stage (all buildings)");
-  { const st={}; jobs.forEach(j=>{ const n=sentence(j.jobLabel); (st[n]=st[n]||[]).push(j); });
-    Object.entries(st).map(([n,l])=>({n,...tally(l)})).sort((a,b)=>b.pct-a.pct).forEach(s=>{
-      ensure(18,{kind:"A",big:project,r1:`Status as of ${dateStr}`,r2:"Where the work stands"});
-      T(s.n,M,y,{s:8.5}); stack(M+250,y-7,170,8,s); T(s.pct+"%",M+450,y,{b:1,s:9,a:"right"}); T(`${s.done}/${s.t}`,M+W,y,{s:8,c:MUTED,a:"right"}); y+=16; }); }
-
-  // ================= MATRIX =================
-  const mMeta={kind:"B",big:"Progress matrix",r1:`${project} | ${dateStr}`,r2:"Part 1 | units across, jobs down"};
-  const legend=()=>{ let x=M; [["done","Completed"],["sub","Awaiting approval"],["started","Started"],["redo","Redo (rejected)"],["todo","Not started"],["na","Not applicable"]].forEach(([k,l])=>{
-    cell(x,y-8,16,9,k); T(l,x+21,y,{s:7.5,c:"#444444"}); pdf.setFontSize(7.5); x+=21+pdf.getTextWidth(l)+14; }); y+=18; };
-  if(groups.length){ newPage(mMeta); legend(); }
-  groups.forEach(g=>{
-    const cols=g.units, n=cols.length; const labelW=190, doneW=28;
-    const cw=Math.min(40,(W-labelW-doneW-6)/n);
-    const rowsMap={}; cols.forEach((u,ci)=>u.jobs.forEach(j=>{ const nm=sentence(j.jobLabel); const r=rowsMap[nm]=rowsMap[nm]||{name:nm,cells:new Array(n).fill("na")}; r.cells[ci]=stOf(j); }));
-    const rows=Object.values(rowsMap).map(r=>({...r,done:r.cells.filter(c=>c==="done").length,tot:r.cells.filter(c=>c!=="na").length}));
-    rows.sort((a,b)=>b.done-a.done);
-    pdf.setFont("helvetica","normal"); pdf.setFontSize(6);
-    const hl=cols.map(u=>pdf.splitTextToSize(u.col,80).slice(0,3));
-    const hdrH=Math.min(88,Math.max(...hl.map(ls=>Math.max(...ls.map(l=>pdf.getTextWidth(l)))))+8);
-    const bh=16+6+hdrH+4+rows.length*14+24+14;
-    if(y+bh>BOT){ newPage(mMeta); legend(); }
-    const gt=tally(cols.flatMap(u=>u.jobs));
-    pdf.setFillColor(INK); pdf.rect(M,y,W,16,"F"); T(g.name,M+8,y+11.5,{b:1,s:9.5,c:"#ffffff"});
-    T(`${n} unit${n===1?"":"s"}  |  ${gt.done} of ${gt.t} jobs done (${gt.pct}%)`,M+W-8,y+11,{s:8,c:"#ffffff",a:"right"});
-    y+=22;
-    cols.forEach((u,ci)=>{ const cx=M+labelW+ci*cw+(cw-3)/2; const ls=hl[ci]; ls.forEach((l,li)=>{ T("",0,0); pdf.setFont("helvetica","normal"); pdf.setFontSize(6); pdf.setTextColor("#333333"); pdf.text(l,cx-(ls.length-1)*3.5+li*7+2.2,y+hdrH-2,{angle:90}); }); });
-    T("Done",M+W,y+hdrH+1,{b:1,s:7.5,c:"#555555",a:"right"});
-    y+=hdrH+10;
-    rows.forEach(r=>{ T(r.name,M,y+8,{s:8}); r.cells.forEach((c,ci)=>cell(M+labelW+ci*cw,y,cw-3,10,c)); T(`${r.done}/${r.tot}`,M+W,y+8,{s:8,c:r.done===r.tot?INK:"#444444",a:"right"}); y+=14; });
-    pdf.setDrawColor("#d8d8d2"); pdf.line(M,y+2,M+W,y+2); y+=14;
-    T("Unit total",M,y,{b:1,s:8});
-    cols.forEach((u,ci)=>{ const c=tally(u.jobs); T(`${c.done}/${c.t}`,M+labelW+ci*cw+(cw-3)/2,y,{b:1,s:7.5,a:"center"}); });
-    y+=24;
-  });
-
-  // ================= ACTION LIST =================
-  const aMeta={kind:"B",big:"Action list",r1:`${project} | ${dateStr}`,r2:"Part 2 | approvals, redo and started jobs"};
-  newPage(aMeta);
-  const table=(title,cols,rows,redCol)=>{
-    ensure(50,aMeta); T(title,M,y,{b:1,s:11}); y+=14;
-    if(!rows.length){ T("None.",M,y,{s:8.5,c:MUTED}); y+=22; return; }
-    cols.forEach(c=>T(c.h,c.a==="right"?c.x+c.w:c.x,y,{b:1,s:7.5,c:"#555555",a:c.a})); pdf.setDrawColor("#cfcfc8"); pdf.line(M,y+4,M+W,y+4); y+=15;
-    rows.forEach(r=>{
-      pdf.setFont("helvetica","normal"); pdf.setFontSize(8);
-      const cells=cols.map((c,i)=>pdf.splitTextToSize(String(r[i]??""),c.w));
-      const n=Math.max(...cells.map(c=>c.length)); ensure(n*10+6,aMeta);
-      cols.forEach((c,i)=>{ const hot=redCol===i && Number(r[i])>=7; T(cells[i].join("\n"),c.a==="right"?c.x+c.w:c.x,y,{s:8,b:hot,c:hot?RED:INK,a:c.a}); });
-      y+=n*10+4; pdf.setDrawColor("#eeeeea"); pdf.line(M,y-6,M+W,y-6); });
-    y+=14; };
-  const subs=jobs.filter(j=>stOf(j)==="sub").sort((a,b)=>(toDate(a.submittedAt||a.updatedAt)||0)-(toDate(b.submittedAt||b.updatedAt)||0));
-  table(`Jobs waiting for your approval (${subs.length})`,[{h:"Unit",x:M,w:165},{h:"Job",x:M+170,w:165},{h:"Submitted by",x:M+340,w:95},{h:"Date",x:M+440,w:45},{h:"Days",x:M+490,w:25,a:"right"}],
-    subs.map(j=>{ const d=toDate(j.submittedAt||j.updatedAt||j.createdAt); return [uShort(j),sentence(j.jobLabel),person(j.submittedStaff||j.currentStaff),shortDate(d),daysSince(d)]; }),4);
-  const reds=jobs.filter(j=>stOf(j)==="redo");
-  table(`Rejected, sent back for rework (${reds.length})`,[{h:"Unit",x:M,w:165},{h:"Job",x:M+170,w:150},{h:"Admin note",x:M+325,w:130},{h:"Date",x:M+460,w:55}],
-    reds.map(j=>[uShort(j),sentence(j.jobLabel),j.rejectionNote||"",shortDate(toDate(j.rejectedAt||j.updatedAt))]));
-  const starts=jobs.filter(j=>stOf(j)==="started");
-  table(`Started, not yet submitted (${starts.length})`,[{h:"Unit",x:M,w:230},{h:"Job",x:M+240,w:275}],starts.map(j=>[uShort(j),sentence(j.jobLabel)]));
-  ensure(14,aMeta); T(`Days = days since the job was submitted as completed, counted to ${dateStr}. Red = waiting 7 days or more.`,M,y,{s:7,c:MUTED});
-
-  // ================= STAFF WORK SHEET =================
-  buildings.forEach(b=>{
-    const us=unitList.filter(u=>u.building===b); const bt=tally(us.flatMap(u=>u.jobs));
-    const sMeta={kind:"B",big:"Staff work sheet",r1:`${project} | ${dateStr}`,r2:`Part 3 | Building ${b}, open jobs with history`};
-    newPage(sMeta);
-    const head=()=>{ T(`${b}  |  ${us.length} units  |  ${bt.done} of ${bt.t} jobs done  |  ${bt.t-bt.done} jobs still open`,M,y,{b:1,s:10}); y+=16;
-      let x=M; pdf.setDrawColor("#555555"); pdf.setLineWidth(0.7); pdf.roundedRect(x,y-8,8,8,1.5,1.5,"S"); pdf.setLineWidth(0.5); T("To do",x+12,y-1,{s:7.5}); x+=52;
-      [[AMBER,"Started"],[BLUE,"Submitted, waiting for admin"],[RED,"REDO: sent back"]].forEach(([c,l])=>{ pdf.setFillColor(c); pdf.roundedRect(x,y-8,8,8,1.5,1.5,"F"); T(l,x+12,y-1,{s:7.5}); pdf.setFontSize(7.5); x+=12+pdf.getTextWidth(l)+18; });
-      y+=16; };
-    head();
-    us.forEach(u=>{
-      const open=u.jobs.filter(j=>stOf(j)!=="done"); if(!open.length) return;
-      const special=open.filter(j=>stOf(j)!=="todo"), todo=open.filter(j=>stOf(j)==="todo");
-      const blocks=special.map(j=>{
-        const logs=(j.logs||[]).slice().reverse();
-        const lines=logs.map(l=>{
-          let flag=l.rejected?"Rejected":l.completion?"Submitted as completed":l.approved?"Approved":l.adminClosed?"Closed by admin":"Progress";
-          let s=`${shortDate(l.date?new Date(l.date+"T00:00:00"):toDate(l.savedAt))} ${person(l.staffName)}${l.savedBy?` (${l.savedBy})`:""} | ${flag}${l.note?": "+l.note:""}`;
-          if(Array.isArray(l.extras)&&l.extras.length) s+=` [${l.extras.map(e=>`${e.label}: ${e.value}`).join(", ")}]`;
-          pdf.setFont("helvetica","normal"); pdf.setFontSize(7);
-          return {ls:pdf.splitTextToSize(s,W-14),red:!!l.rejected,photo:l.photo};
-        });
-        return {j,lines};
-      });
-      let bh=24+todo.length/2*12+10; blocks.forEach(bl=>{ bh+=16; bl.lines.forEach(l=>{ bh+=l.ls.length*8.5+(l.photo?66:0); }); });
-      if(y+Math.min(bh,150)>BOT){ newPage(sMeta); T(`${b} (continued)`,M,y,{b:1,s:10}); y+=16; }
-      pdf.setFillColor(PANEL); pdf.rect(M,y-10,W,16,"F"); T(u.label,M+4,y+1,{b:1,s:9}); T(`${u.jobs.filter(j=>stOf(j)==="done").length} of ${u.jobs.length} done`,M+W-4,y+1,{s:8,c:MUTED,a:"right"}); y+=16;
-      blocks.forEach(bl=>{
-        const k=stOf(bl.j); ensure(30,sMeta);
-        pdf.setFillColor(COL[k==="sub"?"sub":k==="redo"?"redo":"started"]); pdf.roundedRect(M+2,y-7,8,8,1.5,1.5,"F");
-        T(sentence(bl.j.jobLabel),M+16,y,{b:1,s:8.5});
-        const bt2=k==="redo"?["REDO","#f9d7d7","#b91c1c"]:k==="sub"?["SUBMITTED","#dbe7fb","#1d4ed8"]:["STARTED","#fdeec8","#92610a"];
-        pdf.setFont("helvetica","bold"); pdf.setFontSize(7); const bw=pdf.getTextWidth(bt2[0])+12; pdf.setFillColor(bt2[1]); pdf.roundedRect(M+W-bw,y-9,bw,12,6,6,"F"); T(bt2[0],M+W-bw/2,y-0.5,{b:1,s:7,c:bt2[2],a:"center"});
-        y+=11;
-        bl.lines.forEach(l=>{ ensure(l.ls.length*8.5+2,sMeta); T(l.ls.join("\n"),M+16,y,{s:7,c:l.red?"#b91c1c":"#333333"}); y+=l.ls.length*8.5;
-          if(l.photo){ ensure(66,sMeta); try{ pdf.addImage(l.photo,"JPEG",M+16,y-4,60,60); }catch(e){} y+=66; } });
-        y+=5; });
-      todo.forEach((j,i)=>{ if(i%2===0) ensure(14,sMeta); const x=i%2===0?M+2:M+262;
-        pdf.setDrawColor("#555555"); pdf.setLineWidth(0.7); pdf.roundedRect(x,y-7,8,8,1.5,1.5,"S"); pdf.setLineWidth(0.5);
-        T(sentence(j.jobLabel),x+14,y,{s:8}); if(i%2===1||i===todo.length-1) y+=13; });
-      y+=10;
-    });
-  });
-
-  // ================= headers / footers on every page =================
-  const N=metas.length;
-  for(let i=1;i<=N;i++){
-    pdf.setPage(i); const m=metas[i-1];
-    T("SAJ ELECTROMECH  |  PROJECT PROGRESS REPORT",M,34,{s:7,c:MUTED}); T(m.big,M,56,{b:1,s:17});
-    T(m.r1,M+W,34,{s:8.5,a:"right"}); T(m.kind==="A" ? `Page ${i} of ${N}  |  ${m.r2}` : m.r2,M+W,48,{s:8.5,a:"right"});
-    pdf.setDrawColor("#cfcfc8"); pdf.setLineWidth(0.5); pdf.line(M,68,M+W,68);
-    pdf.line(M,808,M+W,808);
-    if(m.kind==="A"){ let x=M; [[GREEN,"Completed"],[BLUE,"Awaiting approval"],[AMBER,"In progress"],[GRAY,"Not started"]].forEach(([c,l])=>{ pdf.setFillColor(c); pdf.rect(x,816,7,7,"F"); T(l,x+11,822.5,{s:7}); pdf.setFontSize(7); x+=11+pdf.getTextWidth(l)+16; }); }
-    else T(`Source: SAJ Task Register, status as of ${dateStr}`,M,822.5,{s:7,c:MUTED});
-    T(m.kind==="A" ? `Page ${i} of ${N}` : `Page ${i} of ${N}`,M+W,822.5,{s:7,c:MUTED,a:"right"});
+  const { jsPDF } = window.jspdf;
+  const pdf = new jsPDF({unit:"pt",format:"a4"});
+  const margin = 40;
+  let y = 50;
+  const lineHeight = 15;
+  pdf.setFontSize(18);
+  pdf.text("SAJ Project Progress Report", margin, y);
+  y += 26;
+  pdf.setFontSize(12);
+  pdf.text(`Project: ${prCurrentProjectName}`, margin, y);
+  y += 18;
+  pdf.text(`Generated: ${new Date().toLocaleString("en-GB")}`, margin, y);
+  y += 18;
+  if(itemFilterLabel){
+    const wrappedItem = pdf.splitTextToSize(`Item(s): ${itemFilterLabel} (includes all sub-items)`, 515);
+    pdf.text(wrappedItem, margin, y);
+    y += lineHeight * wrappedItem.length;
   }
-  const filename=`SAJ_Progress_Report_${sanitizeForFilename(prCurrentProjectName)}_${fmtDateOnly()}.pdf`;
+  if(dateFilterLabel){
+    pdf.text(`Date filter: ${dateFilterLabel}`, margin, y);
+    y += 18;
+  }
+  if(prReportFilter.size > 0){
+    pdf.text(`Status filter: ${statusFilterLabel} only`, margin, y);
+    y += 18;
+  }
+  if(prReportRatingFilter > 0){
+    pdf.text(`Star rating filter: ${ratingFilterLabel}`, margin, y);
+    y += 18;
+  }
+  y += 8;
+  pdf.setFontSize(13);
+  pdf.text((itemFilterLabel || dateFilterLabel) ? "Summary (filtered)" : "Summary (whole project)", margin, y);
+  y += 18;
+  pdf.setFontSize(10);
+  [
+    `Total jobs: ${totalJobs}`,
+    `Completed: ${doneN} (${pct(doneN)}%)`,
+    `Awaiting approval: ${submittedN} (${pct(submittedN)}%)`,
+    `In progress: ${progressN} (${pct(progressN)}%)`,
+    `Pending: ${pendingN} (${pct(pendingN)}%)`
+  ].forEach(line=>{ pdf.text(line, margin, y); y += lineHeight; });
+  y += 16;
+
+  pdf.setFontSize(13);
+  pdf.text(prReportFilter.size===0 ? "By item" : `By item — ${statusFilterLabel} only`, margin, y);
+  y += 20;
+
+  if(!locPaths.length){
+    pdf.setFontSize(10);
+    pdf.text("No items match this filter.", margin, y);
+  }
+
+  const PR_PDF_STATUS_COLORS = {
+    done: { bg: "#e7f7ec", text: "#15803d" },
+    submitted: { bg: "#e6edfd", text: "#1d4ed8" },
+    in_progress: { bg: "#e6edfd", text: "#1d4ed8" },
+    pending: { bg: "#fef3e2", text: "#b45309" }
+  };
+  // Draws a line built from {text, highlight, color, bold} segments,
+  // wrapping to the next line if it runs past maxWidth, so the job name
+  // and status can each get their own highlight color instead of one flat
+  // block of plain text.
+  function prPdfDrawSegments(segments, x, yStart, maxWidth, lineH){
+    let curX = x, curY = yStart;
+    segments.forEach(seg=>{
+      pdf.setFont(undefined, seg.bold ? "bold" : "normal");
+      if(curX + pdf.getTextWidth(seg.text) > x + maxWidth && curX > x){
+        curY += lineH;
+        curX = x;
+      }
+      if(curY > 780){ pdf.addPage(); curY = 50; }
+      const w = pdf.getTextWidth(seg.text);
+      if(seg.highlight){
+        pdf.setFillColor(seg.highlight);
+        pdf.rect(curX - 1, curY - 8, w + 2, 11, "F");
+      }
+      pdf.setTextColor(seg.color || "#111111");
+      pdf.text(seg.text, curX, curY);
+      curX += w;
+    });
+    pdf.setTextColor("#111111");
+    pdf.setFont(undefined, "normal");
+    return curY + lineH;
+  }
+
+  locPaths.forEach((path, locIdx)=>{
+    const u = byLoc[path];
+    if(y > 720){ pdf.addPage(); y = 50; }
+    if(locIdx > 0){
+      pdf.setDrawColor("#d0d0d0");
+      pdf.line(margin, y, margin+515, y);
+      y += 14;
+    }
+    pdf.setFontSize(12);
+    pdf.setFont(undefined, "bold");
+    const wrappedTitle = pdf.splitTextToSize(u.label, 515);
+    pdf.text(wrappedTitle, margin, y);
+    pdf.setFont(undefined, "normal");
+    y += lineHeight * wrappedTitle.length + 4;
+
+    u.jobs.forEach(j=>{
+      const statusLabel = j.status==="done" ? "COMPLETED" : j.status==="submitted" ? "AWAITING APPROVAL" : j.status==="in_progress" ? "IN PROGRESS" : "PENDING";
+      const statusColors = PR_PDF_STATUS_COLORS[j.status] || PR_PDF_STATUS_COLORS.pending;
+      if(y > 760){ pdf.addPage(); y = 50; }
+
+      // Job name (left) and status (right), clearly separated instead of
+      // run together in one wrapped line, so the job and its state are
+      // each easy to spot at a glance.
+      pdf.setFontSize(10.5);
+      pdf.setFont(undefined, "bold");
+      pdf.setTextColor("#111111");
+      const wrappedJob = pdf.splitTextToSize(j.jobLabel, 340);
+      pdf.text(wrappedJob, margin+12, y);
+      pdf.setTextColor(statusColors.text);
+      pdf.text(statusLabel, margin+525-pdf.getTextWidth(statusLabel), y, {align:"left"});
+      pdf.setTextColor("#111111");
+      pdf.setFont(undefined, "normal");
+      y += lineHeight * wrappedJob.length;
+
+      // One clean detail line: who + when, kept separate from the job/status
+      // line so nothing has to wrap around a colored badge.
+      const detailBits = [];
+      if(j.status==="done") detailBits.push(`By ${j.completedStaff||"-"} on ${fmtDate(j.completedAt)}`);
+      else if(j.currentStaff) detailBits.push(`Last by ${j.currentStaff}`);
+      if(j.rating) detailBits.push(`Rating ${Number(j.rating)}/5`);
+      if(detailBits.length){
+        pdf.setFontSize(9);
+        pdf.setTextColor("#555555");
+        const wrappedDetail = pdf.splitTextToSize(detailBits.join("   |   "), 500);
+        pdf.text(wrappedDetail, margin+22, y);
+        pdf.setTextColor("#111111");
+        y += lineHeight * wrappedDetail.length * 0.8;
+      }
+
+      // Extra (custom) fields the admin added for this job, e.g. Unit
+      // capacity / Unit model, each on its own short "Label: value" line.
+      const extraPairsPdf = prExtrasPairs(j);
+      if(extraPairsPdf.length){
+        pdf.setFontSize(9);
+        pdf.setTextColor("#1d4ed8");
+        extraPairsPdf.forEach(ex=>{
+          const wrappedEx = pdf.splitTextToSize(`${ex.label}: ${ex.value}`, 490);
+          if(y > 780){ pdf.addPage(); y = 50; }
+          pdf.text(wrappedEx, margin+22, y);
+          y += lineHeight * 0.8 * wrappedEx.length;
+        });
+        pdf.setTextColor("#111111");
+      }
+
+      // Day-by-day history for every job that has any, regardless of
+      // status — a Pending or In Progress job can still carry earlier
+      // entries (e.g. it was rejected back from Awaiting Approval), so
+      // this is no longer limited to In Progress / Awaiting / Completed
+      // only. This is what makes the PDF a real standalone work record.
+      if(j.logs && j.logs.length){
+        pdf.setFontSize(8.5);
+        pdf.setTextColor("#333333");
+        const historyEntries = j.logs.slice().reverse(); // newest first, matching the on-screen History list
+        historyEntries.forEach(l=>{
+          let hLine = `${l.date||""} - ${l.staffName||""}`;
+          if(l.savedBy) hLine += ` (${l.savedBy})`;
+          if(l.completion) hLine += " (Submitted as completed)";
+          if(l.approved) hLine += " (Approved)";
+          if(l.rejected) hLine += " (Rejected)";
+          if(l.adminClosed) hLine += " (Closed by admin)";
+          if(l.note) hLine += `: ${l.note}`;
+          if(Array.isArray(l.extras) && l.extras.length) hLine += ` [${l.extras.map(e=> `${e.label}: ${e.value}`).join(", ")}]`;
+          const wrappedH = pdf.splitTextToSize(hLine, 470);
+          if(y > 778){ pdf.addPage(); y = 50; }
+          pdf.text(wrappedH, margin+32, y);
+          y += lineHeight * 0.8 * wrappedH.length;
+
+          // Before/after-style evidence photos attached to this entry (see
+          // the "photo required" job setting) get embedded right under
+          // their line, not just referenced — this is what makes the PDF a
+          // real standalone record instead of one that's missing the actual
+          // evidence whenever a job required a photo.
+          if(l.photo){
+            const imgSize = 70;
+            if(y + imgSize > 780){ pdf.addPage(); y = 50; }
+            try{ pdf.addImage(l.photo, "JPEG", margin+32, y, imgSize, imgSize); }catch(e){ /* skip a malformed image rather than fail the whole export */ }
+            y += imgSize + 8;
+          }
+        });
+        pdf.setTextColor("#111111");
+        pdf.setFontSize(9);
+      }
+      y += 8;
+    });
+    y += 8;
+  });
+
+  const filename = `SAJ_Progress_Report_${sanitizeForFilename(prCurrentProjectName)}_${fmtDateOnly()}.pdf`;
   pdf.save(filename);
 }
 
