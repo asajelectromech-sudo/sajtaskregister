@@ -3790,7 +3790,21 @@ function downloadProjectPdf(projectId, taskIdsFilter){
       pdf.setFontSize(9.5);
       const wrapped = rows.map(r=>pdf.splitTextToSize(r, contentW-24));
       const bodyLines = wrapped.reduce((n,w)=>n+w.length,0);
-      const cardH = 26 + bodyLines*lineHeight + 10;
+
+      // Prefer a real "Task" field the admin actually filled in; if that's
+      // blank (common — admins often leave it empty and rely on the staff's
+      // Job Details instead), fall back to the first staff-filled field
+      // with a value. Only fall back to a generic label if both are empty.
+      const taskNameCol = projectColumns.find(c=>c.key==="taskName");
+      const staffValCol = projectColumns.find(c=>c.filledBy==="staff" && String(getProjectTaskValue(t,c)||"").trim());
+      let titleText = (taskNameCol && String(getProjectTaskValue(t,taskNameCol)||"").trim())
+        || (staffValCol && getProjectTaskValue(t,staffValCol))
+        || `Task ${i+1}`;
+      pdf.setFontSize(11);
+      pdf.setFont(undefined,"bold");
+      const titleWrapped = pdf.splitTextToSize(`${i+1}. ${titleText}`, contentW-32);
+      const titleLines = Math.min(titleWrapped.length, 4); // cap so one huge paragraph can't blow out the card
+      const cardH = 22 + titleLines*14 + 10 + bodyLines*lineHeight + 10;
       if(y + cardH > pageH-50){ pdf.addPage(); y=50; }
 
       const cardTop=y;
@@ -3802,16 +3816,18 @@ function downloadProjectPdf(projectId, taskIdsFilter){
       pdf.rect(margin, cardTop, 4, cardH, "F");
 
       let ty=cardTop+20;
-      pdf.setFontSize(11);
-      pdf.setFont(undefined,"bold");
-      const titleText = getProjectTaskValue(t, projectColumns.find(c=>c.key==="jobDetails")||{}) || `Task ${i+1}`;
-      pdf.text(`${i+1}. ${titleText}`, margin+16, ty);
       const label = t.status === "approved" ? "Approved" : (t.status === "rejected" ? "Rejected" : "Pending admin approval");
       const fill = t.status==="approved" ? [200,236,192] : t.status==="rejected" ? [249,212,212] : [214,230,250];
       const txt = t.status==="approved" ? [39,80,10] : t.status==="rejected" ? [138,28,28] : [12,68,124];
       statusPill(label, fill, txt, pageW-margin-16-(pdf.getTextWidth(label)+18), ty, 8.5);
+      pdf.setFontSize(11);
+      pdf.setFont(undefined,"bold");
+      titleWrapped.slice(0,titleLines).forEach((w,li)=>{
+        pdf.text(w, margin+16, ty+li*14);
+      });
+      ty += titleLines*14;
       pdf.setFont(undefined,"normal");
-      ty+=10;
+      ty+=6;
       pdf.setDrawColor(217,216,210);
       pdf.line(margin+16, ty, pageW-margin-16, ty);
       ty+=14;
